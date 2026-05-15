@@ -17,6 +17,9 @@
 //   canvas-cloud:revoke-invitation   (token)                                         → void
 //   canvas-cloud:list-collaborators  (blobId)                                        → Collaborator[]
 //   canvas-cloud:remove-collaborator (blobId, userId)                                → void
+//   canvas-cloud:push-ops            (blobId, deviceId, ops[])                       → { seqs: number[] }
+//   canvas-cloud:pull-ops            (blobId, sinceSeq)                              → OpRow[]
+//   canvas-cloud:list-shared         ()                                              → SharedCanvas[]
 //
 // All handlers throw on auth failure with a stable error code prefix so the
 // renderer can show "please sign in" instead of generic "upload failed".
@@ -29,6 +32,7 @@ const TABLE = 'canvas_blobs';
 const TOKENS_TABLE = 'canvas_share_tokens';
 const INVITATIONS_TABLE = 'canvas_invitations';
 const COLLABORATORS_TABLE = 'canvas_collaborators';
+const OPS_TABLE = 'canvas_ops';
 const BUCKET = 'canvases';
 const INVITE_URL_HOST = 'https://klypix.com';
 const INVITE_URL_PATH = '/invite/';
@@ -269,5 +273,65 @@ export function registerCloudHandlers(ipcMain: IpcMain): void {
             .eq('blob_id', args.blobId)
             .eq('user_id', args.userId);
         if (error) throw new Error(`Remove collaborator failed: ${error.message}`);
+    });
+
+    // ── Sync: ops push/pull + "shared with me" listing ───────────────────
+
+    // Push a batch of ops generated locally. Server assigns the seq numbers
+    // (via the bigserial column) and returns them so the client can update
+    // its high-water mark. RLS checks membership before allowing insert.
+    ipcMain.handle('canvas-cloud:push-ops', async (_e, args: { blobId: string; deviceId: string; ops: any[] }) => {
+        const userId = await requireUserId();
+        const supabase = getSupabase();
+        if (!Array.isArray(args.ops) || args.ops.length === 0) return { seqs: [] };
+        const rows = args.ops.map(op => ({
+            blob_id: args.blobId,
+            author_id: userId,
+            device_id: args.deviceId,
+            op,
+        }));
+        const { data, error } = await supabase
+            .from(OPS_TABLE)
+            .insert(rows)
+            .select('seq');
+        if (error) {
+            if (/relation .* does not exist/i.test(error.message)) {
+                throw new Error(`Ops table missing. Apply migration 20260515150000_canvas_ops.sql.`);
+            }
+            throw new Error(`Push ops failed: ${error.message}`);
+        }
+        return { seqs: (data ?? []).map(r => r.seq as number) };
+    });
+
+    // Pull ops since a seq high-water mark. Limited to 500 ops per call
+    // so the client can paginate on very-stale canvases without OOM.
+    ipcMain.handle('canvas-cloud:pull-ops', async (_e, args: { blobId: string; sinceSeq: number }) => {
+        await requireUserId();
+        const supabase = getSupabase();
+        const { data, error } = await supabase
+            .from(OPS_TABLE)
+            .select('seq, blob_id, author_id, device_id, op, created_at')
+            .eq('blob_id', args.blobId)
+            .gt('seq', args.sinceSeq ?? 0)
+            .order('seq', { ascending: true })
+            .limit(500);
+        if (error) throw new Error(`Pull ops failed: ${error.message}`);
+        return data ?? [];
+    });
+
+    // List canvases the current user is a collaborator on (the "Shared with
+    // me" desktop UI calls this). Owner-side canvases come from a different
+    // query (canvas_blobs filtered by owner_id) — this RPC is just for
+    // collaborator-side membership.
+    ipcMain.handle('canvas-cloud:list-shared', async () => {
+        const userId = await requireUserId();
+        const supabase = getSupabase();
+        const { data, error } = await supabase
+            .from(COLLABORATORS_TABLE)
+            .select('blob_id, role, accepted_at, canvas_blobs(title_hint, byte_size, updated_at)')
+            .eq('user_id', userId)
+            .order('accepted_at', { ascending: false });
+        if (error) throw new Error(`List shared canvases failed: ${error.message}`);
+        return data ?? [];
     });
 }

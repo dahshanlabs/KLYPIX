@@ -550,12 +550,14 @@ function InlineSignInForm({ onSignedIn }: { onSignedIn: () => void }) {
         }
     };
 
-    const handleGoogle = async () => {
+    const handleOAuth = async (provider: 'google' | 'microsoft') => {
         setLocalErr(null);
         setInfo(null);
         setBusy(true);
         try {
-            const result = await auth.signInWithGoogle();
+            const result = provider === 'google'
+                ? await auth.signInWithGoogle()
+                : await auth.signInWithMicrosoft();
             if (result.success) {
                 onSignedIn();
             } else if (result.error) {
@@ -564,7 +566,7 @@ function InlineSignInForm({ onSignedIn }: { onSignedIn: () => void }) {
                 setInfo('Continue sign-in in the browser window that just opened.');
             }
         } catch (err: any) {
-            setLocalErr(err?.message || 'Google sign-in failed');
+            setLocalErr(err?.message || `${provider} sign-in failed`);
         } finally {
             setBusy(false);
         }
@@ -586,7 +588,7 @@ function InlineSignInForm({ onSignedIn }: { onSignedIn: () => void }) {
         <form onSubmit={handleSubmit} onClick={(e) => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <button
                 type="button"
-                onClick={handleGoogle}
+                onClick={() => handleOAuth('google')}
                 disabled={busy}
                 style={{
                     width: '100%',
@@ -602,6 +604,25 @@ function InlineSignInForm({ onSignedIn }: { onSignedIn: () => void }) {
                 }}
             >
                 Continue with Google
+            </button>
+            <button
+                type="button"
+                onClick={() => handleOAuth('microsoft')}
+                disabled={busy}
+                style={{
+                    width: '100%',
+                    padding: '9px 12px',
+                    borderRadius: 7,
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    color: '#fff',
+                    fontSize: 12,
+                    cursor: busy ? 'not-allowed' : 'pointer',
+                    opacity: busy ? 0.5 : 1,
+                    fontWeight: 500,
+                }}
+            >
+                Continue with Microsoft
             </button>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'rgba(255,255,255,0.25)', fontSize: 10, margin: '2px 0' }}>
                 <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />

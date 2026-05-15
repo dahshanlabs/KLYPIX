@@ -223,6 +223,27 @@ function SignInCard({ titleHint }: { titleHint: string | null }) {
     const [err, setErr] = useState<string | null>(null);
     const [info, setInfo] = useState<string | null>(null);
 
+    // OAuth: Supabase handles the handshake server-side. After auth completes
+    // the provider redirects back to the same URL (we tell it via redirectTo).
+    // The onAuthStateChange listener in the parent then auto-fires the accept
+    // RPC. Provider must be enabled in Supabase dashboard → Auth → Providers.
+    const handleOAuth = async (provider: 'google' | 'azure') => {
+        setErr(null);
+        setBusy(true);
+        try {
+            const { error } = await supabase.auth.signInWithOAuth({
+                provider,
+                options: { redirectTo: window.location.href },
+            });
+            if (error) throw error;
+            // The browser is about to navigate away to the provider's auth
+            // page — keep busy=true so the buttons stay disabled visually.
+        } catch (e: any) {
+            setErr(e?.message || `${provider} sign-in failed`);
+            setBusy(false);
+        }
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setErr(null);
@@ -259,7 +280,42 @@ function SignInCard({ titleHint }: { titleHint: string | null }) {
                 <div className="text-white text-base font-medium truncate">{titleHint || 'Untitled canvas'}</div>
                 <div className="text-white/50 text-xs mt-2">Sign in or create an account to accept.</div>
             </div>
-            <form onSubmit={handleSubmit} className="px-5 py-5 flex flex-col gap-2">
+            <div className="px-5 pt-5 flex flex-col gap-2">
+                <button
+                    type="button"
+                    onClick={() => handleOAuth('google')}
+                    disabled={busy}
+                    className="w-full flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 rounded-lg py-2.5 text-white/85 text-sm font-medium transition-all disabled:opacity-50 cursor-pointer"
+                >
+                    <svg width="14" height="14" viewBox="0 0 48 48" fill="none">
+                        <path d="M44 24c0-1.4-.13-2.74-.38-4H24v8h11.32c-.5 2.66-2 4.92-4.27 6.43v5.34h6.9C42 36.06 44 30.5 44 24z" fill="#4285F4"/>
+                        <path d="M24 44c5.76 0 10.6-1.9 14.13-5.15l-6.9-5.34c-1.9 1.27-4.34 2.03-7.23 2.03-5.56 0-10.27-3.75-11.95-8.78H4.95v5.5C8.46 39.4 15.66 44 24 44z" fill="#34A853"/>
+                        <path d="M12.05 26.76A12.04 12.04 0 0 1 11.4 24c0-.96.17-1.9.46-2.76v-5.5H4.95A19.96 19.96 0 0 0 3 24c0 3.22.77 6.27 2.13 8.97l6.92-5.5z" fill="#FBBC05"/>
+                        <path d="M24 11.46c3.13 0 5.94 1.08 8.15 3.18l6.12-6.12C34.6 5.04 29.76 3 24 3 15.66 3 8.46 7.6 4.95 14.5l6.92 5.5C13.73 15.2 18.44 11.46 24 11.46z" fill="#EA4335"/>
+                    </svg>
+                    Continue with Google
+                </button>
+                <button
+                    type="button"
+                    onClick={() => handleOAuth('azure')}
+                    disabled={busy}
+                    className="w-full flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 rounded-lg py-2.5 text-white/85 text-sm font-medium transition-all disabled:opacity-50 cursor-pointer"
+                >
+                    <svg width="14" height="14" viewBox="0 0 21 21" fill="none">
+                        <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
+                        <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
+                        <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
+                        <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+                    </svg>
+                    Continue with Microsoft
+                </button>
+                <div className="flex items-center gap-3 text-white/30 text-[10px] my-1">
+                    <div className="flex-1 h-px bg-white/10" />
+                    <span>or</span>
+                    <div className="flex-1 h-px bg-white/10" />
+                </div>
+            </div>
+            <form onSubmit={handleSubmit} className="px-5 pb-5 flex flex-col gap-2">
                 {mode === 'signup' && (
                     <input
                         type="text"

@@ -29,12 +29,16 @@ You don't need to author SQL — only apply it.
 
 ## Step 1 — Apply the migrations
 
-Two migrations need to be applied, in order:
+Five migrations need to be applied, in order:
 
 | Order | File | What it does |
 |---|---|---|
 | 1 | [supabase/migrations/20260430000000_canvas_blobs.sql](../supabase/migrations/20260430000000_canvas_blobs.sql) | `canvas_blobs` table + `canvases` Storage bucket + owner-scoped RLS |
 | 2 | [supabase/migrations/20260514120000_canvas_share_tokens.sql](../supabase/migrations/20260514120000_canvas_share_tokens.sql) | `canvas_share_tokens` table + anon-scoped RLS for share-by-URL |
+| 3 | [supabase/migrations/20260515120000_canvas_collaborators.sql](../supabase/migrations/20260515120000_canvas_collaborators.sql) | `canvas_collaborators` + `canvas_invitations` tables for invite-based team collab |
+| 4 | [supabase/migrations/20260515130000_fix_rls_recursion.sql](../supabase/migrations/20260515130000_fix_rls_recursion.sql) | Fixes infinite-recursion in the policies from migration 3 (uses SECURITY DEFINER helpers) |
+| 5 | [supabase/migrations/20260515140000_fix_accept_invitation_ambiguity.sql](../supabase/migrations/20260515140000_fix_accept_invitation_ambiguity.sql) | Fixes `column reference "blob_id" is ambiguous` in `accept_canvas_invitation`; returns JSON now |
+| 6 | [supabase/migrations/20260515150000_canvas_ops.sql](../supabase/migrations/20260515150000_canvas_ops.sql) | `canvas_ops` operations log + Realtime publication for live sync |
 
 Migration 1 enables the owner-side upload flow. Migration 2 mints the
 tokens that go into `https://klypix.com/c/<token>` share URLs and adds the
@@ -169,6 +173,59 @@ viewer itself — the Next.js page at `klypix.com/c/[token]` that runs
 steps 1–3. That's the next Phase 9 slice. Until that page exists, share
 URLs work end-to-end on the producer side but recipients have no app to
 open them in.
+
+---
+
+## Recommended auth hardening (10 minutes)
+
+Two settings in the Supabase dashboard, not in code, that you should turn on
+before showing this to anyone real.
+
+### Require email confirmation
+
+By default, Supabase signs new users in immediately. That means anyone can
+sign up with `madeup@nothing.com`, accept an invitation, and become a
+collaborator without proving they own that email.
+
+Fix:
+1. Supabase dashboard → **Authentication** → **Providers** → **Email**
+2. Toggle **"Confirm email"** ON
+3. Save
+
+After this, new signups will see "Check your email to confirm" instead of
+being signed in immediately. The confirmation link redirects back to KLYPIX
+once clicked.
+
+Optional: customize the email template at **Authentication** → **Email
+Templates** → "Confirm signup" so it says KLYPIX instead of "Supabase".
+
+### Enable Google + Microsoft OAuth
+
+The desktop app + web pages now have "Continue with Google" / "Continue
+with Microsoft" buttons, but they'll fail until you enable the providers
+in Supabase.
+
+**Google:**
+1. Create OAuth credentials at https://console.cloud.google.com/apis/credentials
+   - Application type: Web application
+   - Authorized redirect URIs: `https://<your-project>.supabase.co/auth/v1/callback`
+   - Save the Client ID + Client Secret
+2. Supabase dashboard → **Authentication** → **Providers** → **Google**
+3. Toggle ON, paste the Client ID + Client Secret, save
+
+**Microsoft (Azure):**
+1. Register an application at https://portal.azure.com → Azure Active
+   Directory → App registrations → New registration
+   - Redirect URI: `https://<your-project>.supabase.co/auth/v1/callback`
+   - Note the Application (client) ID + create a client secret under
+     "Certificates & secrets"
+2. Supabase dashboard → **Authentication** → **Providers** → **Azure
+   (Microsoft)**
+3. Toggle ON, paste Client ID + Secret, set Tenant URL to
+   `https://login.microsoftonline.com/common`, save
+
+After both are enabled, the OAuth buttons on klypix.com/invite/&lt;token&gt;
+and inside the desktop ShareModal sign-in form will work.
 
 ---
 
