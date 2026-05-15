@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { FilePlus2, FolderOpen, Save, Paperclip, Pin, Copy } from 'lucide-react';
+import { FilePlus2, FolderOpen, Save, Paperclip, Pin, Copy, Home as HomeIcon } from 'lucide-react';
 import { CanvasStoreProvider, useCanvasStore } from './state/canvasStore';
 import { CanvasRenderer } from './CanvasRenderer';
 import { Toolbar } from './interaction/Toolbar';
@@ -571,6 +571,11 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
     const [templatesOpen, setTemplatesOpen] = useState(false);
     const [collectionsOpen, setCollectionsOpen] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
+    // Manual Home-button override for the canvas dashboard. The dashboard
+    // auto-shows on empty canvases; this lets the user pop it open on
+    // demand without losing their current work — clicking a row, "New",
+    // or pressing Esc dismisses it back to whatever they were doing.
+    const [manualDashboardOpen, setManualDashboardOpen] = useState(false);
     const [threadItemId, setThreadItemId] = useState<string | null>(null);
     const [commentsItemId, setCommentsItemId] = useState<string | null>(null);
     // Register the comments opener so ItemBadges can call it from outside
@@ -1341,11 +1346,12 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
                 document.body, so without it inactive tabs (e.g. canvas mode
                 hidden while user is in chat) would punch the dashboard onto
                 document.body over the chat UI. */}
-            {tabActive && isEmpty && !state.filePath && (
+            {tabActive && (manualDashboardOpen || (isEmpty && !state.filePath)) && (
                 <CanvasDashboard
-                    onOpenRecent={(p) => file.openByPath(p)}
-                    onOpenFile={() => file.open()}
-                    onNewCanvas={() => { file.newFile(); }}
+                    onOpenRecent={(p) => { setManualDashboardOpen(false); return file.openByPath(p); }}
+                    onOpenFile={() => { setManualDashboardOpen(false); return file.open(); }}
+                    onNewCanvas={() => { setManualDashboardOpen(false); file.newFile(); }}
+                    onDismiss={manualDashboardOpen ? () => setManualDashboardOpen(false) : undefined}
                 />
             )}
             {isEmpty && state.filePath && (() => {
@@ -2177,6 +2183,8 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
                 center FAB (see below) so dictation has its own space and
                 doesn't get lost in the file-ops cluster. */}
             <div data-canvas-ui="1" className="absolute top-3 left-3 z-20 no-drag flex items-center gap-1 px-1 py-1 rounded-full bg-black/60 border border-white/10">
+                <FileOpButton label="Home (Recent + Shared)" onClick={() => setManualDashboardOpen(true)}><HomeIcon size={13} /></FileOpButton>
+                <span className="w-px h-4 bg-white/10 mx-0.5" />
                 <FileOpButton label="New (Ctrl+N)" onClick={file.newFile}><FilePlus2 size={13} /></FileOpButton>
                 <FileOpButton label="Open (Ctrl+O)" onClick={file.open}><FolderOpen size={13} /></FileOpButton>
                 <FileOpButton label="Save (Ctrl+S)" onClick={file.save}><Save size={13} /></FileOpButton>

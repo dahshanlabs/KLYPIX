@@ -14,6 +14,10 @@ interface Props {
     onOpenFile: () => Promise<unknown>;
     /** Dismiss the dashboard and start a fresh blank canvas in this tab. */
     onNewCanvas: () => void;
+    /** Optional close handler — when provided, shows an X button + handles
+     *  Esc + click-outside-dimmer. Omit for the empty-canvas auto-show
+     *  state (no way out except picking a canvas). */
+    onDismiss?: () => void;
 }
 
 /**
@@ -35,11 +39,27 @@ interface Props {
  *     and lets the user click into the empty canvas underneath. That's
  *     less surprising than a state mutation for "I just want to start typing."
  */
-export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onNewCanvas }) => {
+export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onNewCanvas, onDismiss }) => {
     const recents = useRecentCanvases();
     const { canvases: shared, loading: sharedLoading } = useSharedCanvases();
     const [dismissed, setDismissed] = useState(false);
     const [openingPath, setOpeningPath] = useState<string | null>(null);
+
+    // Esc closes when this is a manual Home-button open (onDismiss is set).
+    // For the empty-canvas auto-show case, Esc is a no-op — there's nothing
+    // to fall back to.
+    React.useEffect(() => {
+        if (!onDismiss) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                onDismiss();
+            }
+        };
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
+    }, [onDismiss]);
 
     if (dismissed) return null;
 
@@ -92,7 +112,17 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
     return createPortal((
         <div
             className="fixed inset-0 flex items-center justify-center"
-            style={{ zIndex: 9998, pointerEvents: 'none' }}
+            style={{
+                zIndex: 9998,
+                // Manual Home-button open gets a dimmed clickable backdrop so
+                // recipient can click outside the modal to close. Empty-canvas
+                // auto-show stays click-through so it doesn't feel modal.
+                pointerEvents: onDismiss ? 'auto' : 'none',
+                background: onDismiss ? 'rgba(0, 0, 0, 0.45)' : 'transparent',
+            }}
+            onPointerDown={onDismiss
+                ? (e) => { if (e.target === e.currentTarget) { e.stopPropagation(); onDismiss(); } }
+                : undefined}
         >
             <div
                 onPointerDown={(e) => e.stopPropagation()}
@@ -112,13 +142,39 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                     color: '#e8e8ed',
                 }}
             >
-                <div style={{ marginBottom: 18 }}>
-                    <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.01em' }}>Your canvases</div>
-                    <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginTop: 2 }}>
-                        {recents.length === 0
-                            ? 'No canvases yet. Create one or open an existing .klypix file.'
-                            : `${recents.length} canvas${recents.length === 1 ? '' : 'es'} you have worked on.`}
+                <div style={{ marginBottom: 18, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.01em' }}>Your canvases</div>
+                        <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginTop: 2 }}>
+                            {recents.length === 0
+                                ? 'No canvases yet. Create one or open an existing .klypix file.'
+                                : `${recents.length} canvas${recents.length === 1 ? '' : 'es'} you have worked on.`}
+                        </div>
                     </div>
+                    {onDismiss && (
+                        <button
+                            type="button"
+                            onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); onDismiss(); }}
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDismiss(); }}
+                            title="Close (Esc)"
+                            aria-label="Close dashboard"
+                            style={{
+                                padding: 8,
+                                borderRadius: 8,
+                                background: 'rgba(255,255,255,0.04)',
+                                border: '1px solid rgba(255,255,255,0.06)',
+                                color: 'rgba(255,255,255,0.7)',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                lineHeight: 0,
+                                flexShrink: 0,
+                            }}
+                        >
+                            <XIcon size={14} />
+                        </button>
+                    )}
                 </div>
 
                 <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
