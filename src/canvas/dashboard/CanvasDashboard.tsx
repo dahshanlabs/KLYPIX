@@ -41,7 +41,7 @@ interface Props {
  */
 export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onNewCanvas, onDismiss }) => {
     const recents = useRecentCanvases();
-    const { canvases: shared, loading: sharedLoading } = useSharedCanvases();
+    const { canvases: shared, loading: sharedLoading, leave: leaveShared } = useSharedCanvases();
     const [dismissed, setDismissed] = useState(false);
     const [openingPath, setOpeningPath] = useState<string | null>(null);
 
@@ -271,6 +271,15 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                                     entry={entry}
                                     opening={openingPath === entry.blob_id}
                                     onOpen={() => handleOpenShared(entry)}
+                                    onLeave={() => {
+                                        const title = entry.canvas_blobs?.title_hint || 'this canvas';
+                                        const ok = window.confirm(
+                                            `Remove "${title}" from your shared list?\n\n` +
+                                            `You won't be able to open it again unless the owner re-invites you. ` +
+                                            `Your local downloaded copy (if any) is not affected.`
+                                        );
+                                        if (ok) leaveShared(entry.blob_id);
+                                    }}
                                 />
                             ))}
                         </>
@@ -285,6 +294,9 @@ interface SharedRowProps {
     entry: SharedCanvas;
     opening: boolean;
     onOpen: () => void;
+    /** Recipient-side "leave this shared canvas". The parent shows the confirm
+     *  prompt — this just fires the RPC. */
+    onLeave: () => void;
 }
 
 // Clickable entry in the "Shared with you" list. Click → openSharedCanvas
@@ -294,7 +306,7 @@ interface SharedRowProps {
 //
 // If key_b64 is null (legacy invitation predating key sharing), the row is
 // disabled — UI title explains why.
-function SharedRow({ entry, opening, onOpen }: SharedRowProps) {
+function SharedRow({ entry, opening, onOpen, onLeave }: SharedRowProps) {
     const title = entry.canvas_blobs?.title_hint || 'Untitled canvas';
     const updatedAt = entry.canvas_blobs?.updated_at;
     const canOpen = !!entry.key_b64;
@@ -349,6 +361,28 @@ function SharedRow({ entry, opening, onOpen }: SharedRowProps) {
                     no key
                 </div>
             )}
+            <button
+                onPointerDown={(e) => { e.stopPropagation(); }}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); onLeave(); }}
+                title="Remove from shared list (unlink yourself — owner is not notified)"
+                aria-label="Leave shared canvas"
+                style={{
+                    padding: 4, borderRadius: 5,
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'rgba(255,255,255,0.3)',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    lineHeight: 0,
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.3)'; e.currentTarget.style.background = 'transparent'; }}
+            >
+                <XIcon size={12} />
+            </button>
         </div>
     );
 }

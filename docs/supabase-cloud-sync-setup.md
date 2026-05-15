@@ -40,6 +40,7 @@ Five migrations need to be applied, in order:
 | 5 | [supabase/migrations/20260515140000_fix_accept_invitation_ambiguity.sql](../supabase/migrations/20260515140000_fix_accept_invitation_ambiguity.sql) | Fixes `column reference "blob_id" is ambiguous` in `accept_canvas_invitation`; returns JSON now |
 | 6 | [supabase/migrations/20260515150000_canvas_ops.sql](../supabase/migrations/20260515150000_canvas_ops.sql) | `canvas_ops` operations log + Realtime publication for live sync |
 | 7 | [supabase/migrations/20260515160000_releases.sql](../supabase/migrations/20260515160000_releases.sql) | `releases` table for staged auto-update rollout (optional — without it, every update goes to 100% immediately). See [docs/releases.md](releases.md). |
+| 8 | [supabase/migrations/20260515180000_leave_canvas.sql](../supabase/migrations/20260515180000_leave_canvas.sql) | `leave_canvas(uuid)` RPC so recipients can unlink themselves from a shared canvas (dashboard's "Shared with you" X button). Without it, clicking X fails with "leave_canvas RPC missing". |
 
 Migration 1 enables the owner-side upload flow. Migration 2 mints the
 tokens that go into `https://klypix.com/c/<token>` share URLs and adds the

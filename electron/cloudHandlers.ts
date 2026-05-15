@@ -20,6 +20,7 @@
 //   canvas-cloud:push-ops            (blobId, deviceId, ops[])                       → { seqs: number[] }
 //   canvas-cloud:pull-ops            (blobId, sinceSeq)                              → OpRow[]
 //   canvas-cloud:list-shared         ()                                              → SharedCanvas[]
+//   canvas-cloud:leave-shared        (blobId)                                        → void
 //
 // All handlers throw on auth failure with a stable error code prefix so the
 // renderer can show "please sign in" instead of generic "upload failed".
@@ -343,5 +344,29 @@ export function registerCloudHandlers(ipcMain: IpcMain): void {
             .order('accepted_at', { ascending: false });
         if (error) throw new Error(`List shared canvases failed: ${error.message}`);
         return data ?? [];
+    });
+
+    // Remove the caller from a canvas that was shared with them ("leave"
+    // from the recipient side). Calls the leave_canvas RPC which deletes
+    // the caller's canvas_collaborators row under SECURITY DEFINER — the
+    // recipient has no direct DELETE policy on that table by design.
+    //
+    // The locally-downloaded copy under userData/shared-canvases/ is left
+    // on disk intentionally — same model as Drive/Notion. If the user wants
+    // the file gone too they can delete it themselves; this RPC only unlinks
+    // the server-side membership.
+    ipcMain.handle('canvas-cloud:leave-shared', async (_e, blobId: string) => {
+        await requireUserId();
+        const supabase = getSupabase();
+        const { error } = await supabase.rpc('leave_canvas', { p_blob_id: blobId });
+        if (error) {
+            if (/function .* does not exist/i.test(error.message)) {
+                throw new Error(
+                    `leave_canvas RPC missing. Apply migration 20260515180000_leave_canvas.sql. ` +
+                    `See docs/supabase-cloud-sync-setup.md.`
+                );
+            }
+            throw new Error(`Leave shared canvas failed: ${error.message}`);
+        }
     });
 }

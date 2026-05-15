@@ -296,5 +296,7 @@ contextBridge.exposeInMainWorld('electron', {
             ipcRenderer.invoke('canvas-cloud:pull-ops', args),
         listShared: () =>
             ipcRenderer.invoke('canvas-cloud:list-shared'),
+        leaveShared: (blobId: string) =>
+            ipcRenderer.invoke('canvas-cloud:leave-shared', blobId),
     },
 });

@@ -28,6 +28,11 @@ interface UseSharedCanvasesResult {
     loading: boolean;
     error: string | null;
     refresh: () => void;
+    /** Remove the current user from a shared canvas (the recipient-side
+     *  "leave"). Optimistically removes the row from local state; on
+     *  failure the row is restored and the error is surfaced via window.alert
+     *  to keep the call site simple. */
+    leave: (blobId: string) => Promise<void>;
 }
 
 export function useSharedCanvases(): UseSharedCanvasesResult {
@@ -37,6 +42,27 @@ export function useSharedCanvases(): UseSharedCanvasesResult {
     const [tick, setTick] = useState(0);
 
     const refresh = useCallback(() => setTick(t => t + 1), []);
+
+    const leave = useCallback(async (blobId: string) => {
+        const bridge: any = (window as any).electron?.cloud;
+        if (!bridge?.leaveShared) {
+            window.alert('Cloud IPC unavailable — cannot leave canvas.');
+            return;
+        }
+        // Optimistic remove so the dashboard updates instantly. Snapshot the
+        // previous row so we can restore on failure.
+        let snapshot: SharedCanvas | undefined;
+        setCanvases(prev => {
+            snapshot = prev.find(c => c.blob_id === blobId);
+            return prev.filter(c => c.blob_id !== blobId);
+        });
+        try {
+            await bridge.leaveShared(blobId);
+        } catch (e: any) {
+            if (snapshot) setCanvases(prev => [snapshot!, ...prev]);
+            window.alert(`Couldn't leave canvas: ${e?.message || String(e)}`);
+        }
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
@@ -71,5 +97,5 @@ export function useSharedCanvases(): UseSharedCanvasesResult {
         return () => { cancelled = true; };
     }, [tick]);
 
-    return { canvases, loading, error, refresh };
+    return { canvases, loading, error, refresh, leave };
 }
