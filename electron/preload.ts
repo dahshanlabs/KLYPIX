@@ -278,5 +278,15 @@ contextBridge.exposeInMainWorld('electron', {
         delete: (id: string) => ipcRenderer.invoke('canvas-cloud:delete', id),
         createShareToken: (blobId: string) =>
             ipcRenderer.invoke('canvas-cloud:create-share-token', blobId),
+        createInvitation: (args: { blobId: string; email?: string; titleHint?: string }) =>
+            ipcRenderer.invoke('canvas-cloud:create-invitation', args),
+        listInvitations: (blobId: string) =>
+            ipcRenderer.invoke('canvas-cloud:list-invitations', blobId),
+        revokeInvitation: (token: string) =>
+            ipcRenderer.invoke('canvas-cloud:revoke-invitation', token),
+        listCollaborators: (blobId: string) =>
+            ipcRenderer.invoke('canvas-cloud:list-collaborators', blobId),
+        removeCollaborator: (args: { blobId: string; userId: string }) =>
+            ipcRenderer.invoke('canvas-cloud:remove-collaborator', args),
     },
 });

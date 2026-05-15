@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link2, Copy, Check, AlertCircle, X, Loader2, Cloud } from 'lucide-react';
+import { Link2, Copy, Check, AlertCircle, X, Loader2, Cloud, Users } from 'lucide-react';
 import { shareCurrentCanvas, type ShareResult } from './shareCurrentCanvas';
 import { getCloudShare } from './cloudShareStore';
 import { useAuth } from '../../components/AuthProvider';
@@ -196,7 +196,7 @@ export const ShareModal: React.FC<Props> = ({ canvasFilePath, canvasTitle, onClo
     ), document.body);
 };
 
-function ShareReadyBody({ share, copied, onCopy, onUpdate, isNew }: { share: { shareUrl: string; lastPushedAt: number }; copied: boolean; onCopy: (url: string) => void; onUpdate: () => void; isNew: boolean; }) {
+function ShareReadyBody({ share, copied, onCopy, onUpdate, isNew }: { share: { shareUrl: string; lastPushedAt: number; blobId: string }; copied: boolean; onCopy: (url: string) => void; onUpdate: () => void; isNew: boolean; }) {
     const minsAgo = Math.max(0, Math.floor((Date.now() - share.lastPushedAt) / 60000));
     return (
         <>
@@ -264,7 +264,165 @@ function ShareReadyBody({ share, copied, onCopy, onUpdate, isNew }: { share: { s
                     Update cloud copy
                 </button>
             </div>
+            <InviteCollaboratorsSection share={share} />
         </>
+    );
+}
+
+// ── Invite collaborators (Phase 7) ────────────────────────────────────────
+// Sender mints a single-use invite link; recipient opens it in a browser,
+// signs in, and gets added as an editor on the canvas. The link is separate
+// from the share URL because share URLs grant read-only via the canvas_share_tokens
+// table; invitations grant read-write via canvas_collaborators.
+
+interface InviteResult {
+    token: string;
+    inviteUrl: string;
+    expiresAt: string;
+}
+
+function InviteCollaboratorsSection({ share }: { share: { blobId: string } }) {
+    const [email, setEmail] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [latest, setLatest] = useState<InviteResult | null>(null);
+    const [err, setErr] = useState<string | null>(null);
+    const [copied, setCopied] = useState(false);
+
+    const handleCreate = async () => {
+        setErr(null);
+        setBusy(true);
+        try {
+            const bridge: any = (window as any).electron?.cloud;
+            if (!bridge?.createInvitation) throw new Error('Invite IPC unavailable');
+            const res: InviteResult = await bridge.createInvitation({
+                blobId: share.blobId,
+                email: email.trim() || undefined,
+            });
+            setLatest(res);
+        } catch (e: any) {
+            setErr(e?.message || 'Failed to create invite');
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const copyInvite = async () => {
+        if (!latest) return;
+        try {
+            await navigator.clipboard.writeText(latest.inviteUrl);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1800);
+        } catch { /* no-op */ }
+    };
+
+    const expiresDays = latest
+        ? Math.max(1, Math.round((new Date(latest.expiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
+        : 7;
+
+    return (
+        <div style={{
+            marginTop: 18,
+            paddingTop: 14,
+            borderTop: '1px solid rgba(255,255,255,0.08)',
+        }}>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Users size={11} />
+                Invite collaborators (Editor access)
+            </div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginBottom: 10, lineHeight: 1.5 }}>
+                Share-by-URL above is read-only. Invitations grant edit access — recipients sign in, accept the invite, and the canvas appears in their library.
+            </div>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                <input
+                    type="email"
+                    placeholder="Email (optional, for your records)"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    disabled={busy}
+                    style={{
+                        flex: 1,
+                        background: 'rgba(255,255,255,0.04)',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        borderRadius: 7,
+                        padding: '8px 10px',
+                        color: '#fff',
+                        fontSize: 11,
+                        outline: 'none',
+                        fontFamily: 'Outfit, system-ui, sans-serif',
+                    }}
+                />
+                <button
+                    type="button"
+                    onClick={handleCreate}
+                    disabled={busy}
+                    style={{
+                        padding: '8px 12px',
+                        borderRadius: 7,
+                        background: 'rgba(16, 185, 129, 0.15)',
+                        border: '1px solid rgba(16, 185, 129, 0.3)',
+                        color: '#10b981',
+                        fontSize: 11,
+                        fontWeight: 500,
+                        cursor: busy ? 'not-allowed' : 'pointer',
+                        opacity: busy ? 0.5 : 1,
+                        whiteSpace: 'nowrap',
+                    }}
+                >
+                    {busy ? 'Creating…' : 'Get invite link'}
+                </button>
+            </div>
+            {err && (
+                <div style={{ color: '#fca5a5', fontSize: 11, marginTop: 4 }}>{err}</div>
+            )}
+            {latest && (
+                <>
+                    <div style={{
+                        display: 'flex', gap: 6, alignItems: 'stretch',
+                        background: 'rgba(255,255,255,0.04)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: 7,
+                        padding: 3,
+                    }}>
+                        <div
+                            style={{
+                                flex: 1, minWidth: 0,
+                                fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+                                fontSize: 10,
+                                color: 'rgba(255,255,255,0.85)',
+                                padding: '7px 9px',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                            }}
+                            title={latest.inviteUrl}
+                        >
+                            {latest.inviteUrl}
+                        </div>
+                        <button
+                            type="button"
+                            onClick={copyInvite}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: 4,
+                                padding: '6px 10px',
+                                borderRadius: 5,
+                                background: copied ? 'rgba(16, 185, 129, 0.18)' : 'rgba(16, 185, 129, 0.1)',
+                                color: '#10b981',
+                                border: 'none',
+                                cursor: 'pointer',
+                                fontSize: 10,
+                                fontWeight: 500,
+                                whiteSpace: 'nowrap',
+                            }}
+                        >
+                            {copied ? <><Check size={10} /> Copied</> : <><Copy size={10} /> Copy</>}
+                        </button>
+                    </div>
+                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 6 }}>
+                        Expires in {expiresDays} day{expiresDays === 1 ? '' : 's'} · single-use
+                    </div>
+                </>
+            )}
+        </div>
     );
 }
 

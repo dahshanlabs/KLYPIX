@@ -12,6 +12,11 @@
 //   canvas-cloud:list                ()                                              → BlobMeta[]
 //   canvas-cloud:delete              (id)                                            → void
 //   canvas-cloud:create-share-token  (blobId)                                        → string  (the token)
+//   canvas-cloud:create-invitation   (blobId, email?, titleHint?)                    → { token, inviteUrl, expiresAt }
+//   canvas-cloud:list-invitations    (blobId)                                        → Invitation[]
+//   canvas-cloud:revoke-invitation   (token)                                         → void
+//   canvas-cloud:list-collaborators  (blobId)                                        → Collaborator[]
+//   canvas-cloud:remove-collaborator (blobId, userId)                                → void
 //
 // All handlers throw on auth failure with a stable error code prefix so the
 // renderer can show "please sign in" instead of generic "upload failed".
@@ -22,7 +27,11 @@ import { getSupabase } from './auth/supabaseClient';
 
 const TABLE = 'canvas_blobs';
 const TOKENS_TABLE = 'canvas_share_tokens';
+const INVITATIONS_TABLE = 'canvas_invitations';
+const COLLABORATORS_TABLE = 'canvas_collaborators';
 const BUCKET = 'canvases';
+const INVITE_URL_HOST = 'https://klypix.com';
+const INVITE_URL_PATH = '/invite/';
 
 /**
  * Generate a URL-safe share token: 32 random bytes = 256 bits of entropy,
@@ -169,5 +178,96 @@ export function registerCloudHandlers(ipcMain: IpcMain): void {
             throw new Error(`Create share token failed: ${error.message}`);
         }
         return token;
+    });
+
+    // ── Collaboration: invitations + collaborators ─────────────────────────
+
+    // Create an invitation for a blob the caller owns. Returns the token,
+    // a ready-to-share https URL, and the expiry. The recipient opens the
+    // URL in a browser, signs in (or signs up), and is added as an editor.
+    ipcMain.handle('canvas-cloud:create-invitation', async (_e, args: { blobId: string; email?: string; titleHint?: string }) => {
+        const userId = await requireUserId();
+        const supabase = getSupabase();
+        const token = generateShareToken();
+        const { data, error } = await supabase
+            .from(INVITATIONS_TABLE)
+            .insert({
+                token,
+                blob_id: args.blobId,
+                invited_by: userId,
+                invitee_email: args.email || null,
+                title_hint: args.titleHint || null,
+            })
+            .select('expires_at')
+            .single();
+        if (error || !data) {
+            if (/relation .* does not exist/i.test(error?.message || '')) {
+                throw new Error(
+                    `Invitations table missing. Apply migration 20260515120000_canvas_collaborators.sql. ` +
+                    `See docs/supabase-cloud-sync-setup.md.`
+                );
+            }
+            throw new Error(`Create invitation failed: ${error?.message ?? 'unknown'}`);
+        }
+        return {
+            token,
+            inviteUrl: `${INVITE_URL_HOST}${INVITE_URL_PATH}${token}`,
+            expiresAt: data.expires_at,
+        };
+    });
+
+    // List pending invitations for a canvas. RLS limits to invitations the
+    // current user created (i.e. the owner's own outgoing invites).
+    ipcMain.handle('canvas-cloud:list-invitations', async (_e, blobId: string) => {
+        await requireUserId();
+        const supabase = getSupabase();
+        const { data, error } = await supabase
+            .from(INVITATIONS_TABLE)
+            .select('token, invitee_email, created_at, expires_at, accepted_at, accepted_by')
+            .eq('blob_id', blobId)
+            .order('created_at', { ascending: false });
+        if (error) throw new Error(`List invitations failed: ${error.message}`);
+        return (data ?? []).map(row => ({
+            ...row,
+            inviteUrl: `${INVITE_URL_HOST}${INVITE_URL_PATH}${row.token}`,
+        }));
+    });
+
+    // Revoke an invitation. Owners can revoke any invite they created;
+    // RLS denies for non-owners.
+    ipcMain.handle('canvas-cloud:revoke-invitation', async (_e, token: string) => {
+        await requireUserId();
+        const supabase = getSupabase();
+        const { error } = await supabase
+            .from(INVITATIONS_TABLE)
+            .delete()
+            .eq('token', token);
+        if (error) throw new Error(`Revoke invitation failed: ${error.message}`);
+    });
+
+    // List current collaborators on a canvas. Owner-only view (RLS).
+    ipcMain.handle('canvas-cloud:list-collaborators', async (_e, blobId: string) => {
+        await requireUserId();
+        const supabase = getSupabase();
+        const { data, error } = await supabase
+            .from(COLLABORATORS_TABLE)
+            .select('user_id, role, accepted_at, invited_by')
+            .eq('blob_id', blobId)
+            .order('accepted_at', { ascending: false });
+        if (error) throw new Error(`List collaborators failed: ${error.message}`);
+        return data ?? [];
+    });
+
+    // Remove a collaborator. Owner-only via RLS (the policy joins through
+    // canvas_blobs.owner_id).
+    ipcMain.handle('canvas-cloud:remove-collaborator', async (_e, args: { blobId: string; userId: string }) => {
+        await requireUserId();
+        const supabase = getSupabase();
+        const { error } = await supabase
+            .from(COLLABORATORS_TABLE)
+            .delete()
+            .eq('blob_id', args.blobId)
+            .eq('user_id', args.userId);
+        if (error) throw new Error(`Remove collaborator failed: ${error.message}`);
     });
 }
