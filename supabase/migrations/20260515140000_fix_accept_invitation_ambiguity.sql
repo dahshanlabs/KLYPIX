@@ -8,8 +8,13 @@
 --
 -- Fix: return a JSON object instead of a TABLE. The client gets a single
 -- object (not an array) and the function body has no shadowed identifiers.
+--
+-- Postgres won't allow `CREATE OR REPLACE` to change a function's return
+-- type — drop the old function first.
 
-create or replace function public.accept_canvas_invitation(p_token text)
+drop function if exists public.accept_canvas_invitation(text);
+
+create function public.accept_canvas_invitation(p_token text)
 returns json
 language plpgsql
 security definer
