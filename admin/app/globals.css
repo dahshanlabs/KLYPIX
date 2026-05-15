@@ -1,3 +1,24 @@
+/* Font parity with the desktop app so canvas items render identically in
+   the web viewer. Matches src/index.css in the Electron app. */
+
+/* App-shell fonts */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800;900&display=swap');
+
+/* Canvas text fonts — curated list exposed in the desktop Text panel.
+   Web viewer needs these so font-family on TextItems renders correctly. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Space+Grotesk:wght@400;700&family=Newsreader:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;700&family=Caveat:wght@400;700&family=Bricolage+Grotesque:wght@400;700&display=swap');
+
+/* Virgil — KLYPIX's canvas default handwritten font. Not on Google Fonts,
+   self-hosted from public/fonts/. font-display: swap so a missing/slow
+   font never blocks rendering — fallback text appears immediately, then
+   re-paints once Virgil loads. */
+@font-face {
+    font-family: 'Virgil';
+    src: url('/fonts/Virgil.woff2') format('woff2');
+    font-display: swap;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -5,6 +26,7 @@
 body {
     background: #0a0a0a;
     color: #ffffff;
+    font-family: 'Outfit', 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
 
 ::-webkit-scrollbar { width: 6px; }

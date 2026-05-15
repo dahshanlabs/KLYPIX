@@ -323,7 +323,11 @@ function TextRender({ item, baseStyle }: { item: ParsedItem; baseStyle: React.CS
     const color = (item.color as string) || '#e8e8ed';
     const content = (item.content as string) || '';
     const border = item.border as boolean;
-    const fontFamily = (item.fontFamily as string) || 'Outfit, system-ui, sans-serif';
+    // Canvas default is Virgil (the handwritten font shipped at /fonts/Virgil.woff2
+    // in admin/public). Matches the desktop's text-item default; items with an
+    // explicit fontFamily render that font instead. Outfit + system-ui are
+    // fallbacks so missing/slow font loads don't blank the text.
+    const fontFamily = (item.fontFamily as string) || 'Virgil, Outfit, system-ui, sans-serif';
     const heading = item.heading as boolean;
     const fillColor = (item.fillColor as string) || (border ? 'rgba(18,18,26,0.8)' : 'transparent');
 
