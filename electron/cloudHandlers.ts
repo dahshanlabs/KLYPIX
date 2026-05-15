@@ -189,7 +189,12 @@ export function registerCloudHandlers(ipcMain: IpcMain): void {
     // Create an invitation for a blob the caller owns. Returns the token,
     // a ready-to-share https URL, and the expiry. The recipient opens the
     // URL in a browser, signs in (or signs up), and is added as an editor.
-    ipcMain.handle('canvas-cloud:create-invitation', async (_e, args: { blobId: string; email?: string; titleHint?: string }) => {
+    //
+    // The keyB64 is the canvas encryption key — stored on the invitation
+    // and copied to canvas_collaborators on accept so collaborators can
+    // decrypt the cloud blob. See migration 20260515170000 for the E2E
+    // trade-off this represents.
+    ipcMain.handle('canvas-cloud:create-invitation', async (_e, args: { blobId: string; email?: string; titleHint?: string; keyB64?: string }) => {
         const userId = await requireUserId();
         const supabase = getSupabase();
         const token = generateShareToken();
@@ -201,6 +206,7 @@ export function registerCloudHandlers(ipcMain: IpcMain): void {
                 invited_by: userId,
                 invitee_email: args.email || null,
                 title_hint: args.titleHint || null,
+                key_b64: args.keyB64 || null,
             })
             .select('expires_at')
             .single();
@@ -323,12 +329,16 @@ export function registerCloudHandlers(ipcMain: IpcMain): void {
     // me" desktop UI calls this). Owner-side canvases come from a different
     // query (canvas_blobs filtered by owner_id) — this RPC is just for
     // collaborator-side membership.
+    //
+    // Includes key_b64 (the canvas encryption key, copied from the invitation
+    // on accept) so the desktop can decrypt the cloud blob without a separate
+    // RPC round-trip.
     ipcMain.handle('canvas-cloud:list-shared', async () => {
         const userId = await requireUserId();
         const supabase = getSupabase();
         const { data, error } = await supabase
             .from(COLLABORATORS_TABLE)
-            .select('blob_id, role, accepted_at, canvas_blobs(title_hint, byte_size, updated_at)')
+            .select('blob_id, role, accepted_at, key_b64, canvas_blobs(title_hint, byte_size, updated_at)')
             .eq('user_id', userId)
             .order('accepted_at', { ascending: false });
         if (error) throw new Error(`List shared canvases failed: ${error.message}`);

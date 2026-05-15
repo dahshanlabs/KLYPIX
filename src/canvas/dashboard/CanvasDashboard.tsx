@@ -5,6 +5,7 @@ import { useRecentCanvases } from '../../hooks/useRecentCanvases';
 import { useSharedCanvases, type SharedCanvas } from '../../hooks/useSharedCanvases';
 import { removeRecentCanvas } from './recentCanvasesStore';
 import type { RecentCanvas } from './recentCanvasesStore';
+import { openSharedCanvas } from '../sync/openSharedCanvas';
 
 interface Props {
     /** Open a previously-touched canvas by its file path. */
@@ -50,6 +51,30 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
             // user isn't haunted by ghost entries forever.
             if (res && 'ok' in res && !res.ok && /ENOENT|not found|no such file/i.test(res.error || '')) {
                 removeRecentCanvas(entry.filePath);
+            }
+        } finally {
+            setOpeningPath(null);
+        }
+    };
+
+    const handleOpenShared = async (entry: SharedCanvas) => {
+        if (!entry.key_b64) return; // disabled state — UI already prevents click, defensive
+        setOpeningPath(entry.blob_id);
+        try {
+            const res = await openSharedCanvas({
+                blobId: entry.blob_id,
+                keyB64: entry.key_b64,
+                titleHint: entry.canvas_blobs?.title_hint,
+            });
+            if (res.ok) {
+                // The shared canvas is now on disk. Hand it off to the normal
+                // open-by-path flow, same as a recent canvas click.
+                await onOpenRecent(res.filePath);
+            } else {
+                // Surface failure as a window.alert for v1. A nicer toast can
+                // come later — for now we just want the user to see WHY a
+                // shared canvas didn't open.
+                window.alert(`Couldn't open shared canvas: ${res.reason}${res.error ? ' — ' + res.error : ''}`);
             }
         } finally {
             setOpeningPath(null);
@@ -181,7 +206,12 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                                 </div>
                             )}
                             {!sharedLoading && shared.map(entry => (
-                                <SharedRow key={entry.blob_id} entry={entry} />
+                                <SharedRow
+                                    key={entry.blob_id}
+                                    entry={entry}
+                                    opening={openingPath === entry.blob_id}
+                                    onOpen={() => handleOpenShared(entry)}
+                                />
                             ))}
                         </>
                     )}
@@ -193,33 +223,41 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
 
 interface SharedRowProps {
     entry: SharedCanvas;
+    opening: boolean;
+    onOpen: () => void;
 }
 
-// Read-only entry in the "Shared with you" list. v1 doesn't yet open these —
-// to open them in the desktop we need to push the canvas key through the
-// invitation flow (currently keys live only in the URL fragment, which
-// collaborators don't get). Listing them now so users see the relationship
-// exists; clicking will be wired up when key-sharing lands.
-function SharedRow({ entry }: SharedRowProps) {
+// Clickable entry in the "Shared with you" list. Click → openSharedCanvas
+// downloads the encrypted blob, decrypts with the key copied from the
+// invitation on accept, writes to userData/shared-canvases/, and opens via
+// the normal openByPath path.
+//
+// If key_b64 is null (legacy invitation predating key sharing), the row is
+// disabled — UI title explains why.
+function SharedRow({ entry, opening, onOpen }: SharedRowProps) {
     const title = entry.canvas_blobs?.title_hint || 'Untitled canvas';
     const updatedAt = entry.canvas_blobs?.updated_at;
+    const canOpen = !!entry.key_b64;
     return (
         <div
+            onPointerDown={(e) => { e.stopPropagation(); if (canOpen && !opening) onOpen(); }}
             style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: 10,
                 padding: '10px 12px',
                 borderRadius: 8,
-                cursor: 'not-allowed',
-                opacity: 0.55,
+                cursor: !canOpen ? 'not-allowed' : opening ? 'wait' : 'pointer',
+                opacity: !canOpen ? 0.55 : opening ? 0.5 : 1,
                 transition: 'background 0.1s',
             }}
-            title="Opening shared canvases on the desktop requires the upcoming key-sharing step. Coming soon."
+            onMouseEnter={(e) => { if (canOpen && !opening) e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            title={!canOpen ? 'This invitation was sent before key-sharing landed. Ask the owner for a fresh invite.' : 'Open shared canvas'}
         >
             <div style={{
                 width: 36, height: 36, borderRadius: 8,
-                background: 'rgba(16, 185, 129, 0.08)',
+                background: 'rgba(16, 185, 129, 0.12)',
                 color: '#10b981',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 flexShrink: 0,
@@ -238,17 +276,19 @@ function SharedRow({ entry }: SharedRowProps) {
                     <span style={{ color: 'rgba(16, 185, 129, 0.7)' }}>editor</span>
                 </div>
             </div>
-            <div style={{
-                fontSize: 9,
-                color: 'rgba(255,255,255,0.35)',
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.06)',
-                padding: '3px 7px',
-                borderRadius: 5,
-                flexShrink: 0,
-            }}>
-                soon
-            </div>
+            {!canOpen && (
+                <div style={{
+                    fontSize: 9,
+                    color: 'rgba(255,255,255,0.35)',
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                    padding: '3px 7px',
+                    borderRadius: 5,
+                    flexShrink: 0,
+                }}>
+                    no key
+                </div>
+            )}
         </div>
     );
 }

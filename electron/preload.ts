@@ -278,8 +278,10 @@ contextBridge.exposeInMainWorld('electron', {
         delete: (id: string) => ipcRenderer.invoke('canvas-cloud:delete', id),
         createShareToken: (blobId: string) =>
             ipcRenderer.invoke('canvas-cloud:create-share-token', blobId),
-        createInvitation: (args: { blobId: string; email?: string; titleHint?: string }) =>
+        createInvitation: (args: { blobId: string; email?: string; titleHint?: string; keyB64?: string }) =>
             ipcRenderer.invoke('canvas-cloud:create-invitation', args),
+        writeSharedToDisk: (args: { blobId: string; bytesBase64: string; preferredName?: string }) =>
+            ipcRenderer.invoke('canvas-shared:write-to-disk', args),
         listInvitations: (blobId: string) =>
             ipcRenderer.invoke('canvas-cloud:list-invitations', blobId),
         revokeInvitation: (token: string) =>

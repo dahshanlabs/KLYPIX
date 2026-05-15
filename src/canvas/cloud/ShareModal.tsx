@@ -196,7 +196,7 @@ export const ShareModal: React.FC<Props> = ({ canvasFilePath, canvasTitle, onClo
     ), document.body);
 };
 
-function ShareReadyBody({ share, copied, onCopy, onUpdate, isNew }: { share: { shareUrl: string; lastPushedAt: number; blobId: string }; copied: boolean; onCopy: (url: string) => void; onUpdate: () => void; isNew: boolean; }) {
+function ShareReadyBody({ share, copied, onCopy, onUpdate, isNew }: { share: { shareUrl: string; lastPushedAt: number; blobId: string; keyB64: string }; copied: boolean; onCopy: (url: string) => void; onUpdate: () => void; isNew: boolean; }) {
     const minsAgo = Math.max(0, Math.floor((Date.now() - share.lastPushedAt) / 60000));
     return (
         <>
@@ -281,7 +281,7 @@ interface InviteResult {
     expiresAt: string;
 }
 
-function InviteCollaboratorsSection({ share }: { share: { blobId: string } }) {
+function InviteCollaboratorsSection({ share }: { share: { blobId: string; keyB64: string } }) {
     const [email, setEmail] = useState('');
     const [busy, setBusy] = useState(false);
     const [latest, setLatest] = useState<InviteResult | null>(null);
@@ -297,6 +297,11 @@ function InviteCollaboratorsSection({ share }: { share: { blobId: string } }) {
             const res: InviteResult = await bridge.createInvitation({
                 blobId: share.blobId,
                 email: email.trim() || undefined,
+                // The canvas decryption key is included so accepted
+                // collaborators can decrypt the cloud blob without a
+                // separate key-exchange step. This is the intentional E2E
+                // trade-off for invite-based collab (share-by-URL stays E2E).
+                keyB64: share.keyB64,
             });
             setLatest(res);
         } catch (e: any) {

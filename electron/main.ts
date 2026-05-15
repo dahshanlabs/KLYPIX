@@ -1511,6 +1511,27 @@ ipcMain.handle('canvas:clear-autosave', async () => {
     catch (err: any) { return { ok: false, error: err?.message || String(err) }; }
 });
 
+// Save decrypted shared-canvas bytes to a known local path so the existing
+// openByPath flow can pick them up. Used by "Open shared canvas" in the
+// dashboard — the renderer has the decrypted bytes (from
+// syncClient.pull()), and we just need to write them to disk so the rest
+// of the canvas system can treat them like any other .klypix file.
+ipcMain.handle('canvas-shared:write-to-disk', async (_evt: any, args: { blobId: string; bytesBase64: string; preferredName?: string }) => {
+    try {
+        const dir = path.join(app.getPath('userData'), 'shared-canvases');
+        await fs.promises.mkdir(dir, { recursive: true });
+        const safeName = (args.preferredName || `klypix-shared-${args.blobId.slice(0, 8)}`)
+            .replace(/[\\/:*?"<>|]+/g, '_')
+            .slice(0, 64);
+        const filePath = path.join(dir, `${safeName}.klypix`);
+        const buf = Buffer.from(args.bytesBase64, 'base64');
+        await fs.promises.writeFile(filePath, buf);
+        return { ok: true, filePath };
+    } catch (err: any) {
+        return { ok: false, error: err?.message || String(err) };
+    }
+});
+
 ipcMain.handle('canvas:open-by-path', async (_evt: any, filePath: string) => {
     try {
         // Detect format from the file's manifest (or absence thereof) and

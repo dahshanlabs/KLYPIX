@@ -12,6 +12,10 @@ export interface SharedCanvas {
     blob_id: string;
     role: 'editor';
     accepted_at: string;
+    /** Canvas decryption key, copied from the invitation on accept. Null if
+     *  the inviter didn't include it (legacy invitations or share-by-URL
+     *  upgrades) — UI should disable "Open" in that case. */
+    key_b64: string | null;
     canvas_blobs: {
         title_hint: string | null;
         byte_size: number;
