@@ -78,7 +78,12 @@ export default function AcceptInvitePage() {
         try {
             const { data, error } = await supabase.rpc('accept_canvas_invitation', { p_token: token });
             if (error) throw error;
-            const titleHint = Array.isArray(data) && data[0] ? data[0].title_hint : null;
+            // RPC returns a JSON object {blob_id, title_hint}. Older builds of
+            // the function returned an array of rows — handle both shapes so
+            // a stale client doesn't break post-migration.
+            const titleHint = data && typeof data === 'object'
+                ? (Array.isArray(data) ? data[0]?.title_hint : data.title_hint) ?? null
+                : null;
             setView({ status: 'accepted', titleHint });
         } catch (e: any) {
             setView({ status: 'error', message: e?.message || 'Could not accept invitation' });
