@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FilePlus2, FolderOpen, Clock, X as XIcon } from 'lucide-react';
+import { FilePlus2, FolderOpen, Clock, X as XIcon, Users } from 'lucide-react';
 import { useRecentCanvases } from '../../hooks/useRecentCanvases';
+import { useSharedCanvases, type SharedCanvas } from '../../hooks/useSharedCanvases';
 import { removeRecentCanvas } from './recentCanvasesStore';
 import type { RecentCanvas } from './recentCanvasesStore';
 
@@ -35,6 +36,7 @@ interface Props {
  */
 export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onNewCanvas }) => {
     const recents = useRecentCanvases();
+    const { canvases: shared, loading: sharedLoading } = useSharedCanvases();
     const [dismissed, setDismissed] = useState(false);
     const [openingPath, setOpeningPath] = useState<string | null>(null);
 
@@ -135,35 +137,121 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                     </button>
                 </div>
 
-                {recents.length > 0 && (
-                    <div style={{
-                        flex: 1,
-                        overflow: 'auto',
-                        margin: '0 -8px',
-                        padding: '0 8px',
-                    }}>
-                        <div style={{
-                            fontSize: 10, color: 'rgba(255,255,255,0.4)',
-                            textTransform: 'uppercase', letterSpacing: '0.08em',
-                            marginBottom: 8, paddingLeft: 4,
-                        }}>
-                            Recent
-                        </div>
-                        {recents.map(entry => (
-                            <RecentRow
-                                key={entry.filePath}
-                                entry={entry}
-                                opening={openingPath === entry.filePath}
-                                onOpen={() => handleOpen(entry)}
-                                onRemove={() => removeRecentCanvas(entry.filePath)}
-                            />
-                        ))}
-                    </div>
-                )}
+                <div style={{
+                    flex: 1,
+                    overflow: 'auto',
+                    margin: '0 -8px',
+                    padding: '0 8px',
+                }}>
+                    {recents.length > 0 && (
+                        <>
+                            <div style={{
+                                fontSize: 10, color: 'rgba(255,255,255,0.4)',
+                                textTransform: 'uppercase', letterSpacing: '0.08em',
+                                marginBottom: 8, paddingLeft: 4,
+                            }}>
+                                Recent
+                            </div>
+                            {recents.map(entry => (
+                                <RecentRow
+                                    key={entry.filePath}
+                                    entry={entry}
+                                    opening={openingPath === entry.filePath}
+                                    onOpen={() => handleOpen(entry)}
+                                    onRemove={() => removeRecentCanvas(entry.filePath)}
+                                />
+                            ))}
+                        </>
+                    )}
+                    {(shared.length > 0 || sharedLoading) && (
+                        <>
+                            <div style={{
+                                fontSize: 10, color: 'rgba(255,255,255,0.4)',
+                                textTransform: 'uppercase', letterSpacing: '0.08em',
+                                marginTop: recents.length > 0 ? 16 : 0,
+                                marginBottom: 8, paddingLeft: 4,
+                                display: 'flex', alignItems: 'center', gap: 6,
+                            }}>
+                                <Users size={10} />
+                                Shared with you
+                            </div>
+                            {sharedLoading && (
+                                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', padding: '8px 12px' }}>
+                                    Loading…
+                                </div>
+                            )}
+                            {!sharedLoading && shared.map(entry => (
+                                <SharedRow key={entry.blob_id} entry={entry} />
+                            ))}
+                        </>
+                    )}
+                </div>
             </div>
         </div>
     ), document.body);
 };
+
+interface SharedRowProps {
+    entry: SharedCanvas;
+}
+
+// Read-only entry in the "Shared with you" list. v1 doesn't yet open these —
+// to open them in the desktop we need to push the canvas key through the
+// invitation flow (currently keys live only in the URL fragment, which
+// collaborators don't get). Listing them now so users see the relationship
+// exists; clicking will be wired up when key-sharing lands.
+function SharedRow({ entry }: SharedRowProps) {
+    const title = entry.canvas_blobs?.title_hint || 'Untitled canvas';
+    const updatedAt = entry.canvas_blobs?.updated_at;
+    return (
+        <div
+            style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 12px',
+                borderRadius: 8,
+                cursor: 'not-allowed',
+                opacity: 0.55,
+                transition: 'background 0.1s',
+            }}
+            title="Opening shared canvases on the desktop requires the upcoming key-sharing step. Coming soon."
+        >
+            <div style={{
+                width: 36, height: 36, borderRadius: 8,
+                background: 'rgba(16, 185, 129, 0.08)',
+                color: '#10b981',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0,
+                fontSize: 10, fontWeight: 600, letterSpacing: '0.04em',
+            }}>
+                {title.slice(0, 2).toUpperCase()}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: '#e8e8ed', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {title}
+                </div>
+                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                    <Clock size={9} />
+                    {updatedAt ? new Date(updatedAt).toLocaleString() : 'unknown date'}
+                    <span style={{ opacity: 0.4 }}>·</span>
+                    <span style={{ color: 'rgba(16, 185, 129, 0.7)' }}>editor</span>
+                </div>
+            </div>
+            <div style={{
+                fontSize: 9,
+                color: 'rgba(255,255,255,0.35)',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.06)',
+                padding: '3px 7px',
+                borderRadius: 5,
+                flexShrink: 0,
+            }}>
+                soon
+            </div>
+        </div>
+    );
+}
 
 interface RecentRowProps {
     entry: RecentCanvas;
