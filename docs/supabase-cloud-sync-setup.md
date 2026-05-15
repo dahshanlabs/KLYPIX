@@ -39,6 +39,7 @@ Five migrations need to be applied, in order:
 | 4 | [supabase/migrations/20260515130000_fix_rls_recursion.sql](../supabase/migrations/20260515130000_fix_rls_recursion.sql) | Fixes infinite-recursion in the policies from migration 3 (uses SECURITY DEFINER helpers) |
 | 5 | [supabase/migrations/20260515140000_fix_accept_invitation_ambiguity.sql](../supabase/migrations/20260515140000_fix_accept_invitation_ambiguity.sql) | Fixes `column reference "blob_id" is ambiguous` in `accept_canvas_invitation`; returns JSON now |
 | 6 | [supabase/migrations/20260515150000_canvas_ops.sql](../supabase/migrations/20260515150000_canvas_ops.sql) | `canvas_ops` operations log + Realtime publication for live sync |
+| 7 | [supabase/migrations/20260515160000_releases.sql](../supabase/migrations/20260515160000_releases.sql) | `releases` table for staged auto-update rollout (optional — without it, every update goes to 100% immediately). See [docs/releases.md](releases.md). |
 
 Migration 1 enables the owner-side upload flow. Migration 2 mints the
 tokens that go into `https://klypix.com/c/<token>` share URLs and adds the
