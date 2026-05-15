@@ -126,6 +126,10 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
         >
             <div
                 onPointerDown={(e) => e.stopPropagation()}
+                // Portals bubble React events through the React tree, not the
+                // DOM tree — so wheel events here would otherwise reach the
+                // canvas surface's onWheel and pan/zoom the workspace behind.
+                onWheel={(e) => e.stopPropagation()}
                 style={{
                     pointerEvents: 'auto',
                     width: 'min(560px, 92vw)',
