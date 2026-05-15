@@ -1336,8 +1336,12 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
             {/* Empty-state: dashboard takes over when no canvas is loaded
                 in this tab; the lightweight click-to-type hint stays for
                 "started a new canvas, ready to type" so muscle-memory users
-                aren't blocked by an overlay. */}
-            {isEmpty && !state.filePath && (
+                aren't blocked by an overlay.
+                tabActive guard is critical: dashboard renders via portal to
+                document.body, so without it inactive tabs (e.g. canvas mode
+                hidden while user is in chat) would punch the dashboard onto
+                document.body over the chat UI. */}
+            {tabActive && isEmpty && !state.filePath && (
                 <CanvasDashboard
                     onOpenRecent={(p) => file.openByPath(p)}
                     onOpenFile={() => file.open()}
