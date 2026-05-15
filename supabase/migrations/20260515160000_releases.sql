@@ -15,7 +15,10 @@
 -- Only admins should write (insert/update rows when shipping a new release);
 -- we'll wire the admin dashboard to that, or you can use the SQL editor.
 
-create table public.releases (
+-- `if not exists` so re-running this migration on a project where the table
+-- pre-exists (e.g. created by earlier setup scripts) doesn't crash. The
+-- ALTERs below also use idempotent variants for the same reason.
+create table if not exists public.releases (
     version text primary key,
     -- 0-100. Machines with rollout bucket < this value get the update.
     -- Start at 10 (canary), bump to 25, 50, 100 over hours/days. Defaults to
@@ -35,7 +38,7 @@ create table public.releases (
     updated_at timestamptz not null default now()
 );
 
-create index releases_created_at_idx on public.releases(created_at desc);
+create index if not exists releases_created_at_idx on public.releases(created_at desc);
 
 create or replace function public.touch_release_updated_at()
 returns trigger language plpgsql as $$
@@ -45,6 +48,7 @@ begin
 end;
 $$;
 
+drop trigger if exists releases_touch_updated_at on public.releases;
 create trigger releases_touch_updated_at
     before update on public.releases
     for each row execute function public.touch_release_updated_at();
@@ -59,6 +63,7 @@ alter table public.releases enable row level security;
 -- per-user filtering. Anyone with the URL of your Supabase project can read
 -- the manifest. That's fine: version numbers + rollout percentages aren't
 -- secrets.
+drop policy if exists "anyone can read release manifest" on public.releases;
 create policy "anyone can read release manifest"
     on public.releases for select
     to anon, authenticated
