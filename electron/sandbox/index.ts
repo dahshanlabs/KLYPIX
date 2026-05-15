@@ -1,0 +1,14 @@
+export { SandboxManager } from './sandboxManager';
+export { WSLBridge } from './wslBridge';
+export { CommandExecutor } from './commandExecutor';
+export { FileManager } from './fileManager';
+export { checkPermission } from './permissionGuard';
+export { FallbackExecutor } from './fallbackExecutor';
+export { runSetupWizard } from './setupWizard';
+export { DEFAULT_SANDBOX_CONFIG } from './sandboxConfig';
+export type { SandboxConfig } from './sandboxConfig';
+export type { CommandResult, SandboxStatus } from './wslBridge';
+export type { CommandRequest, ApprovalRequest } from './commandExecutor';
+export type { FileResult, DirectoryEntry } from './fileManager';
+export type { PermissionCheck } from './permissionGuard';
+export type { SetupResult } from './setupWizard';

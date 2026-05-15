@@ -1,0 +1,121 @@
+{
+  "name": "klypix",
+  "version": "1.0.0",
+  "main": "dist-electron/main.cjs",
+  "type": "module",
+  "description": "AI-powered quick desktop assistant for Windows",
+  "author": {
+    "name": "Abdullah Aldahshan",
+    "email": "abdullah@dahshanlabs.com",
+    "url": "https://dahshanlabs.com"
+  },
+  "license": "MIT",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:vite\" \"npm run dev:electron\"",
+    "dev:vite": "vite",
+    "dev:electron": "wait-on tcp:5173 && npx tsc -p tsconfig.electron.json && node scripts/build-electron.js && electron .",
+    "build": "vite build && npx tsc -p tsconfig.electron.json && node scripts/build-electron.js && electron-builder",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.82.0",
+    "@google/generative-ai": "^0.24.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@nut-tree-fork/nut-js": "^4.2.6",
+    "@supabase/supabase-js": "^2.99.3",
+    "canvas": "^3.2.2",
+    "cheerio": "^1.2.0",
+    "clsx": "^2.1.1",
+    "docx": "^9.6.1",
+    "electron-is-dev": "^3.0.1",
+    "electron-updater": "^6.8.3",
+    "exceljs": "^4.4.0",
+    "fractional-indexing": "^3.2.0",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.473.0",
+    "mammoth": "^1.11.0",
+    "marked": "^17.0.3",
+    "officeparser": "^6.0.4",
+    "pdf-parse": "^2.4.5",
+    "pdfjs-dist": "^2.16.105",
+    "pdfkit": "^0.18.0",
+    "perfect-freehand": "^1.2.3",
+    "playwright-core": "^1.58.2",
+    "pptxgenjs": "^4.0.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "screenshot-desktop": "^1.15.0",
+    "sql.js": "^1.14.1",
+    "tailwind-merge": "^2.6.0",
+    "tesseract.js": "^7.0.0",
+    "uuid": "^13.0.0",
+    "ws": "^8.19.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.2",
+    "@types/pdfkit": "^0.17.5",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/sql.js": "^1.4.11",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^4.7.0",
+    "autoprefixer": "^10.4.27",
+    "concurrently": "^9.2.1",
+    "electron": "^33.4.11",
+    "electron-builder": "^24.13.3",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.1",
+    "wait-on": "^8.0.5"
+  },
+  "build": {
+    "appId": "com.dahshanlabs.klypix",
+    "productName": "Klypix",
+    "copyright": "© 2026 Abdullah Aldahshan — Dahshan Labs",
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico",
+      "fileAssociations": [
+        {
+          "ext": "klypix",
+          "name": "KLYPIX Canvas",
+          "description": "KLYPIX canvas workspace",
+          "role": "Editor"
+        },
+        {
+          "ext": "any",
+          "name": "KLYPIX Canvas (legacy)",
+          "description": "Legacy KLYPIX canvas workspace — opens in KLYPIX",
+          "role": "Editor"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    },
+    "protocols": [
+      {
+        "name": "KLYPIX",
+        "schemes": [
+          "klypix"
+        ]
+      }
+    ]
+  }
+}

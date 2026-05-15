@@ -1,0 +1,22 @@
+﻿{
+    "compilerOptions": {
+        "target": "ESNext",
+        "module": "CommonJS",
+        "moduleResolution": "Node",
+        "outDir": "dist-electron",
+        "strict": true,
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "baseUrl": "."
+    },
+    "include": [
+        "electron/main.ts",
+        "electron/preload.ts",
+        "electron/updater.ts",
+        "electron/mcpClient.ts",
+        "electron/auth/**/*.ts",
+        "electron/generators/**/*.ts",
+        "electron/sandbox/**/*.ts",
+        "electron/canvas/**/*.ts"
+    ]
+}

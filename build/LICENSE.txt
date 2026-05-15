@@ -1,0 +1,39 @@
+ALT+Space — End User License Agreement
+
+Copyright © 2026 Abdullah Aldahshan — Dahshan Labs
+Website: https://dahshanlabs.com
+Contact: abdullah@dahshanlabs.com
+Location: Riyadh, Saudi Arabia
+
+This software is provided "as is" without warranty of any kind, express or implied.
+
+By installing or using ALT+Space, you agree to the following:
+
+1. LICENSE GRANT
+   You are granted a non-exclusive, non-transferable license to use this software
+   for personal, non-commercial purposes only.
+
+2. RESTRICTIONS
+   You may not redistribute, reverse-engineer, resell, sublicense, or create
+   derivative works from this software without explicit written permission.
+
+3. THIRD-PARTY SERVICES
+   This software uses the Google Gemini API. API usage costs are the user's
+   sole responsibility. The developer is not responsible for Google API changes
+   or availability.
+
+4. DISCLAIMER OF WARRANTIES
+   THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND. THE DEVELOPER
+   EXPRESSLY DISCLAIMS ALL WARRANTIES INCLUDING MERCHANTABILITY, FITNESS FOR A
+   PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+5. LIMITATION OF LIABILITY
+   TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE DEVELOPER SHALL NOT BE LIABLE
+   FOR ANY DAMAGES ARISING FROM USE OF THIS SOFTWARE, INCLUDING BUT NOT LIMITED
+   TO FINANCIAL, TRADING, OR BUSINESS LOSSES.
+
+6. AI-GENERATED CONTENT
+   AI outputs are for informational purposes only and do not constitute
+   professional financial, legal, or medical advice.
+
+For the full Terms & Conditions, visit: https://dahshanlabs.com

@@ -1,0 +1,245 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800;900&display=swap');
+/* Canvas text fonts — curated list exposed in the Text panel font dropdown. */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Space+Grotesk:wght@400;700&family=Newsreader:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;700&family=Caveat:wght@400;700&family=Bricolage+Grotesque:wght@400;700&display=swap');
+
+/* Virgil — Excalidraw's signature handwritten font, now KLYPIX's canvas
+   default. Not on Google Fonts; the .woff2 file lives at public/fonts/.
+   font-display: swap renders fallback text immediately and re-paints once
+   the font loads, so a missing/slow font never blocks rendering. */
+@font-face {
+    font-family: 'Virgil';
+    src: url('/fonts/Virgil.woff2') format('woff2');
+    font-display: swap;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .font-poppins {
+    font-family: 'Poppins', sans-serif !important;
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-transparent text-slate-50 antialiased overflow-hidden;
+    font-family: 'Outfit', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  }
+}
+
+.title-bar {
+  @apply flex items-center justify-between px-3 py-1.5 bg-gradient-to-r from-emerald-950/90 via-[#191C1D]/90 to-[#191C1D] border-b border-emerald-500/20;
+  /* NOTE: deliberately does NOT use -webkit-app-region: drag. With CSS drag
+     regions, Chromium suppresses mouse/click/dblclick events on the element,
+     so the JS double-click-to-maximize handler never fires. We implement
+     window dragging manually via IPC (window:drag-start / drag-end). */
+  /* Stay above all modals (MemoryPanel z-50, MemoryConsentDialog z-60) so window
+     controls (minimize / maximize / close) remain reachable while a dialog is open. */
+  position: relative;
+  z-index: 100;
+  user-select: none;
+}
+
+.title-bar span {
+  @apply text-white font-bold !important;
+}
+
+.window-controls {
+  @apply flex items-center gap-0.5 no-drag;
+}
+
+.drag {
+  -webkit-app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Input placeholder ellipsis — textarea placeholders can't use text-overflow,
+   so we use a pseudo-technique: make placeholder single-line with nowrap */
+textarea::placeholder {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+/* Canvas text-item edit mode: a transparent textarea owns input on top of
+   a styled overlay that paints per-range fonts/colors/sizes. Default
+   browser selection paints an opaque blue BG and forces selected text to
+   white — both occlude the overlay, so a partial Caveat (or any per-range
+   formatting) "disappears" the moment the user selects characters. We
+   override ::selection so the textarea's selection is just a translucent
+   blue tint with no visible glyphs, letting the styled overlay render
+   through. */
+[data-canvas-text-edit-id]::selection {
+  background-color: rgba(59, 130, 246, 0.32);
+  color: transparent;
+}
+[data-canvas-text-edit-id]::-moz-selection {
+  background-color: rgba(59, 130, 246, 0.32);
+  color: transparent;
+}
+
+/* Glassmorphism Effect */
+.glass {
+  @apply bg-[#1a1d1e]/[0.98] backdrop-blur-3xl border border-white/10 shadow-2xl;
+}
+
+/* Markdown Content Styling */
+.markdown-content {
+  @apply space-y-3;
+}
+
+.markdown-content p {
+  @apply mb-3 last:mb-0;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  @apply ml-6 mb-3 space-y-2;
+}
+
+.markdown-content ul {
+  @apply list-disc;
+}
+
+.markdown-content ol {
+  @apply list-decimal;
+}
+
+.markdown-content li {
+  @apply leading-relaxed;
+}
+
+.markdown-content strong {
+  @apply font-bold text-white;
+}
+
+.markdown-content em {
+  @apply italic text-slate-300;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3 {
+  @apply font-bold text-white mt-4 mb-2;
+}
+
+.markdown-content code {
+  @apply bg-white/10 px-1.5 py-0.5 rounded text-primary-300 font-mono text-xs;
+}
+
+.markdown-content pre {
+  @apply bg-black/40 p-3 rounded-xl overflow-x-auto my-3 border border-white/10;
+}
+
+.markdown-content pre code {
+  @apply bg-transparent p-0 text-slate-300 block;
+}
+
+.markdown-content table {
+  @apply w-full border-collapse border border-white/60 my-4 text-xs;
+}
+
+.markdown-content th,
+.markdown-content td {
+  @apply border border-white/60 px-3 py-2 text-left;
+}
+
+.markdown-content th {
+  @apply bg-white/10 font-bold text-white;
+}
+
+.animate-in {
+  animation: slideUp 0.3s ease-out;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Shimmer loading skeleton */
+.shimmer-bar {
+  background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes cdpPulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+/* Agent Robot animations are inline in AgentRobot.tsx (same pattern as KlypixEyes) */
+
+/* DOCX preview card (mammoth HTML in canvas FileItem) — scoped, minimal. */
+.docx-preview h1, .docx-preview h2, .docx-preview h3 { color: #e8e8ed; margin: 0.6em 0 0.3em; font-weight: 600; }
+.docx-preview h1 { font-size: 15px; }
+.docx-preview h2 { font-size: 13.5px; }
+.docx-preview h3 { font-size: 12.5px; }
+.docx-preview p { margin: 0.4em 0; }
+.docx-preview ul, .docx-preview ol { margin: 0.4em 0 0.4em 1.2em; padding: 0; }
+.docx-preview li { margin: 0.15em 0; }
+.docx-preview table { border-collapse: collapse; width: 100%; margin: 0.4em 0; }
+.docx-preview th, .docx-preview td { border: 1px solid rgba(255,255,255,0.08); padding: 3px 6px; }
+.docx-preview strong { color: #e8e8ed; }
+.docx-preview a { color: #10b981; text-decoration: none; }
+
+
+/* Chat thread typing indicator */
+.typing-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+  animation: typingPulse 1s infinite ease-in-out;
+}
+@keyframes typingPulse {
+  0%, 80%, 100% { transform: scale(0.7); opacity: 0.3; }
+  40% { transform: scale(1); opacity: 0.9; }
+}
+
+/* Embed sync indicator on FileItem cards — gentle pulse while syncing back into the .klypix. */
+@keyframes klypix-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+

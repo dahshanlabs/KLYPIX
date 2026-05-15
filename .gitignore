@@ -1,0 +1,32 @@
+# Dependencies
+node_modules
+admin/node_modules
+
+# Build outputs
+dist
+dist-electron
+release
+admin/.next
+admin/.next/**
+
+# Environment files (NEVER commit — these hold Supabase keys, API tokens, etc.)
+.env
+.env.local
+.env.*.local
+admin/.env
+admin/.env.local
+admin/.env.*.local
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/*
+!.vscode/extensions.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# TS build artifacts
+*.tsbuildinfo
