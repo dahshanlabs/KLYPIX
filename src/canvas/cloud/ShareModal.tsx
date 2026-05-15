@@ -308,11 +308,30 @@ function InviteCollaboratorsSection({ share }: { share: { blobId: string } }) {
 
     const copyInvite = async () => {
         if (!latest) return;
+        const text = latest.inviteUrl;
+        let ok = false;
         try {
-            await navigator.clipboard.writeText(latest.inviteUrl);
+            await navigator.clipboard.writeText(text);
+            ok = true;
+        } catch {
+            // Fallback for environments where clipboard API is blocked
+            // (some Electron contexts, unfocused windows, file:// origin).
+            try {
+                const el = document.createElement('textarea');
+                el.value = text;
+                el.style.position = 'fixed';
+                el.style.opacity = '0';
+                document.body.appendChild(el);
+                el.select();
+                document.execCommand('copy');
+                document.body.removeChild(el);
+                ok = true;
+            } catch { /* give up silently */ }
+        }
+        if (ok) {
             setCopied(true);
-            setTimeout(() => setCopied(false), 1800);
-        } catch { /* no-op */ }
+            setTimeout(() => setCopied(false), 2200);
+        }
     };
 
     const expiresDays = latest
@@ -402,19 +421,20 @@ function InviteCollaboratorsSection({ share }: { share: { blobId: string } }) {
                             type="button"
                             onClick={copyInvite}
                             style={{
-                                display: 'flex', alignItems: 'center', gap: 4,
-                                padding: '6px 10px',
-                                borderRadius: 5,
-                                background: copied ? 'rgba(16, 185, 129, 0.18)' : 'rgba(16, 185, 129, 0.1)',
-                                color: '#10b981',
-                                border: 'none',
+                                display: 'flex', alignItems: 'center', gap: 5,
+                                padding: '8px 12px',
+                                borderRadius: 6,
+                                background: copied ? 'rgba(16, 185, 129, 0.3)' : 'rgba(16, 185, 129, 0.12)',
+                                color: copied ? '#ffffff' : '#10b981',
+                                border: copied ? '1px solid rgba(16, 185, 129, 0.6)' : '1px solid transparent',
                                 cursor: 'pointer',
-                                fontSize: 10,
-                                fontWeight: 500,
+                                fontSize: 11,
+                                fontWeight: 600,
                                 whiteSpace: 'nowrap',
+                                transition: 'all 0.15s',
                             }}
                         >
-                            {copied ? <><Check size={10} /> Copied</> : <><Copy size={10} /> Copy</>}
+                            {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
                         </button>
                     </div>
                     <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 6 }}>
