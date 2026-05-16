@@ -1,8 +1,11 @@
 /* Font parity with the desktop app so canvas items render identically in
-   the web viewer. Matches src/index.css in the Electron app. */
+   the web viewer. Matches src/index.css in the Electron app.
+   Outfit was dropped from the desktop body font in favor of Thmanyah Sans
+   (bilingual coverage, locally hosted). The viewer follows the same
+   choice so shared canvases look identical to what the author sees. */
 
-/* App-shell fonts */
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@100..900&display=swap');
+/* App-shell font: Poppins kept as the brand/accent font (used in a few
+   spots in the desktop UI; harmless to keep here for any cross-link). */
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800;900&display=swap');
 
 /* Canvas text fonts — curated list exposed in the desktop Text panel.
@@ -19,6 +22,27 @@
     font-display: swap;
 }
 
+/* Thmanyah — bilingual Arabic + Latin typeface. Mirrors src/index.css in
+   the desktop app so canvases authored with Thmanyah render with the same
+   typography in the web viewer. Three families × 5 weights. */
+@font-face { font-family: 'Thmanyah Sans'; font-weight: 300; src: url('/fonts/thmanyah/thmanyahsans-Light.woff2')   format('woff2'); font-display: swap; }
+@font-face { font-family: 'Thmanyah Sans'; font-weight: 400; src: url('/fonts/thmanyah/thmanyahsans-Regular.woff2') format('woff2'); font-display: swap; }
+@font-face { font-family: 'Thmanyah Sans'; font-weight: 500; src: url('/fonts/thmanyah/thmanyahsans-Medium.woff2')  format('woff2'); font-display: swap; }
+@font-face { font-family: 'Thmanyah Sans'; font-weight: 700; src: url('/fonts/thmanyah/thmanyahsans-Bold.woff2')    format('woff2'); font-display: swap; }
+@font-face { font-family: 'Thmanyah Sans'; font-weight: 900; src: url('/fonts/thmanyah/thmanyahsans-Black.woff2')   format('woff2'); font-display: swap; }
+
+@font-face { font-family: 'Thmanyah Serif Text'; font-weight: 300; src: url('/fonts/thmanyah/thmanyahseriftext-Light.woff2')   format('woff2'); font-display: swap; }
+@font-face { font-family: 'Thmanyah Serif Text'; font-weight: 400; src: url('/fonts/thmanyah/thmanyahseriftext-Regular.woff2') format('woff2'); font-display: swap; }
+@font-face { font-family: 'Thmanyah Serif Text'; font-weight: 500; src: url('/fonts/thmanyah/thmanyahseriftext-Medium.woff2')  format('woff2'); font-display: swap; }
+@font-face { font-family: 'Thmanyah Serif Text'; font-weight: 700; src: url('/fonts/thmanyah/thmanyahseriftext-Bold.woff2')    format('woff2'); font-display: swap; }
+@font-face { font-family: 'Thmanyah Serif Text'; font-weight: 900; src: url('/fonts/thmanyah/thmanyahseriftext-Black.woff2')   format('woff2'); font-display: swap; }
+
+@font-face { font-family: 'Thmanyah Serif Display'; font-weight: 300; src: url('/fonts/thmanyah/thmanyahserifdisplay-Light.woff2')   format('woff2'); font-display: swap; }
+@font-face { font-family: 'Thmanyah Serif Display'; font-weight: 400; src: url('/fonts/thmanyah/thmanyahserifdisplay-Regular.woff2') format('woff2'); font-display: swap; }
+@font-face { font-family: 'Thmanyah Serif Display'; font-weight: 500; src: url('/fonts/thmanyah/thmanyahserifdisplay-Medium.woff2')  format('woff2'); font-display: swap; }
+@font-face { font-family: 'Thmanyah Serif Display'; font-weight: 700; src: url('/fonts/thmanyah/thmanyahserifdisplay-Bold.woff2')    format('woff2'); font-display: swap; }
+@font-face { font-family: 'Thmanyah Serif Display'; font-weight: 900; src: url('/fonts/thmanyah/thmanyahserifdisplay-Black.woff2')   format('woff2'); font-display: swap; }
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -26,7 +50,10 @@
 body {
     background: #0a0a0a;
     color: #ffffff;
-    font-family: 'Outfit', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    /* Thmanyah Sans is the body voice — matches the desktop app for both
+       English and Arabic. Bundled locally above, falls back to Segoe UI
+       / system-ui while loading or if the font file 404s. */
+    font-family: 'Thmanyah Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
 
 ::-webkit-scrollbar { width: 6px; }

@@ -243,9 +243,15 @@ export const CanvasViewer: React.FC<Props> = ({ canvas, onDownload }) => {
                     </button>
                     <button
                         onClick={onDownload}
-                        className="bg-emerald-500/15 hover:bg-emerald-500/25 transition-colors border border-emerald-500/30 text-emerald-300 text-xs font-medium rounded-lg px-3 py-2"
+                        // Solid dark pill matching the theme-toggle button next
+                        // to it. Earlier `bg-emerald-500/15` rendered almost
+                        // invisible on the cream "Sender's theme" background.
+                        // Emerald accent kept on the text + an inset dot so
+                        // it still reads as the primary action.
+                        className="bg-black/60 backdrop-blur-md hover:bg-black/70 border border-emerald-500/40 text-emerald-300 hover:text-emerald-200 text-xs font-medium rounded-lg px-3 py-2 flex items-center gap-1.5 shadow-md"
                         title="Download the .klypix file to open in the desktop app"
                     >
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                         Download .klypix
                     </button>
                 </div>
@@ -318,21 +324,45 @@ function ItemRenderer({ item, assetUrls }: { item: ParsedItem; assetUrls: Record
     }
 }
 
+// Arabic-script Unicode ranges: base + supplement + presentation forms A/B.
+// Mirrors src/canvas/items/TextItem.tsx so the auto-Thmanyah fallback fires
+// on the same content in both renderers.
+const ARABIC_RANGE = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
+
 function TextRender({ item, baseStyle }: { item: ParsedItem; baseStyle: React.CSSProperties }) {
     const fontSize = (item.fontSize as number) || 14;
     const color = (item.color as string) || '#e8e8ed';
     const content = (item.content as string) || '';
     const border = item.border as boolean;
-    // Canvas default is Virgil (the handwritten font shipped at /fonts/Virgil.woff2
-    // in admin/public). Matches the desktop's text-item default; items with an
-    // explicit fontFamily render that font instead. Outfit + system-ui are
-    // fallbacks so missing/slow font loads don't blank the text.
-    const fontFamily = (item.fontFamily as string) || 'Virgil, Outfit, system-ui, sans-serif';
+    // Font stack: explicit user choice wins. When the content is Arabic,
+    // Thmanyah Sans enters the cascade (either as the primary if no explicit
+    // font, or as a fallback after the explicit one). For English content
+    // the cascade is IDENTICAL to the pre-Arabic-support code path — no
+    // Thmanyah anywhere it could affect English rendering. Mirrors
+    // resolveCanvasFontFamily in the desktop TextItem.
+    const explicit = item.fontFamily as string;
+    const isArabic = ARABIC_RANGE.test(content);
+    // Mirror the desktop's resolveCanvasFontFamily after Outfit was dropped:
+    // explicit user font wins, Thmanyah is the Arabic/mixed-script fallback,
+    // Virgil is the canvas default. Removing the dead Outfit entry keeps the
+    // viewer stack in lockstep with what the desktop renders.
+    const fontFamily = explicit
+        ? (isArabic
+            ? `"${explicit}", "Thmanyah Sans", Virgil, system-ui, sans-serif`
+            : `"${explicit}", Virgil, "Thmanyah Sans", system-ui, sans-serif`)
+        : (isArabic
+            ? '"Thmanyah Sans", "Segoe UI", system-ui, sans-serif'
+            : 'Virgil, "Thmanyah Sans", system-ui, sans-serif');
     const heading = item.heading as boolean;
     const fillColor = (item.fillColor as string) || (border ? 'rgba(18,18,26,0.8)' : 'transparent');
 
     return (
         <div
+            // dir="auto" — browser picks LTR/RTL from the first strong char,
+            // matching the desktop renderer (which also uses dir="auto" on
+            // text items). Arabic content lays out RTL without any extra
+            // setting on the item.
+            dir="auto"
             style={{
                 ...baseStyle,
                 background: fillColor,
@@ -426,7 +456,7 @@ function ContainerRender({ item, baseStyle }: { item: ParsedItem; baseStyle: Rea
                 borderRadius: 12,
             }}
         >
-            <div style={{ position: 'absolute', top: -22, left: 4, fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'Outfit, system-ui, sans-serif' }}>
+            <div style={{ position: 'absolute', top: -22, left: 4, fontSize: 10, color: 'rgba(255,255,255,0.4)', fontFamily: 'Thmanyah Sans, system-ui, sans-serif' }}>
                 {title}
             </div>
         </div>
@@ -468,7 +498,7 @@ function PlaceholderRender({ item, baseStyle }: { item: ParsedItem; baseStyle: R
                 border: '1px solid rgba(255,255,255,0.08)',
                 borderRadius: 8,
                 color: 'rgba(255,255,255,0.6)',
-                fontFamily: 'Outfit, system-ui, sans-serif',
+                fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
                 fontSize: 11,
                 padding: 8,
                 display: 'flex',
