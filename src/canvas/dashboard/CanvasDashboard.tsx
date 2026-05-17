@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FilePlus2, FolderOpen, Clock, X as XIcon, Users } from 'lucide-react';
+import { FilePlus2, FolderOpen, Clock, X as XIcon, Users, Undo2 } from 'lucide-react';
 import { useRecentCanvases } from '../../hooks/useRecentCanvases';
 import { t, useLocale } from '../../i18n/strings';
 import { useSharedCanvases, type SharedCanvas } from '../../hooks/useSharedCanvases';
 import { removeRecentCanvas } from './recentCanvasesStore';
 import type { RecentCanvas } from './recentCanvasesStore';
 import { openSharedCanvas } from '../sync/openSharedCanvas';
+import { useRecentlyClosed } from '../../hooks/useRecentlyClosed';
+import { consumeClosedCanvas, type ClosedCanvas } from './recentlyClosedStore';
 
 interface Props {
     /** Open a previously-touched canvas by its file path. */
@@ -19,6 +21,11 @@ interface Props {
      *  Esc + click-outside-dimmer. Omit for the empty-canvas auto-show
      *  state (no way out except picking a canvas). */
     onDismiss?: () => void;
+    /** Restore a session-scoped recently-closed canvas into the active tab.
+     *  Receives the full ClosedCanvas record so the parent can deserialize
+     *  + apply via the canvas store (and clear the entry from the queue).
+     *  Omit if the host can't honor it (no current canvas state available). */
+    onRestoreClosed?: (entry: ClosedCanvas) => void;
 }
 
 /**
@@ -40,9 +47,10 @@ interface Props {
  *     and lets the user click into the empty canvas underneath. That's
  *     less surprising than a state mutation for "I just want to start typing."
  */
-export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onNewCanvas, onDismiss }) => {
+export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onNewCanvas, onDismiss, onRestoreClosed }) => {
     useLocale();
     const recents = useRecentCanvases();
+    const recentlyClosed = useRecentlyClosed();
     const { canvases: shared, loading: sharedLoading, leave: leaveShared } = useSharedCanvases();
     const [dismissed, setDismissed] = useState(false);
     const [openingPath, setOpeningPath] = useState<string | null>(null);
@@ -239,11 +247,39 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                     margin: '0 -8px',
                     padding: '0 8px',
                 }}>
+                    {/* Recently closed — session-scoped. Sits above Recent because
+                        it's the most likely thing the user wants right after an
+                        accidental close. Each entry consumes itself on restore
+                        so there's no duplicate-restore footgun. */}
+                    {recentlyClosed.length > 0 && onRestoreClosed && (
+                        <>
+                            <div style={{
+                                fontSize: 10, color: 'rgba(255,255,255,0.4)',
+                                textTransform: 'uppercase', letterSpacing: '0.08em',
+                                marginBottom: 8, paddingLeft: 4,
+                                display: 'flex', alignItems: 'center', gap: 6,
+                            }}>
+                                <Undo2 size={10} />
+                                {t('canvas.recently_closed')}
+                            </div>
+                            {recentlyClosed.map(entry => (
+                                <RecentlyClosedRow
+                                    key={entry.id}
+                                    entry={entry}
+                                    onRestore={() => {
+                                        const consumed = consumeClosedCanvas(entry.id);
+                                        if (consumed) onRestoreClosed(consumed);
+                                    }}
+                                />
+                            ))}
+                        </>
+                    )}
                     {recents.length > 0 && (
                         <>
                             <div style={{
                                 fontSize: 10, color: 'rgba(255,255,255,0.4)',
                                 textTransform: 'uppercase', letterSpacing: '0.08em',
+                                marginTop: recentlyClosed.length > 0 && onRestoreClosed ? 16 : 0,
                                 marginBottom: 8, paddingLeft: 4,
                             }}>
                                 {t('canvas.recent')}
@@ -469,6 +505,50 @@ function RecentRow({ entry, opening, onOpen, onRemove }: RecentRowProps) {
             >
                 <XIcon size={12} />
             </button>
+        </div>
+    );
+}
+
+/** A row in the "Recently closed" section. Clicking restores the snapshot
+ *  into the active canvas tab. No hover preview yet; just title + meta. */
+function RecentlyClosedRow({ entry, onRestore }: { entry: ClosedCanvas; onRestore: () => void }) {
+    return (
+        <div
+            onPointerDown={(e) => { e.stopPropagation(); onRestore(); }}
+            title={entry.filePath || entry.title}
+            style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 12px',
+                borderRadius: 10,
+                background: 'rgba(255,255,255,0.03)',
+                cursor: 'pointer',
+                transition: 'background 0.15s',
+                marginBottom: 4,
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(16,185,129,0.10)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.03)')}
+        >
+            <div style={{
+                width: 32, height: 32, borderRadius: 8,
+                background: 'rgba(16,185,129,0.12)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#10b981', flexShrink: 0,
+            }}>
+                <Undo2 size={14} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: '#e8e8ed', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {entry.title}
+                </div>
+                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                    <Clock size={9} />
+                    <span>{formatRelativeTime(entry.closedAt)}</span>
+                    <span>·</span>
+                    <span>{entry.itemCount === 1 ? t('canvas.group_item_one') : `${entry.itemCount} ${t('canvas.group_items')}`}</span>
+                </div>
+            </div>
         </div>
     );
 }

@@ -9,6 +9,16 @@ export interface TabMeta {
     id: string;
     title: string;
     dirty: boolean;
+    // True when the tab has items / lines / strokes that would be lost on
+    // close — used by the close-confirm prompt so an unsaved-but-recently-
+    // autosaved canvas (dirty=false because autosave just ran) still warns
+    // before discarding work. Optional for back-compat with callers that
+    // haven't been updated.
+    hasContent?: boolean;
+    // True when the canvas is backed by a saved file path. Combined with
+    // hasContent + dirty in the close-confirm: safe-to-close means saved
+    // (hasFilePath && !dirty) or empty (!hasContent).
+    hasFilePath?: boolean;
 }
 
 interface Props {

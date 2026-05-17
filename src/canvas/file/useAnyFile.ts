@@ -394,6 +394,43 @@ export function useAnyFile(tabActive = true, skipAutosaveCheck = false) {
         return applyLoadResult(res, dispatch, stateRef);
     }, [dispatch]);
 
+    // Restore from an in-memory serialized snapshot. Used by the recently-
+    // closed list — bytes never round-tripped through disk, asset registry
+    // is still warm from the original session. v3 only (the close path
+    // captures v3 via the legacy serialize() function for portability).
+    // filePath null means the restored canvas had never been saved — we
+    // preserve that so the user sees "Untitled" and can Save-As fresh.
+    const restoreFromSnapshot = useCallback((args: { snapshotJson: string; filePath: string | null }): { ok: boolean; error?: string } => {
+        try {
+            const doc: CanvasDocumentV3 = deserialize(args.snapshotJson);
+            // Release this tab's current assets before swapping in.
+            clearAssetsForIds(collectReferencedAssetIds(stateRef.current));
+            const itemMap: Record<string, CanvasItem> = {};
+            for (const it of doc.items) itemMap[it.id] = it;
+            const connMap: Record<string, Connection> = {};
+            for (const c of (doc.connections || [])) connMap[c.id] = c;
+            const lineMap: Record<string, DrawnLine> = {};
+            for (const l of (doc.lines || [])) lineMap[l.id] = l;
+            const strokeMap: Record<string, FreehandStroke> = {};
+            for (const s of (doc.strokes || [])) strokeMap[s.id] = s;
+            dispatch({
+                type: 'LOAD_FILE',
+                items: itemMap,
+                order: doc.order,
+                connections: connMap,
+                lines: lineMap,
+                strokes: strokeMap,
+                view: doc.view,
+                filePath: args.filePath,
+                title: doc.title || (args.filePath ? titleFromPath(args.filePath) : 'Untitled'),
+                nextGroupNumber: doc.nextGroupNumber,
+            });
+            return { ok: true };
+        } catch (err: any) {
+            return { ok: false, error: err?.message || String(err) };
+        }
+    }, [dispatch]);
+
     // Subscribe to file-association events — OS-launched .any paths. Only the
     // active tab handles these so a single OS open-file doesn't fan out to
     // every mounted tab. Multi-tab open-in-new-tab is a follow-up.
@@ -519,5 +556,5 @@ export function useAnyFile(tabActive = true, skipAutosaveCheck = false) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tabActive, skipAutosaveCheck]);
 
-    return { newFile, save: doSave, saveAs, open, openByPath, restoreSettled };
+    return { newFile, save: doSave, saveAs, open, openByPath, restoreFromSnapshot, restoreSettled };
 }

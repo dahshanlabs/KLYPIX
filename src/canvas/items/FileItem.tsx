@@ -7,6 +7,7 @@ import { ResizeHandle } from '../interaction/ResizeHandle';
 import { useCanvasStore } from '../state/canvasStore';
 import { setEmbedSync } from '../file/embedSyncStore';
 import { useEmbedSync } from '../../hooks/useEmbedSync';
+import { t, useLocale } from '../../i18n/strings';
 
 /**
  * Open an embedded file in its native app.
@@ -395,6 +396,27 @@ function FileCardBody({ item, selected }: Props) {
 }
 
 /**
+ * Open the WHOLE embedded folder as a .zip — Windows Explorer's built-in
+ * compressed-folder view lets the user browse the embedded contents like
+ * a real folder, drag files out, etc. The .klypix still holds the
+ * authoritative bytes; this is read-only egress.
+ */
+async function openFolderAsZip(item: FileItemType): Promise<void> {
+    const api: any = (window as any).electron?.canvas;
+    if (!api?.openAssetBytes) return;
+    const asset = item.assetId ? getAsset(item.assetId) : null;
+    if (!asset) return;
+    try {
+        await api.openAssetBytes({
+            fileName: `${item.fileName}.zip`,
+            base64: bytesToBase64(asset.bytes),
+        });
+    } catch (err) {
+        console.warn('[folder card] open-as-zip failed:', err);
+    }
+}
+
+/**
  * Extract a single file from a folder asset and open it via the OS default
  * app. Reuses the existing `canvas:open-asset-bytes` IPC (which writes to a
  * sanitized temp path then `shell.openPath`s it) — no main-process change
@@ -431,6 +453,7 @@ function formatFolderBytes(n: number): string {
 }
 
 function FolderCardBody({ item }: { item: FileItemType }) {
+    useLocale();
     const manifest = item.folderManifest || [];
     const skipped = item.folderSkipped || [];
     const [busyPath, setBusyPath] = useState<string | null>(null);
@@ -472,6 +495,28 @@ function FolderCardBody({ item }: { item: FileItemType }) {
                         )}
                     </div>
                 </div>
+                <button
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => { e.stopPropagation(); openFolderAsZip(item); }}
+                    title={t('canvas.folder_open_embedded')}
+                    style={{
+                        flexShrink: 0,
+                        padding: 6,
+                        borderRadius: 6,
+                        background: 'rgba(16,185,129,0.12)',
+                        color: '#10b981',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        fontSize: 10,
+                        fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
+                        fontWeight: 500,
+                    }}
+                    className="hover:!bg-emerald-500/25"
+                >
+                    <FolderOpenIcon size={12} />
+                </button>
             </div>
             <div
                 onWheel={(e) => e.stopPropagation()}
@@ -487,7 +532,7 @@ function FolderCardBody({ item }: { item: FileItemType }) {
             >
                 {manifest.length === 0 && (
                     <div style={{ padding: '12px', fontSize: 11, color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' }}>
-                        empty folder
+                        {t('canvas.folder_empty')}
                     </div>
                 )}
                 {manifest.map((entry) => {
@@ -523,7 +568,7 @@ function FolderCardBody({ item }: { item: FileItemType }) {
                             <button
                                 onPointerDown={(e) => e.stopPropagation()}
                                 onClick={(e) => { e.stopPropagation(); openOne(entry.path); }}
-                                title="Extract & open"
+                                title={t('canvas.folder_extract_open')}
                                 style={{
                                     flexShrink: 0,
                                     padding: 3,
@@ -548,11 +593,11 @@ function FolderCardBody({ item }: { item: FileItemType }) {
                         background: 'rgba(251,191,36,0.05)',
                         borderTop: '1px solid rgba(251,191,36,0.15)',
                     }}>
-                        <div style={{ fontWeight: 600, marginBottom: 2 }}>{skipped.length} skipped:</div>
+                        <div style={{ fontWeight: 600, marginBottom: 2 }}>{skipped.length} {t('canvas.folder_skipped_label')}</div>
                         {skipped.slice(0, 6).map((s, i) => (
                             <div key={i} style={{ opacity: 0.8 }}>· {s.path} ({s.reason})</div>
                         ))}
-                        {skipped.length > 6 && <div style={{ opacity: 0.5 }}>… +{skipped.length - 6} more</div>}
+                        {skipped.length > 6 && <div style={{ opacity: 0.5 }}>{t('canvas.folder_skipped_more').replace('{n}', String(skipped.length - 6))}</div>}
                     </div>
                 )}
             </div>

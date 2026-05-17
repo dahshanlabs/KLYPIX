@@ -24,8 +24,11 @@ import { Toolbar } from './interaction/Toolbar';
 import { useCanvasInteraction } from './interaction/useCanvasInteraction';
 import { useCanvasKeyboardShortcuts } from './interaction/useKeyboardShortcuts';
 import { useAnyFile } from './file/useAnyFile';
+import { serialize } from './file/anyFormat';
 import { fileToItem } from './file/dropHandler';
 import { folderToItem } from './file/folderToZip';
+import { registerCloseSnapshot, captureCloseSnapshot } from './dashboard/closeSnapshotRegistry';
+import { pushClosedCanvas } from './dashboard/recentlyClosedStore';
 import { base64ToBytes } from './file/assetRegistry';
 import { ocrImageAsset } from './file/ocrImage';
 import { suggestTags } from './file/autoTag';
@@ -173,13 +176,13 @@ export function KlypixCanvas({ appVisible = true }: KlypixCanvasProps) {
     const tabsRef = useRef(tabs);
     tabsRef.current = tabs;
 
-    const onMetaChange = useCallback((tabId: string, meta: { title: string; dirty: boolean }) => {
+    const onMetaChange = useCallback((tabId: string, meta: { title: string; dirty: boolean; hasContent: boolean; hasFilePath: boolean }) => {
         setTabs((ts) => {
             // No-op guard: if the published meta matches what we already have,
             // return the SAME array reference so React bails out and doesn't
             // trigger a re-render cascade. Cheap defense against render loops.
             const cur = ts.find((t) => t.id === tabId);
-            if (cur && cur.meta.title === meta.title && cur.meta.dirty === meta.dirty) {
+            if (cur && cur.meta.title === meta.title && cur.meta.dirty === meta.dirty && cur.meta.hasContent === meta.hasContent && cur.meta.hasFilePath === meta.hasFilePath) {
                 return ts;
             }
             return ts.map((t) => t.id === tabId ? { ...t, meta: { id: tabId, ...meta } } : t);
@@ -207,7 +210,27 @@ export function KlypixCanvas({ appVisible = true }: KlypixCanvasProps) {
         const ts = tabsRef.current;
         const t = ts.find((x) => x.id === id);
         if (!t) return;
-        if (t.meta.dirty && !window.confirm(`${tLocale('canvas.close_tab_q')} "${t.meta.title}" — ${tLocale('canvas.discard_tab')}`)) return;
+        // Prompt on EITHER dirty (unsaved edits since last save) or
+        // hasContent without a backing file (items exist but were never
+        // saved to disk; autosave may have caught them but the close
+        // action still deserves a warning).
+        const needsConfirm = t.meta.dirty || (t.meta.hasContent && !t.meta.hasFilePath);
+        if (needsConfirm && !window.confirm(`${tLocale('canvas.close_tab_q')} "${t.meta.title}" — ${tLocale('canvas.discard_tab')}`)) return;
+        // Capture a snapshot for the recently-closed list BEFORE removing
+        // the tab — once we set tabs, the CanvasSurface unmounts and the
+        // snapshot getter is gone. Empty canvases return null and are
+        // skipped (no point listing "Untitled · 0 items" entries).
+        const snapshot = captureCloseSnapshot(id);
+        if (snapshot) {
+            pushClosedCanvas({
+                id: `closed_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+                title: snapshot.title,
+                closedAt: Date.now(),
+                filePath: snapshot.filePath,
+                snapshotJson: snapshot.snapshotJson,
+                itemCount: snapshot.itemCount,
+            });
+        }
         const next = ts.filter((x) => x.id !== id);
         // Never leave zero tabs open — spawn a fresh one. Mark it as needing
         // the launcher via parent-owned state so the child can't miss the
@@ -261,6 +284,7 @@ export function KlypixCanvas({ appVisible = true }: KlypixCanvasProps) {
                     >
                         <CanvasStoreProvider>
                             <CanvasSurface
+                                tabId={t.id}
                                 tabActive={t.id === activeId && appVisible}
                                 onMetaChange={(meta) => onMetaChange(t.id, meta)}
                                 pendingOpenPath={t.pendingOpenPath}
@@ -277,8 +301,12 @@ export function KlypixCanvas({ appVisible = true }: KlypixCanvasProps) {
 }
 
 interface CanvasSurfaceProps {
+    /** Stable tab id from the parent — used to register a close-snapshot
+     *  getter so onCloseTab can capture the canvas state into the
+     *  recently-closed list right before this surface unmounts. */
+    tabId?: string;
     tabActive?: boolean;
-    onMetaChange?: (meta: { title: string; dirty: boolean }) => void;
+    onMetaChange?: (meta: { title: string; dirty: boolean; hasContent: boolean; hasFilePath: boolean }) => void;
     /** Open this .any file once on mount (used for canvas-to-canvas links). */
     pendingOpenPath?: string;
     /** Open the canvas launcher (dashboard) on mount. Derived in the parent
@@ -294,7 +322,7 @@ interface CanvasSurfaceProps {
     onCloseCanvas?: () => void;
 }
 
-function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath, openLauncherOnMount, onLauncherDismissed, onCloseCanvas }: CanvasSurfaceProps = {}) {
+function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath, openLauncherOnMount, onLauncherDismissed, onCloseCanvas }: CanvasSurfaceProps = {}) {
     const { state, dispatch, commit, pushSnapshot, undo } = useCanvasStore();
     // Banner shown when a drag auto-grew a parent because a child overflowed.
     // Lets the user pick: deparent (Yes), keep + extend (No), or revert
@@ -337,6 +365,30 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath, openLa
     // every state change (keeps the window listener stable).
     const stateRef = useRef(state);
     stateRef.current = state;
+    // Register a close-snapshot getter so the parent can capture this
+    // canvas's serialized state into the recently-closed list right before
+    // unmounting. Reads from stateRef so the snapshot is always current,
+    // not the state at effect-run time.
+    useEffect(() => {
+        if (!tabId) return;
+        const off = registerCloseSnapshot(tabId, () => {
+            const s = stateRef.current;
+            const hasContent = s.order.length > 0 || Object.keys(s.lines).length > 0 || Object.keys(s.strokes).length > 0;
+            if (!hasContent) return null;
+            try {
+                const doc = serialize(s, s.title);
+                return {
+                    title: s.title || 'Untitled',
+                    filePath: s.filePath || null,
+                    snapshotJson: JSON.stringify(doc),
+                    itemCount: s.order.length,
+                };
+            } catch {
+                return null;
+            }
+        });
+        return off;
+    }, [tabId]);
     // Close-spawned tabs skip the autosave restore prompt — the user
     // explicitly closed something; we shouldn't pop a native confirm
     // dialog at them, and on always-on-top Electron windows that dialog
@@ -617,12 +669,21 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath, openLa
         onUngroup: () => ungroupSelection(),
     });
 
-    // Publish title + dirty upward so the TabBar can show them. Deliberately
-    // excludes the callback from the dep list — we read it off a ref so an
-    // unstable parent prop can't retrigger this effect.
+    // Publish title + dirty + content-status upward so the TabBar can show
+    // them and onCloseTab can decide whether to prompt. Deliberately excludes
+    // the callback from the dep list — we read it off a ref so an unstable
+    // parent prop can't retrigger this effect.
+    const hasContent = state.order.length > 0
+        || Object.keys(state.lines).length > 0
+        || Object.keys(state.strokes).length > 0;
     useEffect(() => {
-        onMetaChangeRef.current?.({ title: state.title || 'Untitled', dirty: state.isDirty });
-    }, [state.title, state.isDirty]);
+        onMetaChangeRef.current?.({
+            title: state.title || 'Untitled',
+            dirty: state.isDirty,
+            hasContent,
+            hasFilePath: !!state.filePath,
+        });
+    }, [state.title, state.isDirty, hasContent, state.filePath]);
     const [isDragOver, setIsDragOver] = useState(false);
     const [commandOpen, setCommandOpen] = useState(false);
     const [toast, setToast] = useState<{ text: string; id: number } | null>(null);
@@ -1550,6 +1611,22 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath, openLa
                         setLauncherDismissed(true);
                         onLauncherDismissed?.();
                         file.newFile();
+                    }}
+                    onRestoreClosed={(entry) => {
+                        // Apply the snapshot into THIS tab's empty canvas.
+                        // Close-spawned tabs are empty by construction, so
+                        // restoring is safe without a dirty/discard prompt.
+                        const res = file.restoreFromSnapshot({
+                            snapshotJson: entry.snapshotJson,
+                            filePath: entry.filePath,
+                        });
+                        if (res.ok) {
+                            setManualDashboardOpen(false);
+                            setLauncherDismissed(true);
+                            onLauncherDismissed?.();
+                        } else {
+                            console.warn('[canvas] restore failed:', res.error);
+                        }
                     }}
                     onDismiss={
                         (manualDashboardOpen || launcherShouldShow)

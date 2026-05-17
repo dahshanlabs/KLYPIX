@@ -4,6 +4,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { AlignmentGrid, type TextAlignH, type TextAlignV } from './AlignmentGrid';
 import { CustomColorPick } from './CustomColorPick';
+import { t, useLocale } from '../../i18n/strings';
 
 const cn = (...inputs: ClassValue[]) => twMerge(clsx(inputs));
 
@@ -71,6 +72,7 @@ export const TextPanel = React.forwardRef<HTMLDivElement, Props>(function TextPa
         onCommitAlignment,
         onRevertPreview,
     } = props;
+    useLocale();
 
     const selfRef = useRef<HTMLDivElement | null>(null);
     const setRefs = (el: HTMLDivElement | null) => {
@@ -164,14 +166,14 @@ export const TextPanel = React.forwardRef<HTMLDivElement, Props>(function TextPa
             }}
         >
             <div className="flex flex-col">
-                <Section title="Font">
+                <Section title={t('panel.font')}>
                     <div className="relative" ref={fontMenuRef}>
                         <button
                             onClick={() => setFontMenuOpen(v => !v)}
                             className="w-full flex items-center justify-between gap-2 bg-white/5 hover:bg-white/10 rounded px-2 py-1.5 text-[11px] text-white/85 transition-all"
                             style={{ fontFamily: fontFamily ? `"${fontFamily}", sans-serif` : undefined }}
                         >
-                            <span>{fontFamily ?? 'Mixed'}</span>
+                            <span>{fontFamily ?? t('panel.mixed')}</span>
                             <ChevronDown size={12} className="text-white/40 shrink-0" />
                         </button>
                         {fontMenuOpen && (
@@ -203,7 +205,7 @@ export const TextPanel = React.forwardRef<HTMLDivElement, Props>(function TextPa
 
                 <Divider />
 
-                <Section title="Size">
+                <Section title={t('panel.size')}>
                     <input
                         type="range"
                         min={SIZE_MIN}
@@ -222,31 +224,31 @@ export const TextPanel = React.forwardRef<HTMLDivElement, Props>(function TextPa
 
                 <Divider />
 
-                <Section title="Style">
+                <Section title={t('panel.style')}>
                     <div className="flex gap-1">
                         <ToggleButton
                             active={bold === true}
                             mixed={bold === undefined}
                             onClick={() => onCommitBold(!(bold === true))}
-                            title="Bold"
+                            title={t('panel.bold')}
                         ><Bold size={12} /></ToggleButton>
                         <ToggleButton
                             active={italic === true}
                             mixed={italic === undefined}
                             onClick={() => onCommitItalic(!(italic === true))}
-                            title="Italic"
+                            title={t('panel.italic')}
                         ><Italic size={12} /></ToggleButton>
                         <ToggleButton
                             active={underline === true}
                             mixed={underline === undefined}
                             onClick={() => onCommitUnderline(!(underline === true))}
-                            title="Underline"
+                            title={t('panel.underline')}
                         ><Underline size={12} /></ToggleButton>
                         <ToggleButton
                             active={strikethrough === true}
                             mixed={strikethrough === undefined}
                             onClick={() => onCommitStrikethrough(!(strikethrough === true))}
-                            title="Strikethrough"
+                            title={t('panel.strikethrough')}
                         ><Strikethrough size={12} /></ToggleButton>
                     </div>
                 </Section>
@@ -262,7 +264,7 @@ export const TextPanel = React.forwardRef<HTMLDivElement, Props>(function TextPa
                     aria-hidden={recentColors.length === 0}
                 >
                     <div className="overflow-hidden">
-                        <Section title="Recent">
+                        <Section title={t('panel.recent')}>
                             <ColorRow
                                 colors={recentColors}
                                 active={color}
@@ -275,7 +277,7 @@ export const TextPanel = React.forwardRef<HTMLDivElement, Props>(function TextPa
                     </div>
                 </div>
 
-                <Section title="Color">
+                <Section title={t('panel.color')}>
                     <ColorRow
                         colors={PALETTE_COLORS}
                         active={color}
@@ -286,13 +288,13 @@ export const TextPanel = React.forwardRef<HTMLDivElement, Props>(function TextPa
                         onCustomCommit={onCommitColor}
                     />
                     {color === undefined && (
-                        <div className="text-[10px] text-white/35 mt-1">Mixed</div>
+                        <div className="text-[10px] text-white/35 mt-1">{t('panel.mixed')}</div>
                     )}
                 </Section>
 
                 <Divider />
 
-                <Section title="Alignment">
+                <Section title={t('panel.alignment')}>
                     <AlignmentGrid
                         currentH={textAlign ?? 'left'}
                         currentV={verticalAlign ?? 'top'}

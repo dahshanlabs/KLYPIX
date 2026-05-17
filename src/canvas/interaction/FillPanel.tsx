@@ -234,7 +234,7 @@ export const FillPanel = React.forwardRef<HTMLDivElement, Props>(function FillPa
 
                 <Divider />
 
-                <Section title="Hex">
+                <Section title={t('panel.hex')}>
                     <div className="flex items-center gap-1.5">
                         <input
                             type="text"

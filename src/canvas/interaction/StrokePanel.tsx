@@ -256,7 +256,7 @@ export const StrokePanel = React.forwardRef<HTMLDivElement, Props>(function Stro
                         })}
                     </div>
                     {lineStyle === undefined && (
-                        <div className="text-[10px] text-white/35 mt-1">Mixed</div>
+                        <div className="text-[10px] text-white/35 mt-1">{t('panel.mixed')}</div>
                     )}
                 </Section>
             </div>
