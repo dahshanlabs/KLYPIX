@@ -11,9 +11,15 @@ const PROVIDERS = [
   { id: 'deepseek', name: 'DeepSeek', placeholder: 'sk-...', color: 'text-cyan-400' },
 ];
 
+// Per-provider key APIs — each provider writes to its own encrypted file
+// under userData/. Previously openai + glm were sharing the claudeKey slot,
+// which meant entering an OpenAI key silently overwrote a stored Claude key.
 const keyApi = (provider: string, electron: any) => {
   if (provider === 'deepseek') return electron?.deepseekKey;
-  return electron?.claudeKey; // existing behavior for claude/other providers
+  if (provider === 'openai') return electron?.openaiKey;
+  if (provider === 'glm') return electron?.glmKey;
+  if (provider === 'gemini') return electron?.geminiKey;
+  return electron?.claudeKey;
 };
 
 export const AgentSettings: React.FC = () => {
@@ -53,12 +59,22 @@ export const AgentSettings: React.FC = () => {
 
   const saveKey = async (key: string) => {
     await keyApi(provider, electron)?.store(key);
+    // Mirror Gemini key into localStorage too — the chat path in
+    // src/api/gemini.ts is synchronous and reads from localStorage first.
+    // Without this mirror the agent would have the new key but chat would
+    // still pick up the old one (or the empty fallback).
+    if (provider === 'gemini') {
+      try { localStorage.setItem('gemini_api_key', key); } catch { /* quota */ }
+    }
     setStoredKey(`${key.slice(0, 7)}..${key.slice(-4)}`);
     flash(t('agent_settings.key_saved'));
   };
 
   const clearKey = async () => {
     await keyApi(provider, electron)?.clear();
+    if (provider === 'gemini') {
+      try { localStorage.removeItem('gemini_api_key'); } catch { /* no-op */ }
+    }
     setStoredKey('');
     flash(t('agent_settings.key_cleared'));
   };

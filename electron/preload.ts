@@ -161,6 +161,21 @@ contextBridge.exposeInMainWorld('electron', {
         get: () => ipcRenderer.invoke('deepseek-key:get'),
         clear: () => ipcRenderer.invoke('deepseek-key:clear'),
     },
+    openaiKey: {
+        store: (key: string) => ipcRenderer.invoke('openai-key:store', key),
+        get: () => ipcRenderer.invoke('openai-key:get'),
+        clear: () => ipcRenderer.invoke('openai-key:clear'),
+    },
+    glmKey: {
+        store: (key: string) => ipcRenderer.invoke('glm-key:store', key),
+        get: () => ipcRenderer.invoke('glm-key:get'),
+        clear: () => ipcRenderer.invoke('glm-key:clear'),
+    },
+    geminiKey: {
+        store: (key: string) => ipcRenderer.invoke('gemini-key:store', key),
+        get: () => ipcRenderer.invoke('gemini-key:get'),
+        clear: () => ipcRenderer.invoke('gemini-key:clear'),
+    },
     file: {
         exists: (filePath: string) => ipcRenderer.invoke('file:exists', { filePath }),
     },

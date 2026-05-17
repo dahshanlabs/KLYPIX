@@ -74,15 +74,24 @@ export function useClaudeAgent() {
         // Step 2: Get API key for configured provider
         const provider = localStorage.getItem('klypix:agentProvider') || 'claude';
         let apiKey: string | null = null;
+        const electronAny = (window as any).electron;
         if (provider === 'gemini') {
-          // Check all possible Gemini key locations, including hardcoded fallback
+          // Gemini key sources, in order of preference: legacy localStorage
+          // (compat with chat path that still writes it), new encrypted
+          // gemini-key.enc, then the generic encrypted api-key.enc, then
+          // the hardcoded fallback for users who haven't configured one.
           apiKey = localStorage.getItem('gemini_api_key')
-            || await (window as any).electron?.apiKey?.get()
-            || 'AIzaSyD4ETYT7RkSLt_sE_U6ltBz0a2CdFFx5pg'; // Fallback key (same as chat)
+            || await electronAny?.geminiKey?.get()
+            || await electronAny?.apiKey?.get()
+            || 'AIzaSyD4ETYT7RkSLt_sE_U6ltBz0a2CdFFx5pg';
         } else if (provider === 'deepseek') {
-          apiKey = await (window as any).electron?.deepseekKey?.get();
+          apiKey = await electronAny?.deepseekKey?.get();
+        } else if (provider === 'openai') {
+          apiKey = await electronAny?.openaiKey?.get();
+        } else if (provider === 'glm') {
+          apiKey = await electronAny?.glmKey?.get();
         } else {
-          apiKey = await (window as any).electron?.claudeKey?.get();
+          apiKey = await electronAny?.claudeKey?.get();
         }
         if (!apiKey) {
           const names: Record<string, string> = { claude: 'Claude', gemini: 'Gemini', openai: 'OpenAI', glm: 'GLM', deepseek: 'DeepSeek' };

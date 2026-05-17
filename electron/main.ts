@@ -2127,6 +2127,45 @@ ipcMain.handle('deepseek-key:clear', async () => {
     } catch (err: any) { return { success: false, error: err.message }; }
 });
 
+// -- OpenAI / GLM Key Storage (safeStorage) --
+// Mirrors the Claude / DeepSeek pattern so each provider gets its own
+// encrypted file. Previously OpenAI and GLM keys were colliding with Claude's
+// slot (the keyApi router fell through to `claudeKey`), so switching from
+// Claude → OpenAI silently overwrote the Claude key. Per-provider files
+// fix the isolation; existing Claude users keep their key untouched.
+function makeKeyHandlers(channel: string, fileName: string) {
+    ipcMain.handle(`${channel}:store`, async (_event: any, key: string) => {
+        try {
+            const encPath = path.join(app.getPath('userData'), fileName);
+            if (safeStorage.isEncryptionAvailable()) {
+                fs.writeFileSync(encPath, safeStorage.encryptString(key));
+            } else {
+                fs.writeFileSync(encPath, key, 'utf-8');
+            }
+            return { success: true };
+        } catch (err: any) { return { success: false, error: err.message }; }
+    });
+    ipcMain.handle(`${channel}:get`, async () => {
+        try {
+            const encPath = path.join(app.getPath('userData'), fileName);
+            if (!fs.existsSync(encPath)) return null;
+            const raw = fs.readFileSync(encPath);
+            if (safeStorage.isEncryptionAvailable()) return safeStorage.decryptString(raw);
+            return raw.toString('utf-8');
+        } catch { return null; }
+    });
+    ipcMain.handle(`${channel}:clear`, async () => {
+        try {
+            const encPath = path.join(app.getPath('userData'), fileName);
+            if (fs.existsSync(encPath)) fs.unlinkSync(encPath);
+            return { success: true };
+        } catch (err: any) { return { success: false, error: err.message }; }
+    });
+}
+makeKeyHandlers('openai-key', 'openai-key.enc');
+makeKeyHandlers('glm-key', 'glm-key.enc');
+makeKeyHandlers('gemini-key', 'gemini-key.enc');
+
 // -- File existence (used by eval harness for artifact checks) --
 ipcMain.handle('file:exists', async (_e: any, opts: { filePath: string }) => {
     try { return { exists: fs.existsSync(opts.filePath) }; }
