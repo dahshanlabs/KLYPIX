@@ -126,7 +126,7 @@ export function createGLMAdapter(apiKey: string, modelId: string, baseUrl?: stri
 
               if (delta.content) {
                 fullText += delta.content;
-                if (textCallback) textCallback(delta.content);
+                if (textCallback) (textCallback as (s: string) => void)(delta.content);
               }
 
               if (delta.tool_calls) {

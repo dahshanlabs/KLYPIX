@@ -561,7 +561,7 @@ const MessageItem = React.memo(({ msg, idx, copiedIndex, copyToClipboard, onView
                                             <button
                                                 onClick={async () => {
                                                     const dir = file.path.replace(/[/\\][^/\\]+$/, '');
-                                                    await window.electron.agent?.runShell?.({ command: `explorer.exe "${dir}"` });
+                                                    await (window.electron as any).agent?.runShell?.({ command: `explorer.exe "${dir}"` });
                                                 }}
                                                 className="px-2.5 py-1 bg-white/5 border border-white/10 rounded-lg text-[10px] text-gray-400 hover:bg-white/10 transition-colors"
                                             >Folder</button>
@@ -1604,7 +1604,7 @@ function AppMain() {
                         id: f.path, name: f.name, type: 'file', source: 'Attached', localPath: f.path,
                     }));
                     const result = await window.electron.readMultipleFiles(attachItems);
-                    if (result?.results?.length > 0) {
+                    if ((result?.results?.length ?? 0) > 0 && result?.results) {
                         const sections = result.results
                             .filter((r: any) => r.content && typeof r.content === 'string' && r.content.length > 10 && !r.error)
                             .map((r: any) => `--- FILE: ${r.name || 'Document'} (${r.pageCount || 0} pages) ---\n${r.content}`)
@@ -1807,7 +1807,7 @@ function AppMain() {
                             type: 'file', source: 'Attached', localPath: f.path,
                         }));
                         const attachResult = await window.electron.readMultipleFiles(attachItems);
-                        if (attachResult?.results?.length > 0) {
+                        if ((attachResult?.results?.length ?? 0) > 0 && attachResult?.results) {
                             const contextPreamble = 'IMPORTANT: Generate the document based ONLY on the following attached file contents. Every fact must come from these files.\n\n';
                             const sections = attachResult.results
                                 .filter((r: any) => r.content && typeof r.content === 'string' && r.content.length > 10 && !r.error)
@@ -1832,7 +1832,7 @@ function AppMain() {
                     if (lastAssistantMsg && lastAssistantMsg.content.length > 50) {
                         docGenContext = 'Convert the following content into the requested format. Preserve all information faithfully.\n\n' + lastAssistantMsg.content;
                     } else if (chat.getActiveDocContent?.()) {
-                        docGenContext = chat.getActiveDocContent!();
+                        docGenContext = chat.getActiveDocContent!() ?? undefined;
                     }
                 }
                 const docGenImage = (screenshot.showScreenshot && screenshot.lastScreenshot64 && !deepMode.isDeepFileMode) ? screenshot.lastScreenshot64 : null;
@@ -3258,7 +3258,7 @@ function AppMain() {
                                                         <button
                                                             onClick={async () => {
                                                                 const dir = file.path.replace(/[/\\][^/\\]+$/, '');
-                                                                await window.electron.agent.runShell({ command: `explorer.exe "${dir}"` });
+                                                                await (window.electron as any).agent.runShell({ command: `explorer.exe "${dir}"` });
                                                             }}
                                                             className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs text-gray-400 hover:bg-white/10 transition-colors"
                                                         >

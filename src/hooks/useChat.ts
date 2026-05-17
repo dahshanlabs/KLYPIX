@@ -395,7 +395,7 @@ export function useChat(opts: UseChatOptions) {
             } else if (screenshotBase64) {
                 setMessages(prev => {
                     const newArr = [...prev];
-                    newArr[newArr.length - 1] = { ...newArr[newArr.length - 1], attachedImage: screenshotBase64 };
+                    newArr[newArr.length - 1] = { ...newArr[newArr.length - 1], attachedImage: screenshotBase64 ?? undefined };
                     saveMessages(newArr);
                     return newArr;
                 });

@@ -2,7 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { AuthProvider } from './components/AuthProvider'
 import { SessionContextProvider } from './core/sessionContext'
-import App from './App.tsx'
+import App from './App'
 import './index.css'
 // Import for side effect: i18n/strings.ts sets document.documentElement.dir
 // + lang from the stored or detected locale at module load. Importing here

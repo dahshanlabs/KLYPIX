@@ -139,7 +139,7 @@ export function createDeepseekAdapter(apiKey: string, modelId: string, baseUrl?:
               if (delta) {
                 if (delta.content) {
                   fullText += delta.content;
-                  if (textCallback) textCallback(delta.content);
+                  if (textCallback) (textCallback as (s: string) => void)(delta.content);
                 }
                 // V4-Pro emits reasoning_content (hidden chain-of-thought).
                 // Don't surface to UI, but DO accumulate — the API requires it to be

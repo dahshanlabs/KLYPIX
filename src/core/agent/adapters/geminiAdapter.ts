@@ -127,7 +127,7 @@ export function createGeminiAdapter(apiKey: string, modelId: string): ModelAdapt
               for (const part of parts) {
                 if (typeof (part as any).text === 'string') {
                   const partText = (part as any).text;
-                  if (partText && textCallback) textCallback(partText);
+                  if (partText && textCallback) (textCallback as (s: string) => void)(partText);
                   fullText += partText;
                 }
                 // functionCall parts are ignored in the stream — collected via response.functionCalls() after

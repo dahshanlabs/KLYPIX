@@ -89,7 +89,11 @@ export function createOpenAIAdapter(apiKey: string, modelId: string, baseUrl?: s
 
               if (delta.content) {
                 fullText += delta.content;
-                if (textCallback) textCallback(delta.content);
+                // Cast: TS narrows textCallback to `never` inside the async
+                // closure because the reassignment via the returned onText()
+                // happens after stream() returns — outside this control flow
+                // path. The runtime contract is intact.
+                if (textCallback) (textCallback as (s: string) => void)(delta.content);
               }
 
               if (delta.tool_calls) {
