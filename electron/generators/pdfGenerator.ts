@@ -1,11 +1,21 @@
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import path from 'path';
+import { containsArabic } from './arabicUtil';
 
 // ── Corporate PDF Generator ─────────────────────────────────────────────────
 // Clean corporate style inspired by McKinsey/Deloitte reports.
 // Features: header/footer on every page, page numbers, accent bars,
 // professional typography, clean tables, proper spacing.
+//
+// Arabic support: when a text run contains Arabic-script characters, the run
+// renders with Thmanyah Sans (an OpenType font with GSUB tables) and the
+// paragraph is right-aligned. Glyph shaping (isolated/initial/medial/final
+// letter forms) is handled by fontkit which pdfkit uses internally. Full
+// bidi reordering (UAX #9) is NOT implemented here — for Arabic-heavy
+// documents, prefer DOCX which has native bidi support in Word/LibreOffice.
+// Mixed Latin+Arabic lines render in logical order; right-aligned Arabic
+// paragraphs read correctly for the common case of a single-language body.
 
 const FONTS = {
     regular: 'Helvetica',
@@ -13,6 +23,26 @@ const FONTS = {
     italic: 'Helvetica-Oblique',
     mono: 'Courier',
 };
+
+// Thmanyah font keys registered with pdfkit. After registerFont() runs in
+// generatePDF(), these names can be passed to doc.font(...) just like the
+// base-14 Helvetica family above.
+const ARABIC_FONTS = {
+    regular: 'Thmanyah-Regular',
+    bold: 'Thmanyah-Bold',
+    // No italic/mono in the bundled subset — italic falls back to regular,
+    // mono stays Courier (Latin-only, fine since code runs are Latin).
+    italic: 'Thmanyah-Regular',
+    mono: 'Courier',
+};
+
+// Pick the right registered font key for a run based on whether it contains
+// Arabic. Latin runs keep the base-14 Helvetica family (zero embedded bytes);
+// Arabic runs switch to the embedded Thmanyah Sans.
+function fontKey(text: string | undefined | null, style: 'regular' | 'bold' | 'italic' | 'mono'): string {
+    if (style === 'mono') return FONTS.mono;
+    return containsArabic(text) ? ARABIC_FONTS[style] : FONTS[style];
+}
 
 const BRAND = {
     accent: '#10b981',       // Emerald
@@ -46,6 +76,31 @@ const SPACING = {
     tableGap: 0.4,
 };
 
+// Resolve the on-disk path to a bundled font file. In dev the public folder
+// is alongside source; in a packaged build Vite copies it to dist/ and the
+// electron main process runs from dist-electron/, so the relative jump is
+// ../dist/. Mirrors the pattern used for logo.png in electron/main.ts.
+function resolveFontPath(filename: string): string {
+    const isDev = process.env.NODE_ENV === 'development';
+    const base = isDev
+        ? path.join(__dirname, '../public/fonts/thmanyah')
+        : path.join(__dirname, '../dist/fonts/thmanyah');
+    return path.join(base, filename);
+}
+
+// Register the Thmanyah Sans OTF subset (Regular + Bold) with the document.
+// Wrapped in a try/catch so a missing file doesn't blow up the whole PDF —
+// Arabic content will fall back to Helvetica (which can't shape it, but the
+// document still renders).
+function registerArabicFonts(doc: typeof PDFDocument.prototype): void {
+    try {
+        doc.registerFont(ARABIC_FONTS.regular, resolveFontPath('thmanyahsans-Regular.otf'));
+        doc.registerFont(ARABIC_FONTS.bold, resolveFontPath('thmanyahsans-Bold.otf'));
+    } catch (err) {
+        console.error('[pdfGenerator] Failed to register Thmanyah fonts:', err);
+    }
+}
+
 export async function generatePDF(markdownContent: string, options?: { title?: string; author?: string; date?: string }): Promise<Buffer> {
     return new Promise((resolve, reject) => {
         const doc = new PDFDocument({
@@ -63,6 +118,8 @@ export async function generatePDF(markdownContent: string, options?: { title?: s
                 Creator: 'Klypix by Dahshan Labs',
             },
         });
+
+        registerArabicFonts(doc);
 
         const chunks: Buffer[] = [];
         doc.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -213,6 +270,7 @@ export async function generatePDF(markdownContent: string, options?: { title?: s
             // ── H1: Title heading ───────────────────────────────────────────
             if (trimmed.startsWith('# ')) {
                 const text = trimmed.slice(2);
+                const ar = containsArabic(text);
                 if (isFirstHeading) {
                     docTitle = text;
                     isFirstHeading = false;
@@ -221,8 +279,8 @@ export async function generatePDF(markdownContent: string, options?: { title?: s
                     doc.save();
                     doc.rect(LAYOUT.marginLeft - 4, doc.y - 2, 4, 32).fill(BRAND.accent);
                     doc.restore();
-                    doc.font(FONTS.bold).fontSize(26).fillColor(BRAND.title);
-                    doc.text(text, LAYOUT.marginLeft + 8, doc.y);
+                    doc.font(fontKey(text, 'bold')).fontSize(26).fillColor(BRAND.title);
+                    doc.text(text, LAYOUT.marginLeft + 8, doc.y, ar ? { width: pageWidth - 8, align: 'right' } : undefined);
                     doc.moveDown(0.6);
                     // Thin line under title
                     doc.save();
@@ -238,16 +296,18 @@ export async function generatePDF(markdownContent: string, options?: { title?: s
                     doc.save();
                     doc.rect(LAYOUT.marginLeft - 4, doc.y - 2, 4, 28).fill(BRAND.accent);
                     doc.restore();
-                    doc.font(FONTS.bold).fontSize(22).fillColor(BRAND.title);
-                    doc.text(text, LAYOUT.marginLeft + 8, doc.y);
+                    doc.font(fontKey(text, 'bold')).fontSize(22).fillColor(BRAND.title);
+                    doc.text(text, LAYOUT.marginLeft + 8, doc.y, ar ? { width: pageWidth - 8, align: 'right' } : undefined);
                     doc.moveDown(0.5);
                 }
             }
             // ── H2 ─────────────────────────────────────────────────────────
             else if (trimmed.startsWith('## ')) {
+                const text = trimmed.slice(3);
+                const ar = containsArabic(text);
                 doc.moveDown(0.8);
-                doc.font(FONTS.bold).fontSize(16).fillColor(BRAND.title);
-                doc.text(trimmed.slice(3));
+                doc.font(fontKey(text, 'bold')).fontSize(16).fillColor(BRAND.title);
+                doc.text(text, ar ? { width: pageWidth, align: 'right' } : undefined as any);
                 doc.moveDown(0.15);
                 // Subtle accent underline
                 doc.save();
@@ -261,20 +321,24 @@ export async function generatePDF(markdownContent: string, options?: { title?: s
             }
             // ── H3 ─────────────────────────────────────────────────────────
             else if (trimmed.startsWith('### ')) {
+                const text = trimmed.slice(4);
+                const ar = containsArabic(text);
                 doc.moveDown(0.6);
-                doc.font(FONTS.bold).fontSize(13).fillColor(BRAND.accentDark);
-                doc.text(trimmed.slice(4));
+                doc.font(fontKey(text, 'bold')).fontSize(13).fillColor(BRAND.accentDark);
+                doc.text(text, ar ? { width: pageWidth, align: 'right' } : undefined as any);
                 doc.moveDown(0.3);
             }
             // ── Blockquote ─────────────────────────────────────────────────
             else if (trimmed.startsWith('> ')) {
+                const text = trimmed.slice(2);
+                const ar = containsArabic(text);
                 doc.moveDown(0.2);
                 doc.save();
                 const quoteY = doc.y;
                 doc.rect(LAYOUT.marginLeft + 10, quoteY - 2, 3, 18).fill(BRAND.accent);
                 doc.restore();
-                doc.font(FONTS.italic).fontSize(10.5).fillColor(BRAND.muted);
-                doc.text(trimmed.slice(2), LAYOUT.marginLeft + 22, doc.y, { width: pageWidth - 30 });
+                doc.font(fontKey(text, 'italic')).fontSize(10.5).fillColor(BRAND.muted);
+                doc.text(text, LAYOUT.marginLeft + 22, doc.y, ar ? { width: pageWidth - 30, align: 'right' } : { width: pageWidth - 30 });
                 doc.fillColor(BRAND.body);
                 doc.moveDown(0.3);
             }
@@ -361,7 +425,7 @@ export async function generatePDF(markdownContent: string, options?: { title?: s
                    .lineWidth(0.5)
                    .stroke();
                 if (docTitle) {
-                    doc.font(FONTS.regular).fontSize(7.5).fillColor(BRAND.light);
+                    doc.font(fontKey(docTitle, 'regular')).fontSize(7.5).fillColor(BRAND.light);
                     safeText(docTitle, LAYOUT.marginLeft, LAYOUT.headerY + 2, {
                         width: pageWidth,
                         align: 'right',
@@ -407,19 +471,24 @@ export async function generatePDF(markdownContent: string, options?: { title?: s
 }
 
 function renderInlineFormatting(doc: typeof PDFDocument.prototype, text: string, x?: number, width?: number) {
+    // Detect Arabic up front: if the paragraph contains Arabic, right-align
+    // the whole paragraph so it reads natively. Per-token font selection
+    // happens below so a mixed run (e.g. "اسم: Klypix") picks the right
+    // shaping font for each segment.
+    const paragraphAr = containsArabic(text);
     const tokens: { text: string; font: string; color?: string }[] = [];
     let remaining = text;
 
     while (remaining.length > 0) {
         const boldMatch = remaining.match(/^\*\*(.+?)\*\*/);
         if (boldMatch) {
-            tokens.push({ text: boldMatch[1], font: FONTS.bold });
+            tokens.push({ text: boldMatch[1], font: fontKey(boldMatch[1], 'bold') });
             remaining = remaining.slice(boldMatch[0].length);
             continue;
         }
         const italicMatch = remaining.match(/^\*(.+?)\*/);
         if (italicMatch) {
-            tokens.push({ text: italicMatch[1], font: FONTS.italic });
+            tokens.push({ text: italicMatch[1], font: fontKey(italicMatch[1], 'italic') });
             remaining = remaining.slice(italicMatch[0].length);
             continue;
         }
@@ -431,10 +500,11 @@ function renderInlineFormatting(doc: typeof PDFDocument.prototype, text: string,
         }
         const nextSpecial = remaining.search(/[*`]/);
         if (nextSpecial > 0) {
-            tokens.push({ text: remaining.slice(0, nextSpecial), font: FONTS.regular });
+            const seg = remaining.slice(0, nextSpecial);
+            tokens.push({ text: seg, font: fontKey(seg, 'regular') });
             remaining = remaining.slice(nextSpecial);
         } else {
-            tokens.push({ text: remaining, font: FONTS.regular });
+            tokens.push({ text: remaining, font: fontKey(remaining, 'regular') });
             remaining = '';
         }
     }
@@ -450,6 +520,7 @@ function renderInlineFormatting(doc: typeof PDFDocument.prototype, text: string,
         const opts: any = { continued: !isLast };
         if (isFirst && x !== undefined) opts.indent = 0;
         if (isFirst && width !== undefined) opts.width = width;
+        if (paragraphAr) opts.align = 'right';
 
         doc.font(tokens[i].font);
         if (tokens[i].color) doc.fillColor(tokens[i].color!);
@@ -470,13 +541,17 @@ function renderTable(doc: typeof PDFDocument.prototype, headers: string[], rows:
     const lineHeight = 12;
     const cellVPadding = 6;
 
-    // Calculate dynamic column widths using actual font metrics
+    // Calculate dynamic column widths using actual font metrics. Pick the
+    // bold/regular variant per-cell so Arabic cells measure against Thmanyah
+    // instead of falling through to Helvetica's "missing-glyph" width.
     const maxContentWidths = headers.map((_, colIdx) => {
-        doc.font(FONTS.bold).fontSize(9);
-        let maxW = doc.widthOfString(headers[colIdx].toUpperCase());
-        doc.font(FONTS.regular).fontSize(9);
+        const headerText = headers[colIdx].toUpperCase();
+        doc.font(fontKey(headerText, 'bold')).fontSize(9);
+        let maxW = doc.widthOfString(headerText);
         for (const row of rows) {
-            const cellW = doc.widthOfString(String(row[colIdx] || ''));
+            const cellText = String(row[colIdx] || '');
+            doc.font(fontKey(cellText, 'regular')).fontSize(9);
+            const cellW = doc.widthOfString(cellText);
             if (cellW > maxW) maxW = cellW;
         }
         return maxW + cellPadding * 2;
@@ -497,8 +572,9 @@ function renderTable(doc: typeof PDFDocument.prototype, headers: string[], rows:
         let maxLines = 1;
         cells.forEach((cell, i) => {
             const availWidth = finalWidths[i] - cellPadding * 2;
-            doc.font(isHeader ? FONTS.bold : FONTS.regular).fontSize(9);
-            const textWidth = doc.widthOfString(String(cell));
+            const cellText = String(cell);
+            doc.font(fontKey(cellText, isHeader ? 'bold' : 'regular')).fontSize(9);
+            const textWidth = doc.widthOfString(cellText);
             const lines = Math.max(1, Math.ceil(textWidth / Math.max(1, availWidth)));
             if (lines > maxLines) maxLines = lines;
         });
@@ -515,12 +591,15 @@ function renderTable(doc: typeof PDFDocument.prototype, headers: string[], rows:
     doc.rect(startX, y + headerHeight - 2, maxWidth, 2).fill(BRAND.accent);
     doc.restore();
 
-    doc.font(FONTS.bold).fontSize(9).fillColor(BRAND.title);
     let xOffset = 0;
+    doc.fillColor(BRAND.title).fontSize(9);
     headers.forEach((header, i) => {
-        doc.text(header.toUpperCase(), startX + xOffset + cellPadding, y + cellVPadding, {
+        const headerText = header.toUpperCase();
+        const ar = containsArabic(headerText);
+        doc.font(fontKey(headerText, 'bold'));
+        doc.text(headerText, startX + xOffset + cellPadding, y + cellVPadding, {
             width: finalWidths[i] - cellPadding * 2,
-            align: 'left',
+            align: ar ? 'right' : 'left',
         });
         xOffset += finalWidths[i];
     });
@@ -551,12 +630,15 @@ function renderTable(doc: typeof PDFDocument.prototype, headers: string[], rows:
            .stroke();
         doc.restore();
 
-        doc.font(FONTS.regular).fontSize(9).fillColor(BRAND.body);
         xOffset = 0;
+        doc.fillColor(BRAND.body).fontSize(9);
         row.forEach((cell, i) => {
-            doc.text(String(cell), startX + xOffset + cellPadding, y + cellVPadding, {
+            const cellText = String(cell);
+            const ar = containsArabic(cellText);
+            doc.font(fontKey(cellText, 'regular'));
+            doc.text(cellText, startX + xOffset + cellPadding, y + cellVPadding, {
                 width: finalWidths[i] - cellPadding * 2,
-                align: 'left',
+                align: ar ? 'right' : 'left',
             });
             xOffset += finalWidths[i];
         });

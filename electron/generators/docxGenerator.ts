@@ -7,6 +7,7 @@ import {
     Tab, TabStopPosition, TabStopType,
     convertInchesToTwip,
 } from 'docx';
+import { containsArabic, fontForRun, ARABIC_FONT, LATIN_FONT } from './arabicUtil';
 
 export interface DOCXSpec {
     filename?: string;
@@ -38,28 +39,44 @@ const BRAND = {
     white: 'ffffff',
 };
 
+// Per-run: pick Thmanyah Sans + rightToLeft when the run text is Arabic, else
+// the corporate Calibri default. Mixing Arabic + Latin in the same paragraph
+// is supported — Word/Pages/LibreOffice shape each run independently.
 function parseInlineFormatting(text: string): TextRun[] {
     const runs: TextRun[] = [];
     let remaining = text;
 
+    const mkRun = (t: string, opts: { bold?: boolean; italics?: boolean; color?: string; size?: number; mono?: boolean; shading?: any }): TextRun => {
+        const ar = containsArabic(t);
+        return new TextRun({
+            text: t,
+            bold: opts.bold,
+            italics: opts.italics,
+            color: opts.color,
+            size: opts.size,
+            font: opts.mono ? 'Consolas' : (ar ? ARABIC_FONT : LATIN_FONT),
+            rightToLeft: ar || undefined,
+            shading: opts.shading,
+        });
+    };
+
     while (remaining.length > 0) {
         const boldMatch = remaining.match(/^\*\*(.+?)\*\*/);
         if (boldMatch) {
-            runs.push(new TextRun({ text: boldMatch[1], bold: true, font: 'Calibri', color: BRAND.title }));
+            runs.push(mkRun(boldMatch[1], { bold: true, color: BRAND.title }));
             remaining = remaining.slice(boldMatch[0].length);
             continue;
         }
         const italicMatch = remaining.match(/^\*(.+?)\*/);
         if (italicMatch) {
-            runs.push(new TextRun({ text: italicMatch[1], italics: true, font: 'Calibri', color: BRAND.muted }));
+            runs.push(mkRun(italicMatch[1], { italics: true, color: BRAND.muted }));
             remaining = remaining.slice(italicMatch[0].length);
             continue;
         }
         const codeMatch = remaining.match(/^`(.+?)`/);
         if (codeMatch) {
-            runs.push(new TextRun({
-                text: ` ${codeMatch[1]} `,
-                font: 'Consolas',
+            runs.push(mkRun(` ${codeMatch[1]} `, {
+                mono: true,
                 size: 19,
                 color: BRAND.accentDark,
                 shading: { type: ShadingType.SOLID, color: BRAND.tableHeader, fill: BRAND.tableHeader },
@@ -69,16 +86,16 @@ function parseInlineFormatting(text: string): TextRun[] {
         }
         const nextSpecial = remaining.search(/[*`]/);
         if (nextSpecial > 0) {
-            runs.push(new TextRun({ text: remaining.slice(0, nextSpecial), font: 'Calibri', color: BRAND.body }));
+            runs.push(mkRun(remaining.slice(0, nextSpecial), { color: BRAND.body }));
             remaining = remaining.slice(nextSpecial);
         } else {
-            runs.push(new TextRun({ text: remaining, font: 'Calibri', color: BRAND.body }));
+            runs.push(mkRun(remaining, { color: BRAND.body }));
             remaining = '';
         }
     }
 
     if (runs.length === 0) {
-        runs.push(new TextRun({ text, font: 'Calibri', color: BRAND.body }));
+        runs.push(mkRun(text, { color: BRAND.body }));
     }
     return runs;
 }
@@ -103,26 +120,34 @@ function buildCorporateTable(headers: string[], rows: string[][]): Table {
     const colWidths = rawWidths.map(w => Math.round(w * (totalDxa / rawSum)));
 
     const headerRow = new TableRow({
-        children: headers.map((h, colIdx) => new TableCell({
-            children: [new Paragraph({
-                children: [new TextRun({
-                    text: h.toUpperCase(),
-                    bold: true,
-                    font: 'Calibri',
-                    size: 18,
-                    color: BRAND.title,
+        children: headers.map((h, colIdx) => {
+            // Arabic doesn't have casing — toUpperCase is a no-op for it,
+            // so applying it to a mixed header is safe.
+            const headerText = h.toUpperCase();
+            const ar = containsArabic(headerText);
+            return new TableCell({
+                children: [new Paragraph({
+                    children: [new TextRun({
+                        text: headerText,
+                        bold: true,
+                        font: fontForRun(headerText),
+                        size: 18,
+                        color: BRAND.title,
+                        rightToLeft: ar || undefined,
+                    })],
+                    spacing: { before: 80, after: 80 },
+                    bidirectional: ar || undefined,
                 })],
-                spacing: { before: 80, after: 80 },
-            })],
-            width: { size: colWidths[colIdx], type: WidthType.DXA },
-            shading: { type: ShadingType.SOLID, color: BRAND.tableHeader, fill: BRAND.tableHeader },
-            borders: {
-                bottom: { style: BorderStyle.SINGLE, size: 4, color: BRAND.accent },
-                top: { style: BorderStyle.NONE, size: 0, color: BRAND.white },
-                left: { style: BorderStyle.NONE, size: 0, color: BRAND.white },
-                right: { style: BorderStyle.NONE, size: 0, color: BRAND.white },
-            },
-        })),
+                width: { size: colWidths[colIdx], type: WidthType.DXA },
+                shading: { type: ShadingType.SOLID, color: BRAND.tableHeader, fill: BRAND.tableHeader },
+                borders: {
+                    bottom: { style: BorderStyle.SINGLE, size: 4, color: BRAND.accent },
+                    top: { style: BorderStyle.NONE, size: 0, color: BRAND.white },
+                    left: { style: BorderStyle.NONE, size: 0, color: BRAND.white },
+                    right: { style: BorderStyle.NONE, size: 0, color: BRAND.white },
+                },
+            });
+        }),
         tableHeader: true,
     });
 
@@ -131,6 +156,7 @@ function buildCorporateTable(headers: string[], rows: string[][]): Table {
             children: [new Paragraph({
                 children: parseInlineFormatting(String(cell)),
                 spacing: { before: 60, after: 60 },
+                bidirectional: containsArabic(String(cell)) || undefined,
             })],
             width: { size: colWidths[colIdx] || colWidths[0], type: WidthType.DXA },
             shading: rowIdx % 2 === 0
@@ -158,55 +184,68 @@ export async function generateDOCX(spec: DOCXSpec): Promise<Buffer> {
 
     for (const section of spec.sections) {
         switch (section.type) {
-            case 'heading1':
+            case 'heading1': {
+                const ar = containsArabic(section.text);
                 children.push(new Paragraph({
                     children: [
-                        new TextRun({ text: section.text, bold: true, font: 'Calibri', size: 44, color: BRAND.title }),
+                        new TextRun({ text: section.text, bold: true, font: fontForRun(section.text), size: 44, color: BRAND.title, rightToLeft: ar || undefined }),
                     ],
                     spacing: { before: 360, after: 120 },
+                    bidirectional: ar || undefined,
                     border: {
                         bottom: { style: BorderStyle.SINGLE, size: 2, color: BRAND.accent, space: 8 },
                     },
                 }));
                 break;
+            }
 
-            case 'heading2':
+            case 'heading2': {
+                const ar = containsArabic(section.text);
                 children.push(new Paragraph({
                     children: [
-                        new TextRun({ text: section.text, bold: true, font: 'Calibri', size: 32, color: BRAND.title }),
+                        new TextRun({ text: section.text, bold: true, font: fontForRun(section.text), size: 32, color: BRAND.title, rightToLeft: ar || undefined }),
                     ],
                     spacing: { before: 280, after: 100 },
+                    bidirectional: ar || undefined,
                 }));
                 break;
+            }
 
-            case 'heading3':
+            case 'heading3': {
+                const ar = containsArabic(section.text);
                 children.push(new Paragraph({
                     children: [
-                        new TextRun({ text: section.text, bold: true, font: 'Calibri', size: 26, color: BRAND.accentDark }),
+                        new TextRun({ text: section.text, bold: true, font: fontForRun(section.text), size: 26, color: BRAND.accentDark, rightToLeft: ar || undefined }),
                     ],
                     spacing: { before: 200, after: 80 },
+                    bidirectional: ar || undefined,
                 }));
                 break;
+            }
 
             case 'paragraph':
                 children.push(new Paragraph({
                     children: parseInlineFormatting(section.text),
                     spacing: { after: 140, line: 276 },
+                    bidirectional: containsArabic(section.text) || undefined,
                 }));
                 break;
 
-            case 'blockquote':
+            case 'blockquote': {
+                const ar = containsArabic(section.text);
                 children.push(new Paragraph({
                     children: [
-                        new TextRun({ text: section.text, italics: true, font: 'Calibri', color: BRAND.muted, size: 21 }),
+                        new TextRun({ text: section.text, italics: true, font: fontForRun(section.text), color: BRAND.muted, size: 21, rightToLeft: ar || undefined }),
                     ],
                     spacing: { before: 120, after: 120 },
+                    bidirectional: ar || undefined,
                     indent: { left: convertInchesToTwip(0.4) },
                     border: {
                         left: { style: BorderStyle.SINGLE, size: 6, color: BRAND.accent, space: 10 },
                     },
                 }));
                 break;
+            }
 
             case 'bullet_list':
                 for (const item of section.items) {
@@ -214,6 +253,7 @@ export async function generateDOCX(spec: DOCXSpec): Promise<Buffer> {
                         children: parseInlineFormatting(item),
                         bullet: { level: 0 },
                         spacing: { after: 70, line: 260 },
+                        bidirectional: containsArabic(item) || undefined,
                     }));
                 }
                 children.push(new Paragraph({ text: '', spacing: { after: 80 } }));
@@ -225,6 +265,7 @@ export async function generateDOCX(spec: DOCXSpec): Promise<Buffer> {
                         children: parseInlineFormatting(item),
                         numbering: { reference: 'corporate-numbering', level: 0 },
                         spacing: { after: 70, line: 260 },
+                        bidirectional: containsArabic(item) || undefined,
                     }));
                 }
                 children.push(new Paragraph({ text: '', spacing: { after: 80 } }));

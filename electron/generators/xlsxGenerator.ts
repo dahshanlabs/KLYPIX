@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import { containsArabic, ARABIC_FONT, LATIN_FONT } from './arabicUtil';
 
 export interface XLSXSpec {
     filename?: string;
@@ -41,7 +42,7 @@ export async function generateXLSX(spec: XLSXSpec): Promise<Buffer> {
         // ── Style header row ────────────────────────────────────────────
         const headerRow = ws.getRow(1);
         headerRow.font = {
-            name: 'Calibri',
+            name: LATIN_FONT,
             size: 11,
             bold: true,
             color: { argb: BRAND.headerText },
@@ -54,11 +55,17 @@ export async function generateXLSX(spec: XLSXSpec): Promise<Buffer> {
         headerRow.alignment = { vertical: 'middle', horizontal: 'left' };
         headerRow.height = 28;
 
-        // Header bottom border (accent colored)
-        headerRow.eachCell((cell) => {
+        // Header bottom border (accent colored) + per-cell font override for
+        // Arabic headers so glyphs shape correctly.
+        headerRow.eachCell((cell, colNumber) => {
             cell.border = {
                 bottom: { style: 'medium', color: { argb: BRAND.accent } },
             };
+            const headerText = String(cell.value ?? '');
+            if (containsArabic(headerText)) {
+                cell.font = { ...headerRow.font, name: ARABIC_FONT };
+                cell.alignment = { vertical: 'middle', horizontal: 'right', readingOrder: 'rtl' };
+            }
         });
 
         // ── Add data rows ───────────────────────────────────────────────
@@ -67,9 +74,11 @@ export async function generateXLSX(spec: XLSXSpec): Promise<Buffer> {
             const wsRow = ws.addRow(row);
             const rowNum = i + 2; // 1-indexed, row 1 is header
 
-            // Row font
+            // Row font — Latin default; per-cell Arabic detection below
+            // overrides on a cell-by-cell basis so a mixed-language column
+            // (English label + Arabic value) renders each correctly.
             wsRow.font = {
-                name: 'Calibri',
+                name: LATIN_FONT,
                 size: 10.5,
                 color: { argb: BRAND.bodyColor },
             };
@@ -127,6 +136,18 @@ export async function generateXLSX(spec: XLSXSpec): Promise<Buffer> {
                             cell.numFmt = '#,##0';
                         }
                     }
+                }
+            }
+
+            // Per-cell Arabic detection: swap font + flip to RTL reading
+            // order for cells whose final string value is Arabic. Numbers
+            // and formulas keep Latin (Arabic digits aren't requested).
+            for (let j = 0; j < row.length; j++) {
+                const cell = wsRow.getCell(j + 1);
+                const finalText = typeof cell.value === 'string' ? cell.value : '';
+                if (containsArabic(finalText)) {
+                    cell.font = { ...wsRow.font, name: ARABIC_FONT };
+                    cell.alignment = { vertical: 'middle', horizontal: 'right', readingOrder: 'rtl' };
                 }
             }
         }

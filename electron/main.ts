@@ -1025,8 +1025,12 @@ async function captureScreenDirect() {
         const srcDir = path.join(__dirname, '../node_modules/screenshot-desktop/lib/win32');
         const srcBat = path.join(srcDir, 'screenCapture_1.3.2.bat');
         const srcManifest = path.join(srcDir, 'app.manifest');
-        // The bat self-compiles the exe on first run via csc.exe — we need to trigger that once
-        // But since direct bat execution is broken, compile manually if exe doesn't exist
+        const srcExe = path.join(srcDir, 'screenCapture_1.3.2.exe');
+        // Prefer the prebuilt exe from node_modules. Falls back to csc compile
+        // for environments where the prebuilt is missing (or was quarantined).
+        if (fs.existsSync(srcExe)) {
+            try { fs.copyFileSync(srcExe, exePath); } catch (_) { }
+        }
         if (fs.existsSync(srcBat))
             fs.copyFileSync(srcBat, path.join(screenCapDir, 'screenCapture_1.3.2.bat'));
         if (fs.existsSync(srcManifest))

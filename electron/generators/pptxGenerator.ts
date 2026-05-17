@@ -1,4 +1,13 @@
 import PptxGenJS from 'pptxgenjs';
+import { containsArabic, ARABIC_FONT, LATIN_FONT } from './arabicUtil';
+
+// Build PPTX text options for a piece of content. Arabic content switches
+// fontFace to Thmanyah Sans and flips rtlMode so the text frame lays out
+// right-to-left. Latin content keeps Calibri + LTR.
+function arOpts(text: string | undefined | null): { fontFace: string; rtlMode?: boolean } {
+    if (containsArabic(text)) return { fontFace: ARABIC_FONT, rtlMode: true };
+    return { fontFace: LATIN_FONT };
+}
 
 export interface PPTXSpec {
     filename?: string;
@@ -81,7 +90,7 @@ export async function generatePPTX(spec: PPTXSpec): Promise<Buffer> {
                 s.addText(slide.title, {
                     x: 1.2, y: 2.2, w: 10.93, h: 1.8,
                     fontSize: 40, bold: true, color: BRAND.white,
-                    fontFace: 'Calibri', valign: 'bottom',
+                    ...arOpts(slide.title), valign: 'bottom',
                 });
 
                 // Accent line under title
@@ -95,7 +104,7 @@ export async function generatePPTX(spec: PPTXSpec): Promise<Buffer> {
                     s.addText(slide.subtitle, {
                         x: 1.2, y: 4.5, w: 10.93, h: 0.8,
                         fontSize: 18, color: BRAND.light,
-                        fontFace: 'Calibri', valign: 'top',
+                        ...arOpts(slide.subtitle), valign: 'top',
                     });
                 }
 
@@ -103,14 +112,14 @@ export async function generatePPTX(spec: PPTXSpec): Promise<Buffer> {
                 s.addText(date, {
                     x: 1.2, y: 6.5, w: 5, h: 0.4,
                     fontSize: 11, color: BRAND.muted,
-                    fontFace: 'Calibri',
+                    fontFace: LATIN_FONT,
                 });
 
                 // Branding
                 s.addText('Klypix', {
                     x: 10, y: 6.5, w: 2.5, h: 0.4,
                     fontSize: 10, color: BRAND.muted,
-                    fontFace: 'Calibri', align: 'right',
+                    fontFace: LATIN_FONT, align: 'right',
                 });
                 break;
             }
@@ -127,14 +136,14 @@ export async function generatePPTX(spec: PPTXSpec): Promise<Buffer> {
                 s.addText(slide.title, {
                     x: 1.5, y: 2.5, w: 10, h: 1.5,
                     fontSize: 36, bold: true, color: BRAND.white,
-                    fontFace: 'Calibri', valign: 'bottom',
+                    ...arOpts(slide.title), valign: 'bottom',
                 });
 
                 if (slide.subtitle) {
                     s.addText(slide.subtitle, {
                         x: 1.5, y: 4.2, w: 10, h: 0.8,
                         fontSize: 16, color: BRAND.light,
-                        fontFace: 'Calibri',
+                        ...arOpts(slide.subtitle),
                     });
                 }
 
@@ -150,7 +159,7 @@ export async function generatePPTX(spec: PPTXSpec): Promise<Buffer> {
                 s.addText(slide.title, {
                     x: 0.8, y: 0.3, w: 11.73, h: 0.8,
                     fontSize: 24, bold: true, color: BRAND.title,
-                    fontFace: 'Calibri',
+                    ...arOpts(slide.title),
                 });
 
                 // Accent underline
@@ -159,10 +168,12 @@ export async function generatePPTX(spec: PPTXSpec): Promise<Buffer> {
                     fill: { color: BRAND.accent },
                 });
 
-                // Bullets with custom styling
+                // Bullets with custom styling — each bullet picks its own
+                // fontFace based on its content (mixed-language decks work).
                 const bulletItems = slide.bullets.map(b => {
                     const isBold = b.startsWith('**') && b.includes('**');
                     const cleanText = b.replace(/\*\*/g, '');
+                    const ar = containsArabic(cleanText);
                     return {
                         text: cleanText,
                         options: {
@@ -173,12 +184,19 @@ export async function generatePPTX(spec: PPTXSpec): Promise<Buffer> {
                             bold: isBold,
                             paraSpaceBefore: 4,
                             paraSpaceAfter: 6,
+                            fontFace: ar ? ARABIC_FONT : LATIN_FONT,
+                            rtlMode: ar || undefined,
                         },
                     };
                 });
+                // Frame-level fontFace falls back if a bullet doesn't set one
+                // (it always does here, but pptxgenjs requires the outer opt).
+                const anyArabic = slide.bullets.some(containsArabic);
                 s.addText(bulletItems as any, {
                     x: 1.0, y: 1.4, w: 11.3, h: 5.3,
-                    fontFace: 'Calibri', valign: 'top',
+                    fontFace: anyArabic ? ARABIC_FONT : LATIN_FONT,
+                    rtlMode: anyArabic || undefined,
+                    valign: 'top',
                     lineSpacingMultiple: 1.3,
                 });
 
@@ -194,27 +212,33 @@ export async function generatePPTX(spec: PPTXSpec): Promise<Buffer> {
                 s.addText(slide.title, {
                     x: 0.8, y: 0.3, w: 11.73, h: 0.8,
                     fontSize: 24, bold: true, color: BRAND.title,
-                    fontFace: 'Calibri',
+                    ...arOpts(slide.title),
                 });
 
                 // Left column header (accent colored)
                 s.addText(slide.left.header, {
                     x: 0.8, y: 1.3, w: 5.5, h: 0.5,
                     fontSize: 16, bold: true, color: BRAND.accentDark,
-                    fontFace: 'Calibri',
+                    ...arOpts(slide.left.header),
                 });
                 s.addShape('rect' as any, {
                     x: 0.8, y: 1.78, w: 1.5, h: 0.03,
                     fill: { color: BRAND.accent },
                 });
 
-                const leftBullets = slide.left.bullets.map(b => ({
-                    text: b,
-                    options: { fontSize: 13, color: BRAND.body, bullet: true, breakLine: true },
-                }));
+                const leftBullets = slide.left.bullets.map(b => {
+                    const ar = containsArabic(b);
+                    return {
+                        text: b,
+                        options: { fontSize: 13, color: BRAND.body, bullet: true, breakLine: true, fontFace: ar ? ARABIC_FONT : LATIN_FONT, rtlMode: ar || undefined },
+                    };
+                });
+                const leftAnyArabic = slide.left.bullets.some(containsArabic);
                 s.addText(leftBullets as any, {
                     x: 1.0, y: 2.0, w: 5.3, h: 4.8,
-                    fontFace: 'Calibri', valign: 'top',
+                    fontFace: leftAnyArabic ? ARABIC_FONT : LATIN_FONT,
+                    rtlMode: leftAnyArabic || undefined,
+                    valign: 'top',
                     lineSpacingMultiple: 1.25,
                 });
 
@@ -228,20 +252,26 @@ export async function generatePPTX(spec: PPTXSpec): Promise<Buffer> {
                 s.addText(slide.right.header, {
                     x: 6.9, y: 1.3, w: 5.5, h: 0.5,
                     fontSize: 16, bold: true, color: BRAND.accentDark,
-                    fontFace: 'Calibri',
+                    ...arOpts(slide.right.header),
                 });
                 s.addShape('rect' as any, {
                     x: 6.9, y: 1.78, w: 1.5, h: 0.03,
                     fill: { color: BRAND.accent },
                 });
 
-                const rightBullets = slide.right.bullets.map(b => ({
-                    text: b,
-                    options: { fontSize: 13, color: BRAND.body, bullet: true, breakLine: true },
-                }));
+                const rightBullets = slide.right.bullets.map(b => {
+                    const ar = containsArabic(b);
+                    return {
+                        text: b,
+                        options: { fontSize: 13, color: BRAND.body, bullet: true, breakLine: true, fontFace: ar ? ARABIC_FONT : LATIN_FONT, rtlMode: ar || undefined },
+                    };
+                });
+                const rightAnyArabic = slide.right.bullets.some(containsArabic);
                 s.addText(rightBullets as any, {
                     x: 7.1, y: 2.0, w: 5.3, h: 4.8,
-                    fontFace: 'Calibri', valign: 'top',
+                    fontFace: rightAnyArabic ? ARABIC_FONT : LATIN_FONT,
+                    rtlMode: rightAnyArabic || undefined,
+                    valign: 'top',
                     lineSpacingMultiple: 1.25,
                 });
 
@@ -257,35 +287,50 @@ export async function generatePPTX(spec: PPTXSpec): Promise<Buffer> {
                 s.addText(slide.title, {
                     x: 0.8, y: 0.3, w: 11.73, h: 0.8,
                     fontSize: 24, bold: true, color: BRAND.title,
-                    fontFace: 'Calibri',
+                    ...arOpts(slide.title),
                 });
 
-                // Table with corporate styling
-                const headerRow = slide.headers.map(h => ({
-                    text: h.toUpperCase(),
-                    options: {
-                        bold: true,
-                        color: BRAND.title,
-                        fontSize: 11,
-                        fill: { color: BRAND.tableHeader },
-                    },
-                }));
+                // Per-cell font detection — a single Arabic cell in an
+                // otherwise-Latin table still renders with proper shaping.
+                const headerRow = slide.headers.map(h => {
+                    const headerText = h.toUpperCase();
+                    const ar = containsArabic(headerText);
+                    return {
+                        text: headerText,
+                        options: {
+                            bold: true,
+                            color: BRAND.title,
+                            fontSize: 11,
+                            fill: { color: BRAND.tableHeader },
+                            fontFace: ar ? ARABIC_FONT : LATIN_FONT,
+                        },
+                    };
+                });
 
                 const dataRows = slide.rows.map((row, ri) =>
-                    row.map(cell => ({
-                        text: String(cell),
-                        options: {
-                            fontSize: 11,
-                            color: BRAND.body,
-                            fill: ri % 2 === 0 ? { color: BRAND.tableStripe } : undefined,
-                        },
-                    }))
+                    row.map(cell => {
+                        const cellText = String(cell);
+                        const ar = containsArabic(cellText);
+                        return {
+                            text: cellText,
+                            options: {
+                                fontSize: 11,
+                                color: BRAND.body,
+                                fill: ri % 2 === 0 ? { color: BRAND.tableStripe } : undefined,
+                                fontFace: ar ? ARABIC_FONT : LATIN_FONT,
+                            },
+                        };
+                    })
                 );
 
+                // Table-level fontFace falls back if a cell didn't set one;
+                // cells always do, but pptxgenjs requires the outer option.
+                const anyArabicCell = slide.headers.some(containsArabic) ||
+                    slide.rows.some(r => r.some(c => containsArabic(String(c))));
                 s.addTable([headerRow, ...dataRows] as any, {
                     x: 0.8, y: 1.3, w: 11.73,
                     fontSize: 11,
-                    fontFace: 'Calibri',
+                    fontFace: anyArabicCell ? ARABIC_FONT : LATIN_FONT,
                     border: { type: 'solid', pt: 0.5, color: BRAND.lighter },
                     colW: slide.headers.map(() => 11.73 / slide.headers.length),
                     rowH: [0.45, ...slide.rows.map(() => 0.38)],
@@ -308,7 +353,7 @@ export async function generatePPTX(spec: PPTXSpec): Promise<Buffer> {
                     x: 1, y: 2.5, w: 11.33, h: 1.4,
                     fontSize: 36, bold: true, color: BRAND.white,
                     align: 'center', valign: 'bottom',
-                    fontFace: 'Calibri',
+                    ...arOpts(slide.title),
                 });
 
                 s.addShape('rect' as any, {
@@ -321,14 +366,14 @@ export async function generatePPTX(spec: PPTXSpec): Promise<Buffer> {
                         x: 1, y: 4.4, w: 11.33, h: 0.8,
                         fontSize: 16, color: BRAND.light,
                         align: 'center', valign: 'top',
-                        fontFace: 'Calibri',
+                        ...arOpts(slide.subtitle),
                     });
                 }
 
                 s.addText('Klypix', {
                     x: 5, y: 6.5, w: 3.33, h: 0.4,
                     fontSize: 10, color: BRAND.muted,
-                    align: 'center', fontFace: 'Calibri',
+                    align: 'center', fontFace: LATIN_FONT,
                 });
                 break;
             }
