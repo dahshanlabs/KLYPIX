@@ -4,6 +4,7 @@ import type { ScreenContext } from '../core/contextIntelligence';
 import type { FileAccessResult, WebAccessResult } from '../core/autoEscalation';
 import { getContextDisplayLabel, getAllContextOptions } from '../core/contextIntelligence';
 import { KlypixEyes } from './KlypixEyes';
+import { t } from '../i18n/strings';
 
 // ── Action type → icon + color mapping ────────────────────────────────────
 const TYPE_ICONS: Record<string, string> = {
@@ -90,17 +91,17 @@ export function WhatISeeSkeleton({ onDismiss, onRefresh, onStop, initialStopped 
                     {stopped ? (
                         <>
                             <span className="text-[11px] text-white/30 font-medium tracking-wide">
-                                On Screen paused
+                                {t('onscreen.paused')}
                             </span>
-                            <span className="text-[9px] text-white/15 uppercase tracking-widest">klypix sleeping</span>
+                            <span className="text-[9px] text-white/15 uppercase tracking-widest">{t('onscreen.sleeping')}</span>
                         </>
                     ) : (
                         <>
                             <span className="text-[11px] text-emerald-400/70 font-medium tracking-wide"
                                 style={{ animation: 'klypixTextFade 2.8s ease-in-out infinite' }}>
-                                Seeing your screen
+                                {t('onscreen.seeing')}
                             </span>
-                            <span className="text-[9px] text-white/20 uppercase tracking-widest">klypix on screen</span>
+                            <span className="text-[9px] text-white/20 uppercase tracking-widest">{t('onscreen.active_label')}</span>
                         </>
                     )}
                 </div>
@@ -248,7 +249,7 @@ export function WhatISeeCard({ insight, onAction, onDismiss, onStop, mode, scree
                     {/* Green dot */}
                     <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
                     {/* Label */}
-                    <span className="text-[10px] text-white/25 uppercase tracking-widest font-medium shrink-0">On Screen</span>
+                    <span className="text-[10px] text-white/25 uppercase tracking-widest font-medium shrink-0">{t('onscreen.minimized_label')}</span>
                     {/* Seeing text — truncated to one line */}
                     <span className="text-[13px] text-white/60 truncate flex-1 min-w-0">
                         {insight.seeing}

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { t, useLocale } from '../i18n/strings';
 
 // ── Onboarding Cards ─────────────────────────────────────────────────────────
 // Shows 4 interactive cards on first launch. Each card performs the actual action
@@ -14,12 +15,14 @@ interface OnboardingCardsProps {
     onDismiss: () => void;
 }
 
+// Cards reference translation keys instead of literal strings so locale
+// switches re-render via useLocale() with fresh translations.
 const cards = [
     {
         id: 'screenshot',
         icon: '📸',
-        title: 'Capture & analyze screens',
-        description: 'Full screen or crop — capture one or compare multiple screenshots in a couple of clicks',
+        titleKey: 'onboarding.capture.title' as const,
+        descKey: 'onboarding.capture.desc' as const,
         action: 'screenshot',
         gradient: 'from-emerald-500/10 to-emerald-500/5',
         border: 'border-emerald-500/20',
@@ -28,8 +31,8 @@ const cards = [
     {
         id: 'deepmode',
         icon: '📂',
-        title: 'Read all your open files',
-        description: 'I see every open file, tab, and PDF — select any to analyze, compare, or extract data',
+        titleKey: 'onboarding.deepmode.title' as const,
+        descKey: 'onboarding.deepmode.desc' as const,
         action: 'deepmode',
         gradient: 'from-blue-500/10 to-blue-500/5',
         border: 'border-blue-500/20',
@@ -38,8 +41,8 @@ const cards = [
     {
         id: 'command',
         icon: '⚡',
-        title: 'Execute commands & create docs',
-        description: '"open notepad" · "create a PDF report" · "export to Excel" · "go to google.com"',
+        titleKey: 'onboarding.command.title' as const,
+        descKey: 'onboarding.command.desc' as const,
         action: 'command',
         gradient: 'from-purple-500/10 to-purple-500/5',
         border: 'border-purple-500/20',
@@ -48,8 +51,8 @@ const cards = [
     {
         id: 'clipboard',
         icon: '📋',
-        title: 'Smart clipboard detection',
-        description: 'Copy anything — tables, code, emails, text — I detect it and offer to transform or rewrite',
+        titleKey: 'onboarding.clipboard.title' as const,
+        descKey: 'onboarding.clipboard.desc' as const,
         action: 'clipboard',
         gradient: 'from-amber-500/10 to-amber-500/5',
         border: 'border-amber-500/20',
@@ -58,6 +61,7 @@ const cards = [
 ];
 
 export function OnboardingCards({ onScreenshot, onDeepMode, onCommand, onDismiss }: OnboardingCardsProps) {
+    useLocale(); // re-render when locale changes so card titles update
     const [visible, setVisible] = useState(false);
     const [exitingCard, setExitingCard] = useState<string | null>(null);
     const [dismissed, setDismissed] = useState(false);
@@ -143,10 +147,10 @@ export function OnboardingCards({ onScreenshot, onDeepMode, onCommand, onDismiss
 
                         {/* Text */}
                         <div className="text-white/85 text-[12px] font-medium leading-tight mb-1">
-                            {card.title}
+                            {t(card.titleKey)}
                         </div>
                         <div className="text-white/35 text-[10px] leading-snug">
-                            {card.description}
+                            {t(card.descKey)}
                         </div>
                     </button>
                 ))}

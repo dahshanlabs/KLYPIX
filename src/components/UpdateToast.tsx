@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, Download, RefreshCw, Loader2, AlertTriangle } from 'lucide-react';
 import type { UpdateState } from '../hooks/useUpdater';
+import { t, useLocale } from '../i18n/strings';
 
 interface UpdateToastProps {
     state: UpdateState;
@@ -15,6 +16,7 @@ function formatBytes(bytes: number): string {
 }
 
 export function UpdateToast({ state, onInstall, onDismiss }: UpdateToastProps) {
+    useLocale();
     return (
         <div className="fixed bottom-16 left-1/2 -translate-x-1/2 z-50 w-[340px] bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl shadow-black/50 overflow-hidden animate-in slide-in-from-bottom-4">
 
@@ -29,9 +31,9 @@ export function UpdateToast({ state, onInstall, onDismiss }: UpdateToastProps) {
                         <RefreshCw size={14} className="text-emerald-400" />
                     )}
                     <span className="text-white/80 text-xs font-medium uppercase tracking-wider">
-                        {state.status === 'downloading' ? 'Downloading Update' :
-                         state.status === 'ready' ? 'Update Ready' :
-                         'Update Available'}
+                        {state.status === 'downloading' ? t('update.downloading') :
+                         state.status === 'ready' ? t('update.ready') :
+                         t('update.available')}
                     </span>
                 </div>
                 {!state.mandatory && (
@@ -50,7 +52,7 @@ export function UpdateToast({ state, onInstall, onDismiss }: UpdateToastProps) {
                 {state.mandatory && (
                     <div className="flex items-center gap-1.5 mt-1.5">
                         <AlertTriangle size={12} className="text-amber-400" />
-                        <span className="text-amber-400/80 text-xs">Required update</span>
+                        <span className="text-amber-400/80 text-xs">{t('update.required')}</span>
                     </div>
                 )}
 
@@ -81,19 +83,19 @@ export function UpdateToast({ state, onInstall, onDismiss }: UpdateToastProps) {
                             onClick={onInstall}
                             className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded-lg py-2 transition-all cursor-pointer"
                         >
-                            Restart Now
+                            {t('update.restart_now')}
                         </button>
                         {!state.mandatory && (
                             <button
                                 onClick={onDismiss}
                                 className="flex-1 bg-white/5 hover:bg-white/10 text-white/60 text-xs font-medium rounded-lg py-2 transition-all cursor-pointer"
                             >
-                                Later
+                                {t('common.later')}
                             </button>
                         )}
                     </>
                 ) : state.status === 'available' ? (
-                    <p className="text-white/30 text-xs">Downloading...</p>
+                    <p className="text-white/30 text-xs">{t('update.downloading_progress')}</p>
                 ) : null}
             </div>
         </div>

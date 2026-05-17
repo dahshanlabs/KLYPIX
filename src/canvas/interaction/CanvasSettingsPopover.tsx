@@ -10,6 +10,13 @@ import {
     CANVAS_BG_PAPER,
     type GridStyle,
 } from '../gridSettings';
+import { t, useLocale } from '../../i18n/strings';
+
+const GRID_LABEL_KEY = {
+    off: 'panel.grid_off',
+    lines: 'panel.grid_lines',
+    dots: 'panel.grid_dots',
+} as const;
 
 const cn = (...inputs: ClassValue[]) => twMerge(clsx(inputs));
 
@@ -26,6 +33,7 @@ const PRESETS: { color: string; label: string }[] = [
 ];
 
 export function CanvasSettingsPopover() {
+    useLocale();
     const grid = useGridSettings();
     const [open, setOpen] = useState(false);
     const anchorRef = useRef<HTMLDivElement>(null);
@@ -68,7 +76,7 @@ export function CanvasSettingsPopover() {
                     className="absolute top-full left-0 mt-2 z-50 w-64 p-3 rounded-xl bg-[#1a1a22]/95 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.5)] space-y-3 no-drag"
                     onMouseDown={(e) => e.stopPropagation()}
                 >
-                    <div className="text-[9px] font-bold uppercase tracking-widest text-white/40">Background</div>
+                    <div className="text-[9px] font-bold uppercase tracking-widest text-white/40">{t('panel.background')}</div>
                     <div className="flex items-center gap-2">
                         {PRESETS.map((p) => {
                             const active = grid.background.toLowerCase() === p.color.toLowerCase();
@@ -107,11 +115,11 @@ export function CanvasSettingsPopover() {
                         <div className="ml-auto text-[9px] text-white/40 font-mono uppercase">{grid.background}</div>
                     </div>
 
-                    <div className="pt-1 text-[9px] font-bold uppercase tracking-widest text-white/40">Grid</div>
+                    <div className="pt-1 text-[9px] font-bold uppercase tracking-widest text-white/40">{t('panel.grid')}</div>
                     <div className="grid grid-cols-3 gap-2">
                         {(['dots', 'lines', 'off'] as GridStyle[]).map((style) => {
                             const active = grid.style === style;
-                            const label = style === 'off' ? 'Off' : style === 'dots' ? 'Dots' : 'Lines';
+                            const label = t(GRID_LABEL_KEY[style]);
                             const preview =
                                 style === 'off'
                                     ? 'none'
@@ -147,7 +155,7 @@ export function CanvasSettingsPopover() {
                             grid.style === 'off' && 'opacity-40 pointer-events-none',
                         )}
                     >
-                        <div className="text-[10px] text-white/70">Grid color</div>
+                        <div className="text-[10px] text-white/70">{t('panel.grid_color')}</div>
                         <label
                             className="relative w-5 h-5 rounded-full cursor-pointer ring-1 ring-white/20 hover:ring-white/60 transition-all"
                             style={{ backgroundColor: grid.color }}

@@ -2,10 +2,17 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { getMemoryHistory, getPersona, getStructuredPersona, saveStructuredPersona, type StructuredPersona } from "./memoryStore";
 import { detectContext, getContextFocus, type ContextAction } from "../core/contextIntelligence";
 import type { Suggestion, WindowContext } from "../types";
+import { getLocale } from "../i18n/strings";
 
 // ── API Key Management ────────────────────────────────────────────────────────
 
-const FALLBACK_API_KEY = "AIzaSyD4ETYT7RkSLt_sE_U6ltBz0a2CdFFx5pg";
+// Intentionally empty: shipped builds should NEVER carry a working Gemini
+// key in source — Google's automated scanner revokes any key that lands in
+// a public commit (which is what burned the previous hardcoded value).
+// Every install sets their own key via Settings → "AI Provider", which
+// writes to localStorage['gemini_api_key'] and is picked up by getApiKey()
+// below. For local dev, set the key in localStorage instead of here.
+const FALLBACK_API_KEY = "";
 
 // Robust JSON parser — handles markdown fences, trailing text, and malformed responses
 function safeParseJSON(text: string): any {
@@ -81,6 +88,14 @@ function buildSystemPrompt(
     sessionContextSummary?: string,
 ): string {
     let prompt = KLYPIX_SYSTEM_PROMPT;
+
+    // Locale-aware response language. When the user has explicitly chosen
+    // Arabic as the app language, respond in Arabic regardless of what
+    // language the user typed in — flipping the UI to Arabic is a strong
+    // signal they want Arabic responses. English stays the default.
+    if (getLocale() === 'ar') {
+        prompt += '\n\nLANGUAGE: The user has set the app language to Arabic (العربية). Respond in Arabic, using Modern Standard Arabic. If the user writes in English but the app is in Arabic mode, still respond in Arabic. Markdown headers, lists, and emphasis still apply.';
+    }
 
     if (isFollowUp) {
         prompt += "\nSKIP greetings — this is a follow-up message.";
@@ -220,7 +235,10 @@ export async function getContextInsight(
         }
     }
 
-    const prompt = `You are KLYPIX, analyzing the user's screen. Respond with a JSON object ONLY (no markdown, no code fences):
+    const localeInstruction = getLocale() === 'ar'
+        ? '\nUI LANGUAGE: Arabic. All user-visible strings inside the JSON ("seeing", "key_data" values, action "label" texts) MUST be in Arabic. Field keys, the JSON shape, and English-only metadata (URLs, file paths, error codes, action "type"/"prompt"/"documentFormat" technical values) stay as specified.'
+        : '';
+    const prompt = `You are KLYPIX, analyzing the user's screen.${localeInstruction} Respond with a JSON object ONLY (no markdown, no code fences):
 {
   "seeing": "One-line summary of what's on screen (max 80 chars)",
   "key_data": [
@@ -303,7 +321,10 @@ export async function getContextInsightFromText(
 
     const model = getModel({ maxOutputTokens: 2000, temperature: 0.2 });
 
-    const prompt = `You are KLYPIX, analyzing the user's document content. Respond with a JSON object ONLY (no markdown, no code fences):
+    const docLocaleInstruction = getLocale() === 'ar'
+        ? '\nUI LANGUAGE: Arabic. All user-visible strings inside the JSON ("seeing", "key_data" values, action "label" texts) MUST be in Arabic. JSON keys and "type" / "prompt" technical values stay as specified.'
+        : '';
+    const prompt = `You are KLYPIX, analyzing the user's document content.${docLocaleInstruction} Respond with a JSON object ONLY (no markdown, no code fences):
 {
   "seeing": "One-line summary of the document (max 80 chars)",
   "key_data": [
@@ -512,7 +533,10 @@ MULTI-SCREENSHOT MODE: The user has captured ${imageCount} different screenshots
 - The remaining suggestions can target individual screenshots but MUST specify which one.`;
     }
 
-    const prompt = `You are KLYPIX, an AI desktop assistant. You can ONLY see screenshots — you CANNOT open, read, or access any files. You can only analyze what is VISIBLE in the screenshot images.
+    const suggestLocaleInstruction = getLocale() === 'ar'
+        ? '\nUI LANGUAGE: Arabic. All user-visible suggestion text ("label" and any displayed strings) MUST be in Arabic. The "prompt" field (what gets sent to the AI when clicked) and "type" stay in English for routing.'
+        : '';
+    const prompt = `You are KLYPIX, an AI desktop assistant. You can ONLY see screenshots — you CANNOT open, read, or access any files. You can only analyze what is VISIBLE in the screenshot images.${suggestLocaleInstruction}
 ${contextInfo}
 ${contextFocusInfo}
 ${modeInfo}

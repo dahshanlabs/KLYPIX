@@ -11,6 +11,7 @@ import { ScalePanel } from './ScalePanel';
 import { scaleSelection } from './scaleSelection';
 import { base64JpegToImageItem } from '../file/captureToCanvas';
 import type { TextAlignH, TextAlignV } from './AlignmentGrid';
+import { t, useLocale } from '../../i18n/strings';
 
 const cn = (...inputs: ClassValue[]) => twMerge(clsx(inputs));
 
@@ -30,6 +31,7 @@ interface PreviewSession {
 }
 
 export function Toolbar() {
+    useLocale();
     const { state, dispatch, commit, pushSnapshot, popLastSnapshot, undo, redo, canUndo, canRedo } = useCanvasStore();
     const setTool = (tool: CanvasTool) => dispatch({ type: 'SET_TOOL', tool });
     const [shapesOpen, setShapesOpen] = useState(false);
@@ -906,7 +908,7 @@ export function Toolbar() {
                 to the right of T rather than growing the vertical toolbar
                 stack. Smooth fade/slide-in on appearance. */}
             <div className="relative">
-                <ToolButton label="Type (T)" active={state.tool === 'type'} onClick={() => setTool('type')}><Type size={14} /></ToolButton>
+                <ToolButton label={t('toolbar.type')} active={state.tool === 'type'} onClick={() => setTool('type')}><Type size={14} /></ToolButton>
                 <div
                     className={cn(
                         'absolute left-full top-0 ml-2 p-1.5 rounded-2xl bg-black/60 border border-white/10 backdrop-blur-xl shadow-[0_6px_28px_rgba(0,0,0,0.5)] transition-all duration-150 ease-out',
@@ -916,7 +918,7 @@ export function Toolbar() {
                     )}
                 >
                     <div className="relative">
-                        <ToolButton label="Text" active={textOpen} onClick={openText}>
+                        <ToolButton label={t('toolbar.text')} active={textOpen} onClick={openText}>
                             <TextIcon color={effectiveText.textColor} />
                         </ToolButton>
                         {textButtonVisible && textOpen && (
@@ -949,10 +951,10 @@ export function Toolbar() {
                     </div>
                 </div>
             </div>
-            <ToolButton label="Select (V)" active={state.tool === 'select'} onClick={() => setTool('select')}><MousePointer2 size={14} /></ToolButton>
+            <ToolButton label={t('toolbar.select')} active={state.tool === 'select'} onClick={() => setTool('select')}><MousePointer2 size={14} /></ToolButton>
             <div className="relative">
                 <ToolButton
-                    label="Shapes & line"
+                    label={t('toolbar.shapes')}
                     active={shapesButtonActive}
                     onClick={() => setShapesOpen(v => !v)}
                 >
@@ -964,37 +966,37 @@ export function Toolbar() {
                         className="absolute left-full ml-2 top-0 z-30 p-1.5 rounded-xl bg-[#12121a] border border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)] flex flex-col gap-0.5"
                     >
                         <ShapePopoverItem
-                            label="Rectangle"
+                            label={t('toolbar.shape.rectangle')}
                             active={state.tool === 'box' && state.shape === 'rect'}
                             onClick={() => { dispatch({ type: 'SET_SHAPE', shape: 'rect' }); setTool('box'); setShapesOpen(false); }}
                         ><Square size={13} /></ShapePopoverItem>
                         <ShapePopoverItem
-                            label="Circle"
+                            label={t('toolbar.shape.circle')}
                             active={state.tool === 'box' && state.shape === 'circle'}
                             onClick={() => { dispatch({ type: 'SET_SHAPE', shape: 'circle' }); setTool('box'); setShapesOpen(false); }}
                         ><Circle size={13} /></ShapePopoverItem>
                         <ShapePopoverItem
-                            label="Triangle"
+                            label={t('toolbar.shape.triangle')}
                             active={state.tool === 'box' && state.shape === 'triangle'}
                             onClick={() => { dispatch({ type: 'SET_SHAPE', shape: 'triangle' }); setTool('box'); setShapesOpen(false); }}
                         ><Triangle size={13} /></ShapePopoverItem>
                         <ShapePopoverItem
-                            label="Diamond"
+                            label={t('toolbar.shape.diamond')}
                             active={state.tool === 'box' && state.shape === 'diamond'}
                             onClick={() => { dispatch({ type: 'SET_SHAPE', shape: 'diamond' }); setTool('box'); setShapesOpen(false); }}
                         ><Diamond size={13} /></ShapePopoverItem>
                         <div className="h-px bg-white/10 my-0.5" />
                         <ShapePopoverItem
-                            label="Line"
+                            label={t('toolbar.shape.line')}
                             active={state.tool === 'line'}
                             onClick={() => { setTool('line'); setShapesOpen(false); }}
                         ><LineIcon size={13} /></ShapePopoverItem>
                     </div>
                 )}
             </div>
-            <ToolButton label="Pen (P)" active={state.tool === 'pen'} onClick={() => setTool('pen')}><Pencil size={14} /></ToolButton>
-            <ToolButton label="Connect (C)" active={state.tool === 'connect'} onClick={() => setTool('connect')}><ArrowRight size={14} /></ToolButton>
-            <ToolButton label="Eraser (E)" active={state.tool === 'eraser'} onClick={() => setTool('eraser')}><Eraser size={14} /></ToolButton>
+            <ToolButton label={t('toolbar.pen')} active={state.tool === 'pen'} onClick={() => setTool('pen')}><Pencil size={14} /></ToolButton>
+            <ToolButton label={t('toolbar.connect')} active={state.tool === 'connect'} onClick={() => setTool('connect')}><ArrowRight size={14} /></ToolButton>
+            <ToolButton label={t('toolbar.eraser')} active={state.tool === 'eraser'} onClick={() => setTool('eraser')}><Eraser size={14} /></ToolButton>
 
             <div className="w-6 h-px bg-white/10 my-1" />
 
@@ -1003,7 +1005,7 @@ export function Toolbar() {
                 center. The whole window flickers off-and-on (~150ms) which
                 is the standard hide-show cycle the main app already uses. */}
             <ToolButton
-                label={capturing === 'screen' ? 'Capturing…' : 'Capture full screen'}
+                label={capturing === 'screen' ? t('toolbar.camera_busy') : t('toolbar.camera')}
                 disabled={!!capturing}
                 onClick={() => { void captureToCanvas('screen'); }}
             >
@@ -1015,7 +1017,7 @@ export function Toolbar() {
                 so we sit in "Capturing…" until the user finishes drawing or
                 cancels. */}
             <ToolButton
-                label={capturing === 'snip' ? 'Snipping…' : 'Snip area'}
+                label={capturing === 'snip' ? t('toolbar.snip_busy') : t('toolbar.snip')}
                 disabled={!!capturing}
                 onClick={() => { void captureToCanvas('snip'); }}
             >
@@ -1029,7 +1031,7 @@ export function Toolbar() {
                 off, greyed `~` when the selection is mixed. */}
             <div className="relative">
                 <ToolButton
-                    label={fillDisabled ? "Fill (disabled for stroke-only tools)" : "Fill"}
+                    label={fillDisabled ? t('toolbar.fill_disabled') : t('toolbar.fill')}
                     active={fillOpen}
                     disabled={fillDisabled}
                     onClick={openFill}
@@ -1059,7 +1061,7 @@ export function Toolbar() {
                 stroke color, dashed grey ring when "no stroke", greyed
                 ring with `~` for mixed selections. */}
             <div className="relative">
-                <ToolButton label="Stroke" active={strokeOpen} onClick={openStroke}>
+                <ToolButton label={t('toolbar.stroke')} active={strokeOpen} onClick={openStroke}>
                     <StrokeIcon color={effectiveStroke.color} enabled={effectiveStroke.enabled} />
                 </ToolButton>
                 {strokeOpen && (
@@ -1090,7 +1092,7 @@ export function Toolbar() {
                 its bounding-box center. Disabled when nothing is selected. */}
             <div className="relative">
                 <ToolButton
-                    label={hasSelection ? "Scale" : "Scale (select something first)"}
+                    label={hasSelection ? t('toolbar.scale') : t('toolbar.scale_no_sel')}
                     active={scaleOpen}
                     disabled={!hasSelection}
                     onClick={openScale}
@@ -1108,8 +1110,8 @@ export function Toolbar() {
 
             <div className="w-6 h-px bg-white/10 my-1" />
 
-            <ToolButton label="Undo (Ctrl+Z)" onClick={() => { revertPreview(); undo(); }} disabled={!canUndo}><Undo2 size={13} /></ToolButton>
-            <ToolButton label="Redo (Ctrl+Shift+Z)" onClick={() => { revertPreview(); redo(); }} disabled={!canRedo}><Redo2 size={13} /></ToolButton>
+            <ToolButton label={t('toolbar.undo')} onClick={() => { revertPreview(); undo(); }} disabled={!canUndo}><Undo2 size={13} /></ToolButton>
+            <ToolButton label={t('toolbar.redo')} onClick={() => { revertPreview(); redo(); }} disabled={!canRedo}><Redo2 size={13} /></ToolButton>
         </div>
     );
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import {
     Loader2, Image as ImageIcon, ImageOff, X, Maximize, Square, Mic,
@@ -7,7 +7,7 @@ import {
     Archive, Bookmark, Trash2, Download, RefreshCw, Shield, ShieldOff,
     Eraser, ChevronUp, ChevronDown, Globe, FileText, Paperclip, User,
     MessageCircle, Camera, Scissors, Home, Zap, AlertTriangle, Brain,
-    LayoutGrid,
+    LayoutGrid, Key, Eye, EyeOff, ExternalLink,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -60,6 +60,7 @@ import { AgentRobot } from './components/AgentRobot';
 import { KlypixMascot } from './components/KlypixMascot';
 import { ModeTabs, type AppTab } from './components/ModeTabs';
 import { KlypixCanvas } from './canvas/KlypixCanvas';
+import { t, useLocale, translateActionLabel } from './i18n/strings';
 
 // ── Context-aware prompt system ──────────────────────────────────────────────
 type ContextMode = 'screenshot' | 'deepfile-single' | 'deepfile-multi' | 'attachment' | 'plain';
@@ -489,7 +490,9 @@ const MessageItem = React.memo(({ msg, idx, copiedIndex, copyToClipboard, onView
                     </div>
                     <div className="relative bg-white/10 border border-white/20 px-4 py-2 rounded-2xl max-w-[90%] text-sm text-white font-medium shadow-sm">
                         {searchQuery ? highlightText(msg.content, searchQuery) : msg.content}
-                        <button onClick={() => { copyToClipboard(msg.content, idx); }} className="absolute -right-7 top-1/2 -translate-y-1/2 p-1 rounded-lg text-white/0 group-hover/user:text-white/30 hover:!text-white/70 hover:!bg-white/[0.06] transition-all duration-200" title="Copy prompt"><Copy size={11} /></button>
+                        <button onClick={() => { copyToClipboard(msg.content, idx); }} className="absolute -right-7 top-1/2 -translate-y-1/2 p-1 rounded-lg text-white/0 group-hover/user:text-white/30 hover:!text-white/70 hover:!bg-white/[0.06] transition-all duration-200" title={t('chat.copy_prompt')}>
+                            {copiedIndex === idx ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+                        </button>
                     </div>
                     {(msg.attachedImage || msg.attachedFile) && (
                         <div className="flex gap-1.5 mr-1">
@@ -498,13 +501,13 @@ const MessageItem = React.memo(({ msg, idx, copiedIndex, copyToClipboard, onView
                                     <div className="flex gap-1.5 flex-wrap">
                                         {(() => { try { return JSON.parse(msg.attachedImage.slice(6)) as string[]; } catch { return []; } })().map((img: string, i: number) => (
                                             <button key={i} onClick={() => onViewImage(img)} className="flex items-center gap-1.5 px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white/50 hover:text-white/80 transition-all text-[10px] font-medium">
-                                                <img src={`data:image/jpeg;base64,${img}`} className="w-8 h-5 object-cover rounded" alt={`Screen ${i + 1}`} />
-                                                <span>Screen {i + 1}</span>
+                                                <img src={`data:image/jpeg;base64,${img}`} className="w-8 h-5 object-cover rounded" alt={t('chat.screen_n').replace('{n}', String(i + 1))} />
+                                                <span>{t('chat.screen_n').replace('{n}', String(i + 1))}</span>
                                             </button>
                                         ))}
                                     </div>
                                 ) : (
-                                    <button onClick={() => onViewImage(msg.attachedImage!)} className="flex items-center gap-1.5 px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white/50 hover:text-white/80 transition-all text-[10px] font-medium"><ImageIcon size={10} /><span>View Screen</span></button>
+                                    <button onClick={() => onViewImage(msg.attachedImage!)} className="flex items-center gap-1.5 px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white/50 hover:text-white/80 transition-all text-[10px] font-medium"><ImageIcon size={10} /><span>{t('chat.view_screen')}</span></button>
                                 )
                             )}
                             {msg.attachedFiles && msg.attachedFiles.length > 0 && (
@@ -529,7 +532,7 @@ const MessageItem = React.memo(({ msg, idx, copiedIndex, copyToClipboard, onView
                         <button
                             onClick={() => onSendToCanvas(msg.content)}
                             className="absolute right-0 bottom-0 p-1.5 rounded-md text-white/0 group-hover/asst:text-white/35 hover:!text-emerald-300 hover:!bg-emerald-500/10 transition-all duration-200 cursor-pointer"
-                            title="Add to canvas"
+                            title={t('chat.add_to_canvas')}
                         >
                             <LayoutGrid size={11} />
                         </button>
@@ -568,7 +571,7 @@ const MessageItem = React.memo(({ msg, idx, copiedIndex, copyToClipboard, onView
                             })}
                         </div>
                     )}
-                    <button onClick={() => copyToClipboard(msg.content, idx)} className="absolute top-0 right-0 p-1.5 text-white/20 hover:text-white/60 hover:bg-white/5 rounded-lg transition-all opacity-0 group-hover:opacity-100" title="Copy Response">
+                    <button onClick={() => copyToClipboard(msg.content, idx)} className="absolute top-0 right-0 p-1.5 text-white/20 hover:text-white/60 hover:bg-white/5 rounded-lg transition-all opacity-0 group-hover:opacity-100" title={t('chat.copy_response')}>
                         {copiedIndex === idx ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
                     </button>
                 </div>
@@ -579,6 +582,7 @@ const MessageItem = React.memo(({ msg, idx, copiedIndex, copyToClipboard, onView
 
 // ── App (Auth Guard Wrapper) ──────────────────────────────────────────────────
 export default function App() {
+    useLocale(); // re-render on locale toggle so t() lookups update across the whole tree
     const { isAuthenticated, isLoading: authLoading } = useAuth();
     const [trialExpired, setTrialExpired] = useState(false);
     // Manual sign-in trigger — set by `window.dispatchEvent(new Event('klypix:request-sign-in'))`.
@@ -930,6 +934,84 @@ function AppMain() {
         setTextareaHeight(38);
     }, []);
     const [showRewriteMenu, setShowRewriteMenu] = useState(false);
+    // Gemini API key (Settings overlay field). localStorage is the source
+    // of truth so the existing getApiKey() resolver in src/api/gemini.ts
+    // picks it up on the next request — no IPC roundtrip, no app restart.
+    // The fallback constant in gemini.ts is now empty, so this field is
+    // the ONLY way an install gets a working chat key.
+    const [geminiKeyDraft, setGeminiKeyDraft] = useState<string>(() => localStorage.getItem('gemini_api_key') ?? '');
+    const [geminiKeySaved, setGeminiKeySaved] = useState<boolean>(() => !!localStorage.getItem('gemini_api_key'));
+    const [geminiKeyJustSaved, setGeminiKeyJustSaved] = useState(false);
+    const [geminiKeyVisible, setGeminiKeyVisible] = useState(false);
+    const handleSaveGeminiKey = () => {
+        const trimmed = geminiKeyDraft.trim();
+        if (trimmed) {
+            localStorage.setItem('gemini_api_key', trimmed);
+            setGeminiKeySaved(true);
+        } else {
+            localStorage.removeItem('gemini_api_key');
+            setGeminiKeySaved(false);
+        }
+        setGeminiKeyJustSaved(true);
+        setTimeout(() => setGeminiKeyJustSaved(false), 1600);
+    };
+    const handleClearGeminiKey = () => {
+        localStorage.removeItem('gemini_api_key');
+        setGeminiKeyDraft('');
+        setGeminiKeySaved(false);
+        setGeminiKeyVisible(false);
+    };
+    // Rewrite ▾ dropdown rendering via portal. A `relative absolute` pair
+    // inside the action-chips row was getting clipped by an ancestor's
+    // overflow:hidden when the overlay was short — the menu visibly
+    // overlapped the header and lost its third option. Trigger ref +
+    // measured position + portal escapes the clip and lets us flip up/down
+    // based on viewport space.
+    const rewriteTriggerRef = useRef<HTMLButtonElement>(null);
+    const [rewriteMenuPos, setRewriteMenuPos] = useState<{ left: number; top: number; openUp: boolean } | null>(null);
+    useLayoutEffect(() => {
+        if (!showRewriteMenu) { setRewriteMenuPos(null); return; }
+        const btn = rewriteTriggerRef.current;
+        if (!btn) return;
+        const rect = btn.getBoundingClientRect();
+        const MENU_W = 160;
+        const MENU_H = 130;   // approx for 3 rows of options
+        const PAD = 8;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        // Prefer above (matches the original visual intent) but flip below
+        // if there isn't room — the chat overlay can be short enough that
+        // up-direction collides with the header tabs.
+        let openUp = rect.top >= MENU_H + PAD;
+        let top = openUp ? rect.top - MENU_H - 4 : rect.bottom + 4;
+        // Anchor to the trigger's start edge: left in LTR, right in RTL,
+        // matching where the eye naturally returns from the trigger.
+        const isRTL = (document.documentElement.dir || '').toLowerCase() === 'rtl';
+        let left = isRTL ? rect.right - MENU_W : rect.left;
+        // Viewport clamps — never let the menu render off-screen.
+        if (left < PAD) left = PAD;
+        if (left + MENU_W > vw - PAD) left = vw - MENU_W - PAD;
+        if (top < PAD) top = PAD;
+        if (top + MENU_H > vh - PAD) top = vh - MENU_H - PAD;
+        setRewriteMenuPos({ left, top, openUp });
+    }, [showRewriteMenu]);
+    // Close on outside click / Escape.
+    useEffect(() => {
+        if (!showRewriteMenu) return;
+        const onDown = (e: PointerEvent) => {
+            const t = e.target as HTMLElement | null;
+            if (!t) return;
+            if (t.closest('[data-rewrite-menu="1"]') || t.closest('[data-rewrite-trigger="1"]')) return;
+            setShowRewriteMenu(false);
+        };
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowRewriteMenu(false); };
+        window.addEventListener('pointerdown', onDown);
+        window.addEventListener('keydown', onKey);
+        return () => {
+            window.removeEventListener('pointerdown', onDown);
+            window.removeEventListener('keydown', onKey);
+        };
+    }, [showRewriteMenu]);
     const [showModelDropdown, setShowModelDropdown] = useState(false);
     const [lastActionType, setLastActionType] = useState<string | null>(null);
     const [contextInsight, setContextInsight] = useState<ContextInsight | null>(null);
@@ -1879,7 +1961,7 @@ function AppMain() {
                     <div className="absolute inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center rounded-2xl border-2 border-dashed border-emerald-400/60 animate-in fade-in duration-150">
                         <div className="flex flex-col items-center gap-3">
                             <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 flex items-center justify-center"><Paperclip size={28} className="text-emerald-400" /></div>
-                            <span className="text-white/90 text-lg font-medium">Drop files here</span>
+                            <span className="text-white/90 text-lg font-medium">{t('chat.drop_files')}</span>
                             <span className="text-white/40 text-sm">PDF, DOCX, XLSX, TXT, Images & more (max 5 files, 10MB each)</span>
                         </div>
                     </div>
@@ -1895,21 +1977,21 @@ function AppMain() {
                         <div className="pt-9 px-4 pb-2 flex items-center justify-between">
                             <div className="flex items-center gap-2">
                                 <button onClick={() => { if (screenshot.maximizedByPreview && windowCtx.isMaximized) windowCtx.handleMaximize(); screenshot.setPreviewImage(null); screenshot.setMaximizedByPreview(false); }} className="flex items-center gap-1.5 p-2 pr-3 hover:bg-white/10 rounded-lg transition-all text-white/50 hover:text-white cursor-pointer">
-                                    <ChevronLeft size={18} /><span className="text-[10px] font-bold uppercase tracking-widest">Back</span>
+                                    <ChevronLeft size={18} /><span className="text-[10px] font-bold uppercase tracking-widest">{t('common.back')}</span>
                                 </button>
                             </div>
                             <div className="flex items-center gap-4">
                                 <button onClick={async () => { try { const res = await fetch(`data:image/jpeg;base64,${screenshot.previewImage}`); const blob = await res.blob(); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `capture_${Date.now()}.jpg`; a.click(); URL.revokeObjectURL(url); } catch (e) { console.error(e); } }} className="text-white/50 hover:bg-white/10 hover:text-white p-2 rounded-lg transition-all flex items-center gap-2 cursor-pointer" title="Download image">
-                                    <Download size={14} /><span className="text-[10px] hidden sm:block uppercase tracking-wider font-bold">Save</span>
+                                    <Download size={14} /><span className="text-[10px] hidden sm:block uppercase tracking-wider font-bold">{t('common.save')}</span>
                                 </button>
                                 <button onClick={() => { if (!windowCtx.isMaximized) screenshot.setMaximizedByPreview(true); else screenshot.setMaximizedByPreview(false); windowCtx.handleMaximize(); }} className="text-white/50 hover:bg-white/10 hover:text-white p-2 rounded-lg transition-all flex items-center gap-2 mr-1 cursor-pointer" title="Maximize Window">
-                                    <Maximize size={14} /><span className="text-[10px] hidden sm:block uppercase tracking-wider font-bold">Full Screen</span>
+                                    <Maximize size={14} /><span className="text-[10px] hidden sm:block uppercase tracking-wider font-bold">{t('chat.fullscreen')}</span>
                                 </button>
                                 <button onClick={() => (window as any).electron.minimizeWindow()} className="p-1.5 hover:bg-white/10 rounded-lg transition-all text-white/50 hover:text-white cursor-pointer"><Minus size={14} /></button>
                             </div>
                         </div>
                         <div className="px-4 pb-3 border-b border-white/5">
-                            <span className="text-xs font-bold uppercase tracking-widest text-white/80">Screen Capture</span>
+                            <span className="text-xs font-bold uppercase tracking-widest text-white/80">{t('chat.screen_capture')}</span>
                         </div>
                         <div className="flex-1 p-4 flex items-center justify-center overflow-auto">
                             <img src={`data:image/jpeg;base64,${screenshot.previewImage}`} className="max-w-full max-h-full rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.5)] border border-white/5 object-contain" alt="Captured Screen" />
@@ -1930,11 +2012,11 @@ function AppMain() {
                             </div>
                         </div>
                         <div className="px-4 pb-3 border-b border-white/5">
-                            <span className="text-xs font-bold uppercase tracking-widest text-white/80">Pinned Conversations</span>
+                            <span className="text-xs font-bold uppercase tracking-widest text-white/80">{t('chat.pinned_conversations')}</span>
                         </div>
                         <div className="flex-1 overflow-y-auto p-4 space-y-2 relative scroll-smooth">
                             {pinnedChats.pinnedChats.length === 0 ? (
-                                <div className="absolute inset-0 flex flex-col items-center justify-center text-white/30 gap-3"><Archive size={32} /><span className="text-xs uppercase tracking-widest font-bold">No pinned chats</span></div>
+                                <div className="absolute inset-0 flex flex-col items-center justify-center text-white/30 gap-3"><Archive size={32} /><span className="text-xs uppercase tracking-widest font-bold">{t('chat.no_pinned')}</span></div>
                             ) : (
                                 pinnedChats.pinnedChats.map(c => (
                                     <div key={c.id} onClick={() => pinnedChats.handleLoadPinnedChat(c)} className={cn('w-full text-left p-3 rounded-xl border border-white/5 bg-white/5 hover:bg-white/10 transition-all cursor-pointer group flex items-start justify-between gap-4', currentChatId === c.id ? 'ring-1 ring-emerald-500/50 bg-emerald-500/10' : '')}>
@@ -1963,12 +2045,12 @@ function AppMain() {
                             </div>
                         </div>
                         <div className="px-4 pb-3 border-b border-white/5">
-                            <span className="text-xs font-bold uppercase tracking-widest text-white/80">Settings & Accessibility</span>
+                            <span className="text-xs font-bold uppercase tracking-widest text-white/80">{t('settings.account')} & {t('settings.privacy_mode')}</span>
                         </div>
                         <div className="flex-1 overflow-y-auto p-6 space-y-8">
                             {/* Account Section */}
                             <div className="space-y-3">
-                                <div className="flex items-center gap-2 text-white/40"><User size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">Account</span></div>
+                                <div className="flex items-center gap-2 text-white/40"><User size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">{t('settings.account')}</span></div>
                                 <div className="bg-white/5 border border-white/10 rounded-xl p-4">
                                     <div className="flex items-center gap-3">
                                         <div className="w-10 h-10 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-sm">
@@ -1978,84 +2060,150 @@ function AppMain() {
                                             <div className="text-sm font-medium text-white truncate">{auth.user?.displayName || 'User'}</div>
                                             <div className="text-xs text-white/40 truncate">{auth.user?.email}</div>
                                         </div>
-                                        <span className={cn('px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider', auth.user?.tier === 'admin' ? 'bg-amber-500/20 text-amber-400' : auth.user?.tier === 'pro' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/10 text-white/50')}>{auth.user?.tier || 'free'}</span>
+                                        <span className={cn('px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider', auth.user?.tier === 'admin' ? 'bg-amber-500/20 text-amber-400' : auth.user?.tier === 'pro' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/10 text-white/50')}>{t(`settings.tier_${auth.user?.tier || 'free'}` as any)}</span>
                                     </div>
                                     <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between">
-                                        <span className="text-[10px] text-white/30">Queries: {auth.user?.queriesToday || 0} today / {auth.user?.queriesTotal || 0} total</span>
-                                        <button onClick={() => { auth.signOut(); settings.setShowSettings(false); }} className="text-[10px] text-red-400/70 hover:text-red-400 transition-colors cursor-pointer">Sign Out</button>
+                                        <span className="text-[10px] text-white/30">{t('settings.queries_count').replace('{today}', String(auth.user?.queriesToday || 0)).replace('{total}', String(auth.user?.queriesTotal || 0))}</span>
+                                        <button onClick={() => { auth.signOut(); settings.setShowSettings(false); }} className="text-[10px] text-red-400/70 hover:text-red-400 transition-colors cursor-pointer">{t('settings.signout')}</button>
                                     </div>
                                 </div>
                             </div>
 
+                            {/* AI Provider — Gemini API key. Stored in localStorage
+                                (read by src/api/gemini.ts:getApiKey). The fallback
+                                constant in gemini.ts is now empty: if the user
+                                clears this field, chat stops working until they
+                                add a new key. */}
                             <div className="space-y-3">
-                                <div className="flex items-center gap-2 text-white/40"><Keyboard size={14} /><div className="flex flex-col"><span className="text-[10px] uppercase font-bold tracking-tighter">Global Shortcut</span><span className="text-[8px] text-white/30 uppercase tracking-widest font-medium">Use at least 2 keys (Modifier + Key)</span></div></div>
+                                <div className="flex items-center gap-2 text-white/40"><Key size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">{t('settings.section_ai_provider')}</span></div>
+                                <div className="bg-white/5 border border-white/10 p-3 rounded-xl space-y-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <div className="flex flex-col">
+                                            <span className="text-xs text-white/80 font-medium">{t('settings.gemini_key_label')}</span>
+                                            <span className="text-[10px] text-white/40 leading-tight mt-0.5">{t('settings.gemini_key_hint')}</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                        <input
+                                            type={geminiKeyVisible ? 'text' : 'password'}
+                                            value={geminiKeyDraft}
+                                            onChange={(e) => setGeminiKeyDraft(e.target.value)}
+                                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleSaveGeminiKey(); } }}
+                                            placeholder={t('settings.gemini_key_placeholder')}
+                                            spellCheck={false}
+                                            autoComplete="off"
+                                            className="flex-1 bg-black/40 border border-white/10 rounded-md px-2.5 py-1.5 text-[11px] text-white/85 placeholder-white/25 focus:outline-none focus:border-emerald-500/40 font-mono tracking-tight"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setGeminiKeyVisible(v => !v)}
+                                            title={geminiKeyVisible ? t('settings.gemini_key_hide') : t('settings.gemini_key_show')}
+                                            className="p-1.5 rounded-md bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/85"
+                                        >
+                                            {geminiKeyVisible ? <EyeOff size={12} /> : <Eye size={12} />}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleSaveGeminiKey}
+                                            disabled={geminiKeyDraft.trim() === (localStorage.getItem('gemini_api_key') ?? '')}
+                                            className={cn('px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all', geminiKeyJustSaved ? 'bg-emerald-500/25 text-emerald-300' : geminiKeyDraft.trim() === (localStorage.getItem('gemini_api_key') ?? '') ? 'bg-white/5 text-white/30 cursor-not-allowed' : 'bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25')}
+                                        >
+                                            {geminiKeyJustSaved ? t('settings.gemini_key_saved') : t('settings.gemini_key_save')}
+                                        </button>
+                                        {geminiKeySaved && (
+                                            <button
+                                                type="button"
+                                                onClick={handleClearGeminiKey}
+                                                title={t('settings.gemini_key_clear')}
+                                                className="p-1.5 rounded-md bg-white/5 hover:bg-red-500/15 text-white/40 hover:text-red-300"
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
+                                        )}
+                                    </div>
+                                    {!geminiKeySaved && (
+                                        <p className="text-[10px] text-amber-300/80">{t('settings.gemini_key_missing')}</p>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={() => (window as any).electron?.openExternal?.('https://aistudio.google.com/apikey')}
+                                        className="flex items-center gap-1 text-[10px] text-emerald-400/80 hover:text-emerald-300 transition-colors"
+                                    >
+                                        <ExternalLink size={10} />
+                                        {t('settings.gemini_key_get')}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="space-y-3">
+                                <div className="flex items-center gap-2 text-white/40"><Keyboard size={14} /><div className="flex flex-col"><span className="text-[10px] uppercase font-bold tracking-tighter">{t('settings.shortcut')}</span><span className="text-[8px] text-white/30 uppercase tracking-widest font-medium">{t('settings.shortcut.hint')}</span></div></div>
                                 <div className="bg-white/5 border border-white/10 p-3 rounded-xl flex items-center justify-between">
-                                    <span className="text-xs text-white/60">Activate Assistant</span>
+                                    <span className="text-xs text-white/60">{t('settings.shortcut.activate')}</span>
                                     <button onClick={() => settings.setIsRecording(!settings.isRecording)} className={cn('flex gap-1 px-2 py-1.5 rounded-lg border transition-all', settings.isRecording ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 ring-2 ring-emerald-500/20' : 'bg-white/5 border-white/10 text-white/80 hover:bg-white/10 hover:border-white/20')}>
-                                        {settings.isRecording ? <span className="text-[10px] font-bold animate-pulse uppercase tracking-widest">Press Keys Now...</span> : settings.currentShortcut.split('+').map((part, i) => <React.Fragment key={i}><kbd className="px-1.5 py-0.5 bg-white/10 border border-white/20 rounded text-[10px] font-mono shadow-sm">{part}</kbd>{i < settings.currentShortcut.split('+').length - 1 && <span className="text-white/20">+</span>}</React.Fragment>)}
+                                        {settings.isRecording ? <span className="text-[10px] font-bold animate-pulse uppercase tracking-widest">{t('settings.shortcut.press')}</span> : settings.currentShortcut.split('+').map((part, i) => <React.Fragment key={i}><kbd className="px-1.5 py-0.5 bg-white/10 border border-white/20 rounded text-[10px] font-mono shadow-sm">{part}</kbd>{i < settings.currentShortcut.split('+').length - 1 && <span className="text-white/20">+</span>}</React.Fragment>)}
                                     </button>
                                 </div>
                             </div>
                             <div className="space-y-4">
-                                <div className="flex items-center gap-2 text-white/40"><Volume2 size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">Accessibility & Voice</span></div>
+                                <div className="flex items-center gap-2 text-white/40"><Volume2 size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">{t('settings.section_accessibility_voice')}</span></div>
                                 <div className="grid grid-cols-2 gap-3">
                                     <button onClick={() => settings.setIsVoiceDictationEnabled(!settings.isVoiceDictationEnabled)} className={cn('p-4 rounded-2xl border transition-all flex flex-col items-start gap-3', settings.isVoiceDictationEnabled ? 'bg-white/10 border-white/20' : 'bg-white/5 border-white/5 grayscale')}>
                                         {settings.isVoiceDictationEnabled ? <Mic size={20} className="text-white" /> : <MicOff size={20} className="text-white/40" />}
-                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">Voice Dictation</div><div className="text-[9px] text-white/40 leading-tight">Speak instead of typing</div></div>
+                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">{t('settings.voice_dictation')}</div><div className="text-[9px] text-white/40 leading-tight">{t('settings.voice_dictation.hint')}</div></div>
                                     </button>
                                     <button onClick={() => settings.setIsTTSEnabled(!settings.isTTSEnabled)} className={cn('p-4 rounded-2xl border transition-all flex flex-col items-start gap-3', settings.isTTSEnabled ? 'bg-white/10 border-white/20' : 'bg-white/5 border-white/5 grayscale')}>
                                         {settings.isTTSEnabled ? <Volume2 size={20} className="text-white" /> : <VolumeX size={20} className="text-white/40" />}
-                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">Speak Responses</div><div className="text-[9px] text-white/40 leading-tight">AI reads answers aloud</div></div>
+                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">{t('settings.speak_responses')}</div><div className="text-[9px] text-white/40 leading-tight">{t('settings.speak_responses.hint')}</div></div>
                                     </button>
                                 </div>
                             </div>
                             <div className="space-y-4 pb-4">
-                                <div className="flex items-center gap-2 text-white/40"><Shield size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">Privacy & Memory</span></div>
+                                <div className="flex items-center gap-2 text-white/40"><Shield size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">{t('settings.section_privacy_memory')}</span></div>
                                 <div className="grid grid-cols-2 gap-3">
                                     <button onClick={() => settings.setIsPrivacyMode(!settings.isPrivacyMode)} className={cn('p-4 rounded-2xl border transition-all flex flex-col items-start gap-3', settings.isPrivacyMode ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-white/5 border-white/5')}>
                                         {settings.isPrivacyMode ? <Shield size={20} className="text-emerald-400" /> : <ShieldOff size={20} className="text-white/40" />}
-                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">Privacy Mode</div><div className="text-[9px] text-white/40 leading-tight">{settings.isPrivacyMode ? 'Masking window titles' : 'High context mode'}</div></div>
+                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">{t('settings.privacy_mode')}</div><div className="text-[9px] text-white/40 leading-tight">{t('settings.privacy_mode.hint')}</div></div>
                                     </button>
                                     <button onClick={() => { import('./api/memoryStore').then(m => { const data = m.exportMemoryData(); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `alt-space-memory-${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); }); }} className="p-4 rounded-2xl border border-white/5 bg-white/5 hover:bg-white/10 transition-all flex flex-col items-start gap-3 group">
                                         <Download size={20} className="text-white/40 group-hover:text-white transition-colors" />
-                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">Download Memory</div><div className="text-[9px] text-white/40 leading-tight">Export profile & history</div></div>
+                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">{t('settings.download_memory')}</div><div className="text-[9px] text-white/40 leading-tight">{t('settings.download_memory.hint')}</div></div>
                                     </button>
                                     <button onClick={() => { if (confirm('Are you sure you want to clear your local AI memory? This will reset your Living Persona.')) { import('./api/memoryStore').then(m => m.clearMemory()); alert('Memory cleared.'); window.location.reload(); } }} className="p-4 rounded-2xl border border-white/5 bg-white/5 hover:bg-red-500/10 hover:border-red-500/20 transition-all flex flex-col items-start gap-3 group">
                                         <Eraser size={20} className="text-white/40 group-hover:text-red-400 transition-colors" />
-                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">Clear Memory</div><div className="text-[9px] text-white/40 leading-tight">Reset history & persona</div></div>
+                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">{t('settings.clear_memory')}</div><div className="text-[9px] text-white/40 leading-tight">{t('settings.clear_memory.hint')}</div></div>
                                     </button>
                                 </div>
                             </div>
                             <div className="space-y-4 pb-4">
-                                <div className="flex items-center gap-2 text-white/40"><FileText size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">Document Reading</span></div>
+                                <div className="flex items-center gap-2 text-white/40"><FileText size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">{t('settings.doc_reading')}</span></div>
                                 <div className="grid grid-cols-2 gap-3">
                                     <button onClick={() => settings.setPdfOcrMode('gemini')} className={cn('p-4 rounded-2xl border transition-all flex flex-col items-start gap-3', settings.pdfOcrMode === 'gemini' ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-white/5 border-white/5')}>
                                         <Globe size={20} className={settings.pdfOcrMode === 'gemini' ? 'text-emerald-400' : 'text-white/40'} />
-                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">Gemini Vision</div><div className="text-[9px] text-white/40 leading-tight">Cloud AI reads scanned PDFs. Fast & accurate. Uses API tokens.</div></div>
+                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">{t('settings.gemini_vision')}</div><div className="text-[9px] text-white/40 leading-tight">{t('settings.gemini_vision.hint')}</div></div>
                                     </button>
                                     <button onClick={() => settings.setPdfOcrMode('local')} className={cn('p-4 rounded-2xl border transition-all flex flex-col items-start gap-3', settings.pdfOcrMode === 'local' ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-white/5 border-white/5')}>
                                         <Lock size={20} className={settings.pdfOcrMode === 'local' ? 'text-emerald-400' : 'text-white/40'} />
-                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">Local OCR</div><div className="text-[9px] text-white/40 leading-tight">Tesseract reads locally. Slower but free, fully private.</div></div>
+                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">{t('settings.local_ocr')}</div><div className="text-[9px] text-white/40 leading-tight">{t('settings.local_ocr.hint')}</div></div>
                                     </button>
                                 </div>
                                 <div className="space-y-4 pb-4">
-                                    <div className="flex items-center gap-2 text-white/40"><Zap size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">Power Button</span></div>
+                                    <div className="flex items-center gap-2 text-white/40"><Zap size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">{t('settings.power_button')}</span></div>
                                     <div className="space-y-3">
-                                        <input type="text" maxLength={20} value={settings.powerButtonLabel} onChange={e => settings.setPowerButtonLabel(e.target.value)} placeholder="Label — e.g. Translate" className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-[11px] placeholder:text-white/25 focus:outline-none focus:border-emerald-500/30 transition-colors" />
-                                        <textarea rows={2} value={settings.powerButtonPrompt} onChange={e => settings.setPowerButtonPrompt(e.target.value)} placeholder="Prompt — e.g. Translate the above to Arabic" className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-[11px] placeholder:text-white/25 focus:outline-none focus:border-emerald-500/30 transition-colors resize-none" />
-                                        <div className="text-[9px] text-white/25">Shows a ⚡ quick-action button after every AI response.</div>
+                                        <input dir="auto" type="text" maxLength={20} value={settings.powerButtonLabel} onChange={e => settings.setPowerButtonLabel(e.target.value)} placeholder={t('settings.power_button.label')} className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-[11px] placeholder:text-white/25 focus:outline-none focus:border-emerald-500/30 transition-colors" />
+                                        <textarea dir="auto" rows={2} value={settings.powerButtonPrompt} onChange={e => settings.setPowerButtonPrompt(e.target.value)} placeholder={t('settings.power_button.prompt')} className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-[11px] placeholder:text-white/25 focus:outline-none focus:border-emerald-500/30 transition-colors resize-none" />
+                                        <div className="text-[9px] text-white/25">{t('settings.power_button.hint')}</div>
                                     </div>
                                 </div>
 
                                 {/* Agent Engine Settings */}
                                 <div className="space-y-4 pb-4">
-                                    <div className="flex items-center gap-2 text-white/40"><Zap size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">Agent Engine</span></div>
+                                    <div className="flex items-center gap-2 text-white/40"><Zap size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">{t('settings.agent_engine')}</span></div>
                                     <AgentSettings />
                                 </div>
                             </div>
                         </div>
                         <div className="p-4 border-t border-white/5 flex justify-center">
-                            <button onClick={() => settings.setShowSettings(false)} className="bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold uppercase tracking-widest px-8 py-2.5 rounded-xl transition-all">Back to Chat</button>
+                            <button onClick={() => settings.setShowSettings(false)} className="bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold uppercase tracking-widest px-8 py-2.5 rounded-xl transition-all">{t('settings.back_to_chat')}</button>
                         </div>
                     </div>
                 )}
@@ -2093,7 +2241,7 @@ function AppMain() {
                             <button
                                 onClick={() => setCdpBannerCollapsed(false)}
                                 className="no-drag px-1.5 py-0.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/20 transition-all cursor-pointer group flex items-center gap-1.5"
-                                title="Browser integration needed — click to set up"
+                                title={t('cdp.collapsed_tooltip')}
                             >
                                 <AlertTriangle size={12} className="text-amber-400" style={{ animation: 'cdpPulse 2s ease-in-out infinite' }} />
                                 <span className="text-[9px] text-amber-400/80 font-medium">CDP</span>
@@ -2104,7 +2252,7 @@ function AppMain() {
                     <ModeTabs active={activeTab} onChange={setActiveTab} />
                     <div className="flex items-center gap-2">
                         <div className="window-controls">
-                            <button onClick={windowCtx.handleMinimize} className="p-1 hover:bg-white/10 rounded transition-all text-white/40 hover:text-white" title="Minimize to Tray"><Minus size={14} /></button>
+                            <button onClick={windowCtx.handleMinimize} className="p-1 hover:bg-white/10 rounded transition-all text-white/40 hover:text-white" title={t('chat.minimize_tray')}><Minus size={14} /></button>
                             <button onClick={handleTitleBarMaximize} className="p-1 hover:bg-white/10 rounded transition-all text-white/40 hover:text-white" title={titleBarMaximizeIsOn ? 'Restore' : (activeTab === 'canvas' ? 'Fullscreen canvas' : 'Maximize')}>{titleBarMaximizeIsOn ? <Copy size={12} /> : <Square size={12} />}</button>
                             <button onClick={clear} className="p-1 hover:bg-red-500/20 rounded transition-all text-white/40 hover:text-red-400" title="Dismiss"><X size={14} /></button>
                         </div>
@@ -2133,6 +2281,7 @@ function AppMain() {
                     />
                     <div className="relative flex-1 no-drag flex items-center gap-2">
                         <textarea
+                            dir="auto"
                             ref={inputRef} rows={1} defaultValue={query}
                             onInput={() => {
                                 if (inputRef.current) {
@@ -2146,7 +2295,7 @@ function AppMain() {
                                 }
                             }}
                             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
-                            placeholder={agentMode ? "Tell KLYPIX what to do..." : "Ask about this screen or directly press send"}
+                            placeholder={agentMode ? t('chat.tell_klypix') : t('chat.input_placeholder')}
                             style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
                             className={cn('w-full bg-white/5 border rounded-xl py-2 px-4 text-[15px] focus:outline-none focus:ring-2 transition-all placeholder:text-white/40 outline-none resize-none overflow-hidden leading-snug flex items-center min-h-[38px]', agentMode ? 'border-purple-500/30 focus:ring-purple-500/50' : 'border-white/10 focus:ring-emerald-500/50', screenshot.showScreenshot && 'pr-16')}
                         />
@@ -2171,7 +2320,7 @@ function AppMain() {
                                         if (b) { screenshot.setLastScreenshot64(b); suggestions.setLastScreenshotImmediate(b); setTimeout(() => suggestions.fetchSuggestions(true), 50); }
                                     }}
                                     className="h-7 px-1.5 rounded border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 text-[10px] font-medium transition-all cursor-pointer flex items-center gap-0.5"
-                                    title="Capture another screenshot"
+                                    title={t('chat.capture_another')}
                                 >
                                     <span>+</span>
                                 </button>
@@ -2179,13 +2328,13 @@ function AppMain() {
                         )}
                     </div>
                     <div className="flex items-center gap-1.5 no-drag bg-white/5 p-1 rounded-xl border border-white/10">
-                        <button onClick={() => { screenshot.setShowScreenshot(false); deepMode.setIsDeepFileMode(false); screenshot.clearStack(); suggestions.stopSuggestions(); suggestions.setSuggestions([]); suggestions.setLastSuggestionContext(''); setInsightDismissed(true); }} className={cn('p-1.5 rounded-lg transition-all duration-200', !screenshot.showScreenshot && !deepMode.isDeepFileMode ? 'bg-white/15 text-white shadow-sm' : 'text-white/40 hover:bg-white/10')} title="Home"><Home size={16} /></button>
-                        <button onClick={async () => { setInsightDismissed(true); screenshot.setShowScreenshot(true); screenshot.setCaptureMode('full'); deepMode.setIsDeepFileMode(false); screenshot.clearStack(); suggestions.setSuggestions([]); suggestions.setLastSuggestionContext(''); deepMode.setFailedAccessNames([]); try { const b = await screenshot.captureFullScreen(); if (b) { screenshot.addToStack(b, `Screen 1`); screenshot.setLastScreenshot64(b); suggestions.setLastScreenshotImmediate(b); setTimeout(() => suggestions.fetchSuggestions(true), 50); } } catch (e) { console.error(e); } }} className={cn('p-1.5 rounded-lg transition-all duration-200', screenshot.showScreenshot && screenshot.captureMode === 'full' && !deepMode.isDeepFileMode ? 'bg-white/20 text-white shadow-sm' : 'text-white/40 hover:bg-white/10')} title="Capture Screen"><Maximize size={16} /></button>
-                        <button onClick={async () => { setInsightDismissed(true); screenshot.setShowScreenshot(true); screenshot.setCaptureMode('partial'); deepMode.setIsDeepFileMode(false); screenshot.clearStack(); suggestions.setSuggestions([]); suggestions.setLastSuggestionContext(''); try { const b = await screenshot.launchSnipping(); if (b) { screenshot.setLastScreenshot64(b); screenshot.addToStack(b, `Snip 1`); suggestions.setLastScreenshotImmediate(b); setTimeout(() => suggestions.fetchSuggestions(true), 50); } } catch (e) { console.error(e); } }} className={cn('p-1.5 rounded-lg transition-all duration-200', screenshot.showScreenshot && screenshot.captureMode === 'partial' && !deepMode.isDeepFileMode ? 'bg-white/20 text-white shadow-sm' : 'text-white/40 hover:bg-white/10')} title="Snip Region"><Scissors size={16} /></button>
-                        <button onClick={() => { setInsightDismissed(true); deepMode.activateDeepMode(); screenshot.setShowScreenshot(false); screenshot.clearStack(); suggestions.setSuggestions([]); suggestions.setLastSuggestionContext(''); setContextInsight(null); if (deepMode.selectedFiles.length > 0 && deepMode.allSelectedLoaded) { setTimeout(() => suggestions.fetchSuggestions(true), 100); } }} className={cn('p-1.5 rounded-lg transition-all duration-200', deepMode.isDeepFileMode ? 'bg-emerald-500/20 text-emerald-400 shadow-sm' : 'text-white/40 hover:bg-white/10')} title="Scan Files"><FileSearch size={16} /></button>
+                        <button onClick={() => { screenshot.setShowScreenshot(false); deepMode.setIsDeepFileMode(false); screenshot.clearStack(); suggestions.stopSuggestions(); suggestions.setSuggestions([]); suggestions.setLastSuggestionContext(''); setInsightDismissed(true); }} className={cn('p-1.5 rounded-lg transition-all duration-200', !screenshot.showScreenshot && !deepMode.isDeepFileMode ? 'bg-white/15 text-white shadow-sm' : 'text-white/40 hover:bg-white/10')} title={t('common.home')}><Home size={16} /></button>
+                        <button onClick={async () => { setInsightDismissed(true); screenshot.setShowScreenshot(true); screenshot.setCaptureMode('full'); deepMode.setIsDeepFileMode(false); screenshot.clearStack(); suggestions.setSuggestions([]); suggestions.setLastSuggestionContext(''); deepMode.setFailedAccessNames([]); try { const b = await screenshot.captureFullScreen(); if (b) { screenshot.addToStack(b, `Screen 1`); screenshot.setLastScreenshot64(b); suggestions.setLastScreenshotImmediate(b); setTimeout(() => suggestions.fetchSuggestions(true), 50); } } catch (e) { console.error(e); } }} className={cn('p-1.5 rounded-lg transition-all duration-200', screenshot.showScreenshot && screenshot.captureMode === 'full' && !deepMode.isDeepFileMode ? 'bg-white/20 text-white shadow-sm' : 'text-white/40 hover:bg-white/10')} title={t('chat.capture_full')}><Maximize size={16} /></button>
+                        <button onClick={async () => { setInsightDismissed(true); screenshot.setShowScreenshot(true); screenshot.setCaptureMode('partial'); deepMode.setIsDeepFileMode(false); screenshot.clearStack(); suggestions.setSuggestions([]); suggestions.setLastSuggestionContext(''); try { const b = await screenshot.launchSnipping(); if (b) { screenshot.setLastScreenshot64(b); screenshot.addToStack(b, `Snip 1`); suggestions.setLastScreenshotImmediate(b); setTimeout(() => suggestions.fetchSuggestions(true), 50); } } catch (e) { console.error(e); } }} className={cn('p-1.5 rounded-lg transition-all duration-200', screenshot.showScreenshot && screenshot.captureMode === 'partial' && !deepMode.isDeepFileMode ? 'bg-white/20 text-white shadow-sm' : 'text-white/40 hover:bg-white/10')} title={t('chat.snip_region')}><Scissors size={16} /></button>
+                        <button onClick={() => { setInsightDismissed(true); deepMode.activateDeepMode(); screenshot.setShowScreenshot(false); screenshot.clearStack(); suggestions.setSuggestions([]); suggestions.setLastSuggestionContext(''); setContextInsight(null); if (deepMode.selectedFiles.length > 0 && deepMode.allSelectedLoaded) { setTimeout(() => suggestions.fetchSuggestions(true), 100); } }} className={cn('p-1.5 rounded-lg transition-all duration-200', deepMode.isDeepFileMode ? 'bg-emerald-500/20 text-emerald-400 shadow-sm' : 'text-white/40 hover:bg-white/10')} title={t('chat.scan_files')}><FileSearch size={16} /></button>
                     </div>
                     <div className="flex items-center gap-1 no-drag">
-                        <button onClick={attachments.handleAttachClick} className={cn('p-1.5 rounded-lg transition-all', attachments.attachedFiles.length > 0 ? 'bg-emerald-500/20 text-emerald-400' : 'text-white/40 hover:bg-white/10 hover:text-white/70')} title={`Attach files (${attachments.attachedFiles.length}/${MAX_ATTACHED})`}><Paperclip size={16} /></button>
+                        <button onClick={attachments.handleAttachClick} className={cn('p-1.5 rounded-lg transition-all', attachments.attachedFiles.length > 0 ? 'bg-emerald-500/20 text-emerald-400' : 'text-white/40 hover:bg-white/10 hover:text-white/70')} title={`${t('chat.attach_files')} (${attachments.attachedFiles.length}/${MAX_ATTACHED})`}><Paperclip size={16} /></button>
                         {settings.isVoiceDictationEnabled && (
                             <button
                                 onClick={async () => {
@@ -2284,26 +2433,55 @@ function AppMain() {
                                         alert('Microphone access denied. Please allow microphone access in system settings.');
                                     }
                                 }}
-                                className={cn('relative rounded-xl transition-all ml-1 cursor-pointer overflow-hidden', isVoiceRecording ? 'bg-red-500/20 ring-2 ring-red-500/40 animate-pulse' : 'bg-white/5 text-white/40 hover:bg-white/10')}
+                                className={cn('relative rounded-xl transition-all ml-1 cursor-pointer overflow-visible group', isVoiceRecording ? 'bg-red-500/20 ring-2 ring-red-500/40 hover:bg-red-500/30' : 'bg-white/5 text-white/40 hover:bg-white/10')}
                                 style={{ width: 36, height: 36 }}
-                                title={isVoiceRecording ? 'Stop & transcribe' : 'Voice input (Arabic/English)'}
+                                title={isVoiceRecording ? t('chat.stop_recording') : t('chat.voice_input')}
                             >
-                                {isVoiceRecording ? (
-                                    <div className="absolute inset-0 flex items-center justify-center">
-                                        <div className="flex items-center gap-[2px] h-full py-2">
-                                            {[0.6, 1, 0.7, 0.9, 0.5].map((scale, i) => (
-                                                <div
-                                                    key={i}
-                                                    className="w-[3px] rounded-full bg-red-400 transition-all duration-75"
-                                                    style={{
-                                                        height: `${Math.max(15, voiceLevel * scale * 100)}%`,
-                                                        opacity: 0.5 + voiceLevel * 0.5,
-                                                    }}
-                                                />
-                                            ))}
-                                        </div>
-                                    </div>
-                                ) : (
+                                {/* Whisper-style voice visualization: a noise-floor
+                                    REST_THRESHOLD splits "silent" from "speaking".
+                                    Below it, bars flatten to a thin dim baseline so
+                                    the button is visibly idle (not animating). Above
+                                    it, voiceLevel is remapped to (0..1) starting at
+                                    the threshold so bars begin growing from zero
+                                    the moment the user actually speaks — no
+                                    "always-on" baseline noise.
+                                    9 bars with a bell-curve scale array form an
+                                    organic waveform shape (taller in the middle,
+                                    tapering to the ends), and items-center anchors
+                                    every bar to the horizontal midline so they
+                                    grow symmetrically UP and DOWN as you speak —
+                                    not bottom-anchored. */}
+                                {isVoiceRecording ? (() => {
+                                    const REST_THRESHOLD = 0.06;
+                                    const isResting = voiceLevel < REST_THRESHOLD;
+                                    const speakLevel = isResting ? 0 : (voiceLevel - REST_THRESHOLD) / (1 - REST_THRESHOLD);
+                                    const BAR_SCALES = [0.3, 0.55, 0.75, 0.9, 1.0, 0.9, 0.75, 0.55, 0.3];
+                                    return (
+                                        <>
+                                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none rounded-xl overflow-hidden">
+                                                <div className="flex items-center gap-[1.5px] h-full py-1.5">
+                                                    {BAR_SCALES.map((scale, i) => (
+                                                        <div
+                                                            key={i}
+                                                            className="w-[2px] rounded-full bg-red-300 transition-all duration-75"
+                                                            style={{
+                                                                height: isResting ? '10%' : `${Math.max(10, speakLevel * scale * 100)}%`,
+                                                                opacity: isResting ? 0.4 : 0.7 + speakLevel * 0.3,
+                                                            }}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            {/* Stop badge — small filled square in the top-right
+                                                corner makes the "click to stop" affordance
+                                                explicit. Sits above the waveform layer; on
+                                                hover, brightens to confirm interactivity. */}
+                                            <div className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-500 ring-2 ring-zinc-900 flex items-center justify-center shadow-sm group-hover:bg-red-400 transition-colors pointer-events-none">
+                                                <StopIcon size={6} className="text-white fill-white" />
+                                            </div>
+                                        </>
+                                    );
+                                })() : (
                                     <div className="absolute inset-0 flex items-center justify-center">
                                         <Mic size={18} />
                                     </div>
@@ -2311,7 +2489,7 @@ function AppMain() {
                             </button>
                         )}
                         {chat.isTyping || chat.isAnalyzing ? (
-                            <button onClick={chat.stopGeneration} className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-all no-drag ml-1" title="Stop Generation"><StopIcon size={18} className="fill-current" /></button>
+                            <button onClick={chat.stopGeneration} className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-all no-drag ml-1" title={t('chat.stop_generation')}><StopIcon size={18} className="fill-current" /></button>
                         ) : (
                             <button onClick={() => submit()} disabled={chat.isAnalyzing || (!query.trim() && !screenshot.showScreenshot && !deepMode.isDeepFileMode && attachments.attachedFiles.length === 0)} className="p-2 bg-white/10 hover:bg-white/20 disabled:opacity-30 text-white rounded-xl transition-all no-drag ml-1">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3.4 22L21.6 12L3.4 2L3.39 9.77L16.4 12L3.39 14.23L3.4 22Z" fill="currentColor" /></svg>
@@ -2371,13 +2549,13 @@ function AppMain() {
                                         className="px-3 py-1.5 text-[12px] font-medium text-blue-300 bg-blue-500/[0.08] border border-blue-400/[0.12] rounded-lg hover:bg-blue-500/[0.15] hover:border-blue-400/25 transition-all duration-200 flex items-center gap-1.5 backdrop-blur-sm"
                                     >
                                         <div className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" />
-                                        <span>({deepMode.discoveredFiles.length} Items Found)</span>
+                                        <span>{t('chat.items_found_n').replace('{n}', String(deepMode.discoveredFiles.length))}</span>
                                         {deepMode.selectedFiles.length > 0 && <span className="bg-emerald-500 text-black px-1.5 rounded-full text-[8px] font-bold ml-0.5">{deepMode.selectedFiles.length}</span>}
                                         <ChevronDown size={10} className={`transition-transform duration-200 ${deepMode.isFilesDropdownOpen ? 'rotate-180' : ''}`} />
                                     </button>
                                     {deepMode.isFilesDropdownOpen && createPortal(
                                         <div ref={deepMode.filesDropdownRef} className="fixed w-72 max-h-[200px] overflow-y-auto bg-zinc-900/95 backdrop-blur-xl border border-white/[0.06] rounded-xl shadow-2xl p-2 z-[9999] flex flex-col gap-0.5 animate-in fade-in zoom-in-95 duration-150" style={{ top: (document.getElementById('files-toggle-button')?.getBoundingClientRect()?.bottom ?? 0) + 4, left: document.getElementById('files-toggle-button')?.getBoundingClientRect()?.left ?? 0 }}>
-                                            {deepMode.discoveredFiles.length === 0 && !deepMode.isScanningFiles && <div className="text-[10px] text-white/40 p-2 text-center">No background sources found</div>}
+                                            {deepMode.discoveredFiles.length === 0 && !deepMode.isScanningFiles && <div className="text-[10px] text-white/40 p-2 text-center">{t('chat.no_sources')}</div>}
                                             <div className="flex flex-col gap-0.5">
                                                 {deepMode.discoveredFiles.map(item => (
                                                     <label key={item.id} className="flex items-start gap-2 p-1.5 hover:bg-white/5 rounded cursor-pointer group transition-colors">
@@ -2417,7 +2595,7 @@ function AppMain() {
                                 </div>
                             )}
                             {deepMode.isDeepFileMode && (
-                                <button onClick={(e) => { e.preventDefault(); const t = deepMode.selectedFiles.length + attachments.attachedFiles.length; if (!chat.isAnalyzing && t >= 2) { deepMode.setIsFilesDropdownOpen(false); submit(undefined, COMPARE_TEMPLATE, false, 'Compare Documents', 'Compare'); } else if (t < 2) alert('Please select or attach at least 2 files to compare.'); }} disabled={chat.isAnalyzing || (deepMode.selectedFiles.length + attachments.attachedFiles.length) < 2} className={cn('px-3 py-1.5 text-[12px] font-medium rounded-lg transition-all duration-200 active:scale-[0.97]', (deepMode.selectedFiles.length + attachments.attachedFiles.length) >= 2 ? 'text-emerald-300 bg-emerald-500/[0.08] hover:bg-emerald-500/[0.15] cursor-pointer' : 'text-white/20 bg-white/[0.03] opacity-50 cursor-not-allowed')}>Compare</button>
+                                <button onClick={(e) => { e.preventDefault(); const tCount = deepMode.selectedFiles.length + attachments.attachedFiles.length; if (!chat.isAnalyzing && tCount >= 2) { deepMode.setIsFilesDropdownOpen(false); submit(undefined, COMPARE_TEMPLATE, false, t('chat.compare_documents'), 'Compare'); } else if (tCount < 2) alert(t('chat.select_2_files')); }} disabled={chat.isAnalyzing || (deepMode.selectedFiles.length + attachments.attachedFiles.length) < 2} className={cn('px-3 py-1.5 text-[12px] font-medium rounded-lg transition-all duration-200 active:scale-[0.97]', (deepMode.selectedFiles.length + attachments.attachedFiles.length) >= 2 ? 'text-emerald-300 bg-emerald-500/[0.08] hover:bg-emerald-500/[0.15] cursor-pointer' : 'text-white/20 bg-white/[0.03] opacity-50 cursor-not-allowed')}>{translateActionLabel('Compare')}</button>
                             )}
                             {[
                                 { label: 'Risk', template: RISK_TEMPLATE, display: 'Risk Analysis', actionType: 'Risk' },
@@ -2427,16 +2605,27 @@ function AppMain() {
                                 { label: 'Summarize', template: SUMMARIZE_TEMPLATE, display: 'Summarize', actionType: 'Summarize' },
                                 { label: 'Trading', template: TRADING_TEMPLATE, display: 'Trading Analysis', actionType: 'Trading' },
                             ].map(({ label, template, display, actionType }) => (
-                                <button key={label} onClick={(e) => { e.preventDefault(); if (!chat.isAnalyzing) { const userText = queryRef.current?.trim(); queryRef.current = ''; if (inputRef.current) inputRef.current.value = ''; const prompt = userText ? `${template}\n\n--- TEXT TO PROCESS ---\n${userText}\n--- END TEXT ---` : template; const displayText = userText ? `${display} — "${userText.length > 60 ? userText.substring(0, 60) + '...' : userText}"` : display; submit(undefined, prompt, false, displayText, actionType); } }} disabled={chat.isAnalyzing} className="px-3 py-1.5 text-[12px] font-medium text-white/70 bg-white/[0.03] rounded-lg hover:text-emerald-300 hover:bg-emerald-500/[0.1] hover:shadow-[0_0_12px_rgba(16,185,129,0.06)] transition-all duration-200 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-white/50 disabled:hover:shadow-none active:scale-[0.97]">{label}</button>
+                                <button key={label} onClick={(e) => { e.preventDefault(); if (!chat.isAnalyzing) { const userText = queryRef.current?.trim(); queryRef.current = ''; if (inputRef.current) inputRef.current.value = ''; const prompt = userText ? `${template}\n\n--- TEXT TO PROCESS ---\n${userText}\n--- END TEXT ---` : template; const displayText = userText ? `${display} — "${userText.length > 60 ? userText.substring(0, 60) + '...' : userText}"` : display; submit(undefined, prompt, false, displayText, actionType); } }} disabled={chat.isAnalyzing} className="px-3 py-1.5 text-[12px] font-medium text-white/70 bg-white/[0.03] rounded-lg hover:text-emerald-300 hover:bg-emerald-500/[0.1] hover:shadow-[0_0_12px_rgba(16,185,129,0.06)] transition-all duration-200 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-white/50 disabled:hover:shadow-none active:scale-[0.97]">{translateActionLabel(label)}</button>
                             ))}
-                            <div className="relative no-drag">
-                                <button onClick={() => setShowRewriteMenu(p => !p)} disabled={chat.isAnalyzing} className={cn('px-3 py-1.5 text-[12px] font-medium rounded-lg transition-all duration-200 disabled:opacity-30 no-drag active:scale-[0.97]', showRewriteMenu ? 'bg-violet-500/[0.12] text-violet-300' : 'text-white/50 bg-white/[0.03] hover:text-violet-300 hover:bg-violet-500/[0.1]')}>Rewrite ▾</button>
-                                {showRewriteMenu && (
-                                    <div className="absolute bottom-full left-0 mb-2 flex flex-col gap-0.5 bg-zinc-900/90 backdrop-blur-xl border border-white/[0.06] rounded-xl shadow-2xl p-1.5 z-[200] min-w-[130px] no-drag animate-in fade-in zoom-in-95 duration-150">
+                            <div className="no-drag">
+                                <button
+                                    ref={rewriteTriggerRef}
+                                    data-rewrite-trigger="1"
+                                    onClick={() => setShowRewriteMenu(p => !p)}
+                                    disabled={chat.isAnalyzing}
+                                    className={cn('px-3 py-1.5 text-[12px] font-medium rounded-lg transition-all duration-200 disabled:opacity-30 no-drag active:scale-[0.97]', showRewriteMenu ? 'bg-violet-500/[0.12] text-violet-300' : 'text-white/50 bg-white/[0.03] hover:text-violet-300 hover:bg-violet-500/[0.1]')}
+                                >{translateActionLabel('Rewrite')} ▾</button>
+                                {showRewriteMenu && rewriteMenuPos && createPortal(
+                                    <div
+                                        data-rewrite-menu="1"
+                                        style={{ position: 'fixed', left: rewriteMenuPos.left, top: rewriteMenuPos.top, width: 160 }}
+                                        className="flex flex-col gap-0.5 bg-zinc-900/95 backdrop-blur-xl border border-white/[0.06] rounded-xl shadow-2xl p-1.5 z-[9999] no-drag animate-in fade-in zoom-in-95 duration-150"
+                                    >
                                         {[{ label: 'Professional', template: REWRITE_PROFESSIONAL_TEMPLATE, display: 'Rewrite: Professional', actionType: 'Rewrite' }, { label: 'Shorter', template: REWRITE_SHORTER_TEMPLATE, display: 'Rewrite: Shorter', actionType: 'Rewrite' }, { label: 'Clearer', template: REWRITE_CLEARER_TEMPLATE, display: 'Rewrite: Clearer', actionType: 'Rewrite' }].map(opt => (
-                                            <button key={opt.label} onClick={() => { setShowRewriteMenu(false); if (!chat.isAnalyzing) { const userText = queryRef.current?.trim(); queryRef.current = ''; if (inputRef.current) inputRef.current.value = ''; const prompt = userText ? `${opt.template}\n\n--- TEXT TO PROCESS ---\n${userText}\n--- END TEXT ---` : opt.template; const displayText = userText ? `${opt.display} — "${userText.length > 60 ? userText.substring(0, 60) + '...' : userText}"` : opt.display; submit(undefined, prompt, false, displayText, opt.actionType); } }} className="no-drag text-left px-3 py-2 text-[12px] font-medium text-white/70 hover:text-violet-300 hover:bg-violet-500/[0.08] rounded-lg transition-all duration-150 cursor-pointer">{opt.label}</button>
+                                            <button key={opt.label} onClick={() => { setShowRewriteMenu(false); if (!chat.isAnalyzing) { const userText = queryRef.current?.trim(); queryRef.current = ''; if (inputRef.current) inputRef.current.value = ''; const prompt = userText ? `${opt.template}\n\n--- TEXT TO PROCESS ---\n${userText}\n--- END TEXT ---` : opt.template; const displayText = userText ? `${opt.display} — "${userText.length > 60 ? userText.substring(0, 60) + '...' : userText}"` : opt.display; submit(undefined, prompt, false, displayText, opt.actionType); } }} className="no-drag text-start px-3 py-2 text-[12px] font-medium text-white/70 hover:text-violet-300 hover:bg-violet-500/[0.08] rounded-lg transition-all duration-150 cursor-pointer">{translateActionLabel(opt.label)}</button>
                                         ))}
-                                    </div>
+                                    </div>,
+                                    document.body
                                 )}
                             </div>
                         </div>
@@ -2445,22 +2634,22 @@ function AppMain() {
                                 {chat.messages.length > 0 && (
                                     <>
                                         <button onClick={() => chat.setKeepConversation(!chat.keepConversation)} className={cn('flex items-center gap-1.5 px-2 py-1.5 rounded-lg cursor-pointer whitespace-nowrap transition-all duration-200 active:scale-[0.97]', chat.keepConversation ? 'bg-emerald-500/[0.12] text-emerald-300' : 'text-white/55 hover:text-white/80 hover:bg-white/[0.06]')} title={chat.keepConversation ? 'Keep Chat: ON' : 'Keep Chat: OFF'}>
-                                            <MessageSquare size={11} /><span className="text-[10px] uppercase font-bold tracking-wider">Keep Chat</span>
+                                            <MessageSquare size={11} /><span className="text-[10px] uppercase font-bold tracking-wider">{t('chat.keep_chat')}</span>
                                         </button>
-                                        <button onClick={pinnedChats.handlePinConversation} className={cn('flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-all duration-200 active:scale-[0.97]', currentChatId ? 'bg-amber-500/[0.12] text-amber-400 hover:bg-red-500/[0.12] hover:text-red-400' : 'bg-white/[0.03] text-amber-500/60 hover:text-amber-400 hover:bg-amber-500/[0.06]')} title={currentChatId ? 'Unpin & Delete' : 'Pin Conversation'}>
-                                            <Bookmark size={11} className={currentChatId ? 'fill-amber-400' : ''} /><span className="text-[10px] uppercase font-bold tracking-wider">{currentChatId ? 'Unpin' : 'Pin'}</span>
+                                        <button onClick={pinnedChats.handlePinConversation} className={cn('flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-all duration-200 active:scale-[0.97]', currentChatId ? 'bg-amber-500/[0.12] text-amber-400 hover:bg-red-500/[0.12] hover:text-red-400' : 'bg-white/[0.03] text-amber-500/60 hover:text-amber-400 hover:bg-amber-500/[0.06]')} title={currentChatId ? t('chat.unpin_delete') : t('chat.pin_conversation')}>
+                                            <Bookmark size={11} className={currentChatId ? 'fill-amber-400' : ''} /><span className="text-[10px] uppercase font-bold tracking-wider">{currentChatId ? t('chat.unpin') : t('chat.pin')}</span>
                                         </button>
                                     </>
                                 )}
                                 {pinnedChats.pinnedChats.length > 0 && (
-                                    <button onClick={() => pinnedChats.setShowHistory(true)} className="flex items-center gap-1.5 px-2 py-1.5 bg-white/[0.03] hover:bg-white/[0.06] rounded-lg text-white/55 hover:text-white/80 transition-all duration-200 active:scale-[0.97]" title="View Pinned History">
-                                        <Archive size={11} /><span className="text-[10px] uppercase font-bold tracking-wider">History</span>
+                                    <button onClick={() => pinnedChats.setShowHistory(true)} className="flex items-center gap-1.5 px-2 py-1.5 bg-white/[0.03] hover:bg-white/[0.06] rounded-lg text-white/55 hover:text-white/80 transition-all duration-200 active:scale-[0.97]" title={t('chat.view_history')}>
+                                        <Archive size={11} /><span className="text-[10px] uppercase font-bold tracking-wider">{t('chat.history')}</span>
                                     </button>
                                 )}
                             </div>
                             <div className="flex items-center gap-1.5">
                                 {chat.messages.length > 0 && (
-                                    <button onClick={() => { chat.setIsSearchOpen(!chat.isSearchOpen); if (!chat.isSearchOpen) setTimeout(() => chat.searchInputRef.current?.focus(), 100); else chat.setSearchQuery(''); }} className={cn('flex items-center justify-center w-7 h-7 rounded-lg cursor-pointer transition-all duration-200 active:scale-[0.93]', chat.isSearchOpen ? 'bg-emerald-500/[0.12] text-emerald-300' : 'text-white/55 hover:text-white/80 hover:bg-white/[0.06]')} title="Search Conversation"><Search size={10} /></button>
+                                    <button onClick={() => { chat.setIsSearchOpen(!chat.isSearchOpen); if (!chat.isSearchOpen) setTimeout(() => chat.searchInputRef.current?.focus(), 100); else chat.setSearchQuery(''); }} className={cn('flex items-center justify-center w-7 h-7 rounded-lg cursor-pointer transition-all duration-200 active:scale-[0.93]', chat.isSearchOpen ? 'bg-emerald-500/[0.12] text-emerald-300' : 'text-white/55 hover:text-white/80 hover:bg-white/[0.06]')} title={t('chat.search_conversation')}><Search size={10} /></button>
                                 )}
                                 {chat.messages.length > 0 && (() => {
                                     const agentBusy = claudeAgent.state === 'running'
@@ -2495,9 +2684,9 @@ function AppMain() {
                                                 ? 'bg-white/[0.02] text-white/20 cursor-not-allowed'
                                                 : 'bg-red-500/[0.04] hover:bg-red-500/[0.10] text-red-400/60 hover:text-red-400 active:scale-[0.97] cursor-pointer'
                                         )}
-                                        title={agentBusy ? 'Stop the agent first to clear the chat' : 'Clear Chat'}
+                                        title={agentBusy ? t('chat.clear_chat_blocked') : t('chat.clear_chat')}
                                     >
-                                        <Eraser size={11} /><span className="text-[10px] uppercase font-bold tracking-wider">Clear</span>
+                                        <Eraser size={11} /><span className="text-[10px] uppercase font-bold tracking-wider">{t('common.clear')}</span>
                                     </button>
                                     );
                                 })()}
@@ -2827,23 +3016,23 @@ function AppMain() {
                                     <div className="flex flex-col gap-0.5">
                                         <span className="text-[13px] text-emerald-400/80 font-medium tracking-wide font-poppins"
                                             style={{ animation: suggestions.isFetchingSuggestions ? 'klypixTextFade 2.8s ease-in-out infinite' : 'none' }}>
-                                            Thinking...
+                                            {t('chat.thinking')}
                                         </span>
-                                        <span className="text-[10px] text-white/25 uppercase tracking-[0.15em] font-poppins">smart suggestions</span>
+                                        <span className="text-[10px] text-white/25 uppercase tracking-[0.15em] font-poppins">{t('chat.smart_suggestions_caption')}</span>
                                     </div>
                                 </div>
                                 {/* Idle state (dots + label) */}
                                 <div className={`flex items-center gap-1.5 transition-all duration-500 ease-in-out ${!suggestions.isFetchingSuggestions ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-1 scale-95 absolute pointer-events-none'}`}>
                                     <div className="flex items-center gap-1.5 h-5">{[1, 2, 3, 4, 5].map(i => <div key={i} className="w-1.5 h-1.5 rounded-full bg-emerald-500/40" />)}</div>
-                                    <span className="text-[10px] text-white/30 uppercase tracking-[0.2em] font-poppins">Smart suggestions</span>
+                                    <span className="text-[10px] text-white/30 uppercase tracking-[0.2em] font-poppins">{t('chat.smart_suggestions')}</span>
                                 </div>
                             </div>
                             {suggestions.isFetchingSuggestions ? (
-                                <button onClick={() => suggestions.stopSuggestions()} className="p-1 rounded-lg text-red-400/60 hover:text-red-400 hover:bg-red-500/10 transition-all shrink-0 cursor-pointer" title="Stop loading suggestions"><X size={11} /></button>
+                                <button onClick={() => suggestions.stopSuggestions()} className="p-1 rounded-lg text-red-400/60 hover:text-red-400 hover:bg-red-500/10 transition-all shrink-0 cursor-pointer" title={t('chat.stop_suggestions')}><X size={11} /></button>
                             ) : (
                                 <>
                                     {suggestions.wasStopped && suggestions.suggestions.length === 0 && (
-                                        <span className="text-white/20 text-[9px]">Stopped</span>
+                                        <span className="text-white/20 text-[9px]">{t('chat.stopped')}</span>
                                     )}
                                     <button onClick={() => suggestions.fetchSuggestions(true)} className="p-1 rounded-lg text-white/30 hover:text-white hover:bg-white/5 transition-all shrink-0 cursor-pointer" title="Refresh Suggestions"><RefreshCw size={11} /></button>
                                 </>
@@ -2935,7 +3124,7 @@ function AppMain() {
                                             <button key={i} onClick={handleSuggestionClick} title={s.prompt}
                                                 className={`truncate max-w-full whitespace-nowrap px-3.5 py-2.5 rounded-lg text-[13px] text-white/70 transition-all duration-200 active:scale-[0.98] cursor-pointer ${typeStyles[sType]}`}
                                             >
-                                                {typeIcons[sType]}{s.label}
+                                                {typeIcons[sType]}{translateActionLabel(s.label)}
                                             </button>
                                         );
                                     })
@@ -2957,7 +3146,7 @@ function AppMain() {
                             // Persona-derived
                             const persona = getPersona();
                             if (persona && persona !== 'Helpful User' && (persona.toLowerCase().includes('document') || persona.toLowerCase().includes('file') || persona.toLowerCase().includes('pharma'))) {
-                                if (chips.length < 3) chips.push({ label: 'Scan a document', icon: '📄', action: () => { deepMode.activateDeepMode(); screenshot.setShowScreenshot(false); screenshot.clearStack(); suggestions.setSuggestions([]); suggestions.setLastSuggestionContext(''); } });
+                                if (chips.length < 3) chips.push({ label: t('chat.scan_doc'), icon: '📄', action: () => { deepMode.activateDeepMode(); screenshot.setShowScreenshot(false); screenshot.clearStack(); suggestions.setSuggestions([]); suggestions.setLastSuggestionContext(''); } });
                             }
                             // Memory-derived
                             if (sessionCtx.data.generatedDocs.length > 0 && chips.length < 3) {
@@ -2970,7 +3159,7 @@ function AppMain() {
                             }
                             return chips.slice(0, 3).map((chip, i) => (
                                 <button key={i} onClick={chip.action} className="px-3.5 py-2 rounded-xl text-[13px] text-white/60 bg-white/[0.04] border border-white/10 hover:bg-white/[0.08] hover:text-white/80 hover:border-white/20 transition-all duration-200 active:scale-[0.97] cursor-pointer">
-                                    {chip.icon && <span className="mr-1.5">{chip.icon}</span>}{chip.label}
+                                    {chip.icon && <span className="mr-1.5">{chip.icon}</span>}{translateActionLabel(chip.label)}
                                 </button>
                             ));
                         })()}
@@ -3073,7 +3262,7 @@ function AppMain() {
                                                             }}
                                                             className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-xs text-gray-400 hover:bg-white/10 transition-colors"
                                                         >
-                                                            Show in Folder
+                                                            {t('chat.show_in_folder')}
                                                         </button>
                                                     </div>
                                                 </div>
@@ -3088,13 +3277,13 @@ function AppMain() {
                                             <AgentRobot isWorking={claudeAgent.state === 'running' || claudeAgent.state === 'waiting_permission' || claudeAgent.state === 'waiting_user_answer'} />
                                         </div>
                                         <div className="flex-1 min-w-0">
-                                            <div className="text-[10px] text-purple-400/60 font-medium mb-1">KLYPIX Agent</div>
+                                            <div className="text-[10px] text-purple-400/60 font-medium mb-1">{t('chat.klypix_agent')}</div>
                                             {claudeAgent.streamingText ? (
                                                 <div className="markdown-content text-[15px] leading-relaxed text-white/90">
                                                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{claudeAgent.streamingText}</ReactMarkdown>
                                                 </div>
                                             ) : (
-                                                <div className="text-xs text-gray-500 italic">Working...</div>
+                                                <div className="text-xs text-gray-500 italic">{t('chat.working')}</div>
                                             )}
                                         </div>
                                     </div>
@@ -3131,7 +3320,7 @@ function AppMain() {
                                             <div className="flex gap-1.5">
                                                 <input
                                                     type="text"
-                                                    placeholder="Type your answer..."
+                                                    placeholder={t('chat.type_answer')}
                                                     className="flex-1 bg-white/5 border border-white/15 rounded-full px-3 py-1.5 text-xs text-white/80 placeholder:text-white/30 focus:outline-none focus:border-purple-500/40"
                                                     onKeyDown={(e) => {
                                                         if (e.key === 'Enter' && (e.target as HTMLInputElement).value.trim()) {
@@ -3154,7 +3343,7 @@ function AppMain() {
                                     <div className="px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-300 flex items-start gap-3">
                                         <span className="text-red-400 text-lg mt-0.5">!</span>
                                         <div>
-                                            <p className="font-medium text-red-400 mb-1">Agent Stopped</p>
+                                            <p className="font-medium text-red-400 mb-1">{t('chat.agent_stopped')}</p>
                                             <p className="text-red-300/80 text-xs leading-relaxed">{claudeAgent.errorMessage}</p>
                                         </div>
                                     </div>
@@ -3210,8 +3399,8 @@ function AppMain() {
                                         <div className="flex items-center gap-2 ml-1 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px] font-medium animate-pulse">
                                             <Loader2 size={12} className="animate-spin" />
                                             <div>
-                                                <div>Processing files...</div>
-                                                <div className="text-[9px] text-emerald-400/50 font-normal">Large or scanned PDFs may take longer</div>
+                                                <div>{t('chat.processing_files')}</div>
+                                                <div className="text-[9px] text-emerald-400/50 font-normal">{t('chat.pdf_processing_hint')}</div>
                                             </div>
                                         </div>
                                     )}
@@ -3241,7 +3430,7 @@ function AppMain() {
                                                     });
                                                 }
                                             }} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 text-emerald-400/80 hover:text-emerald-400 text-[11px] transition-all cursor-pointer">
-                                                <span>📊</span> Save as Excel
+                                                <span>📊</span> {t('chat.save_excel')}
                                             </button>
                                         )}
                                         {/* Code detected → Save as file */}
@@ -3254,20 +3443,20 @@ function AppMain() {
                                                     await (window as any).electron.generateFile({ format: ext, content: code, spec: { filename: `code_snippet.${ext}` } });
                                                 }
                                             }} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/20 text-blue-400/80 hover:text-blue-400 text-[11px] transition-all cursor-pointer">
-                                                <span>💻</span> Save code
+                                                <span>💻</span> {t('chat.save_code')}
                                             </button>
                                         )}
                                         {/* Always: Save as PDF */}
                                         <button onClick={async () => {
                                             await (window as any).electron.generateFile({ format: 'pdf', content: chat.displayedResponse, spec: { filename: 'response.pdf' } });
                                         }} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-white/40 hover:text-white/60 text-[11px] transition-all cursor-pointer">
-                                            <span>📄</span> Save as PDF
+                                            <span>📄</span> {t('chat.save_pdf')}
                                         </button>
                                         {/* Always: Save as text */}
                                         <button onClick={async () => {
                                             await (window as any).electron.generateFile({ format: 'txt', content: chat.displayedResponse, spec: { filename: 'response.txt' } });
                                         }} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-white/40 hover:text-white/60 text-[11px] transition-all cursor-pointer">
-                                            <span>📝</span> Save as text
+                                            <span>📝</span> {t('chat.save_text')}
                                         </button>
                                         {/* Remember document for cross-reference (only in deep mode) */}
                                         {deepMode.isDeepFileMode && deepMode.selectedFiles.length > 0 && (
@@ -3277,7 +3466,7 @@ function AppMain() {
                                                 await agent.saveDocumentMemory(docName, chat.displayedResponse);
                                                 chat.setMessages(prev => [...prev, { role: 'assistant' as const, content: '🧠 Document remembered. I\'ll flag changes if you open a related document later.' }]);
                                             }} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/20 text-purple-400/80 hover:text-purple-400 text-[11px] transition-all cursor-pointer">
-                                                <span>🧠</span> Remember this
+                                                <span>🧠</span> {t('chat.remember_this')}
                                             </button>
                                         )}
                                     </div>
@@ -3321,11 +3510,11 @@ function AppMain() {
                 <div ref={footerRef} className="absolute bottom-0 left-0 w-full px-4 py-2 flex items-center justify-between text-[11px] text-slate-500 border-t border-white/10 bg-[#242323]/90 backdrop-blur-2xl z-20">
                     <div className="flex items-center gap-2">
                         <span className="bg-white/10 px-2 py-0.5 rounded uppercase font-medium tracking-tight text-[11px] font-poppins">{settings.currentShortcut}</span>
-                        <span>to toggle</span>
+                        <span>{t('chat.toggle_hint')}</span>
                     </div>
                     <div className="flex items-center gap-4 no-drag relative">
                         <div className="flex items-center gap-1 opacity-40 hover:opacity-70 transition-opacity">
-                            <span>by</span>
+                            <span>{t('chat.made_by')}</span>
                             <button onClick={() => window.electron.openExternal('https://dahshanlabs.com')} className="font-bold tracking-tight text-white/60 hover:text-emerald-400 transition-colors cursor-pointer underline-offset-2 hover:underline" title="Dahshan Labs">Dahshan Labs</button>
                         </div>
                         <div className="relative">
@@ -3352,7 +3541,7 @@ function AppMain() {
                                 </div>
                             )}
                         </div>
-                        <button onClick={chat.copyFullChat} disabled={chat.messages.length === 0} className={cn('p-1.5 rounded-lg transition-all', chat.isCopyFullActive ? 'text-emerald-400 bg-emerald-500/10' : 'text-white/40 hover:bg-white/10')} title="Copy Full Conversation">{chat.isCopyFullActive ? <Check size={14} /> : <Copy size={14} />}</button>
+                        <button onClick={chat.copyFullChat} disabled={chat.messages.length === 0} className={cn('p-1.5 rounded-lg transition-all', chat.isCopyFullActive ? 'text-emerald-400 bg-emerald-500/10' : 'text-white/40 hover:bg-white/10')} title={t('chat.copy_full_conversation')}>{chat.isCopyFullActive ? <Check size={14} /> : <Copy size={14} />}</button>
                         <button
                             onClick={() => setShowMemoryPanel(true)}
                             className={cn(

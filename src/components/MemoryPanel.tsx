@@ -3,6 +3,15 @@ import { Brain, Pin, Trash2, X, ToggleLeft, ToggleRight, Sparkles, Check } from 
 import { getMemoryManager, getMemoryStore } from '../services/memory';
 import type { Memory, MemorySettings, MemoryStats } from '../services/memory';
 import { MemoryConsentDialog } from './MemoryConsentDialog';
+import { t } from '../i18n/strings';
+
+// Memory type → i18n badge key. Module-level so the per-row render
+// doesn't redeclare it on every render.
+function badgeLabel(type: Memory['type']): string {
+    if (type === 'semantic') return t('memory.badge_fact');
+    if (type === 'procedural') return t('memory.badge_pref');
+    return t('memory.badge_history');
+}
 
 interface PendingRow {
   id: string;
@@ -119,9 +128,9 @@ export function MemoryPanel({ onClose }: MemoryPanelProps) {
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
           <div className="flex items-center gap-2">
             <Brain size={16} className="text-purple-400" />
-            <span className="text-white/90 text-sm font-medium">Memory</span>
+            <span className="text-white/90 text-sm font-medium">{t('memory.title')}</span>
             <span className="text-[10px] text-white/40 bg-white/5 px-1.5 py-0.5 rounded">
-              {stats.total} total
+              {t('memory.total').replace('{n}', String(stats.total))}
             </span>
           </div>
           <button onClick={onClose} className="text-white/40 hover:text-white/80 cursor-pointer">
@@ -137,12 +146,12 @@ export function MemoryPanel({ onClose }: MemoryPanelProps) {
           >
             <div className="text-left">
               <p className="text-white/90 text-[13px] font-medium">
-                {settings.enabled ? 'Memory is ON' : 'Memory is OFF'}
+                {settings.enabled ? t('memory.on') : t('memory.off')}
               </p>
               <p className="text-white/50 text-[11px]">
                 {settings.enabled
-                  ? 'The agent remembers facts across sessions'
-                  : 'Turn on to let the agent learn from conversations'}
+                  ? t('memory.on_hint')
+                  : t('memory.off_hint')}
               </p>
             </div>
             {settings.enabled
@@ -155,11 +164,11 @@ export function MemoryPanel({ onClose }: MemoryPanelProps) {
         {stats.total > 0 && (
           <div className="px-4 py-2 border-b border-white/10 flex gap-1 overflow-x-auto">
             {([
-              ['all', `All (${stats.total})`],
+              ['all', t('memory.filter_all').replace('{n}', String(stats.total))],
               ['pinned', `📌 ${stats.pinned}`],
-              ['semantic', `Facts ${stats.semantic}`],
-              ['procedural', `Prefs ${stats.procedural}`],
-              ['episodic', `History ${stats.episodic}`],
+              ['semantic', t('memory.filter_facts').replace('{n}', String(stats.semantic))],
+              ['procedural', t('memory.filter_prefs').replace('{n}', String(stats.procedural))],
+              ['episodic', t('memory.filter_history').replace('{n}', String(stats.episodic))],
             ] as const).map(([key, label]) => (
               <button
                 key={key}
@@ -183,7 +192,7 @@ export function MemoryPanel({ onClose }: MemoryPanelProps) {
               <div className="flex items-center gap-1.5">
                 <Sparkles size={12} className="text-purple-400" />
                 <span className="text-purple-300 text-[11px] font-medium uppercase tracking-wider">
-                  Review ({pending.length} extracted)
+                  {t('memory.review_extracted').replace('{n}', String(pending.length))}
                 </span>
               </div>
               <div className="flex gap-1">
@@ -191,13 +200,13 @@ export function MemoryPanel({ onClose }: MemoryPanelProps) {
                   onClick={approveAllPending}
                   className="px-2 py-0.5 text-[10px] rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25 cursor-pointer"
                 >
-                  Save all
+                  {t('memory.save_all')}
                 </button>
                 <button
                   onClick={discardAllPending}
                   className="px-2 py-0.5 text-[10px] rounded bg-white/5 border border-white/10 text-white/60 hover:bg-red-500/15 hover:text-red-300 cursor-pointer"
                 >
-                  Discard all
+                  {t('memory.discard_all')}
                 </button>
               </div>
             </div>
@@ -212,21 +221,21 @@ export function MemoryPanel({ onClose }: MemoryPanelProps) {
                     : p.type === 'procedural' ? 'bg-emerald-500/15 text-emerald-300'
                     : 'bg-yellow-500/15 text-yellow-300'
                   }`}>
-                    {p.type === 'semantic' ? 'fact' : p.type === 'procedural' ? 'pref' : 'hist'}
+                    {badgeLabel(p.type)}
                   </span>
                   <p className="flex-1 text-white/80 text-[12px] leading-relaxed">{p.content}</p>
                   <div className="flex gap-1 flex-shrink-0">
                     <button
                       onClick={() => approvePending(p.id)}
                       className="p-1 rounded bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-300 cursor-pointer"
-                      title="Save"
+                      title={t('memory.action_save')}
                     >
                       <Check size={11} />
                     </button>
                     <button
                       onClick={() => discardPending(p.id)}
                       className="p-1 rounded bg-white/5 hover:bg-red-500/25 text-white/50 hover:text-red-300 cursor-pointer"
-                      title="Discard"
+                      title={t('memory.action_discard')}
                     >
                       <X size={11} />
                     </button>
@@ -242,8 +251,8 @@ export function MemoryPanel({ onClose }: MemoryPanelProps) {
           {filtered.length === 0 && (
             <div className="text-center py-8 text-white/40 text-[12px]">
               {stats.total === 0
-                ? 'No memories yet. Say "remember that..." or let the agent learn from sessions.'
-                : 'No memories in this filter.'}
+                ? t('memory.empty_none')
+                : t('memory.empty_filter')}
             </div>
           )}
           {filtered.map(m => (
@@ -256,21 +265,21 @@ export function MemoryPanel({ onClose }: MemoryPanelProps) {
                 : m.type === 'procedural' ? 'bg-emerald-500/15 text-emerald-300'
                 : 'bg-yellow-500/15 text-yellow-300'
               }`}>
-                {m.type === 'semantic' ? 'fact' : m.type === 'procedural' ? 'pref' : 'hist'}
+                {badgeLabel(m.type)}
               </span>
               <p className="flex-1 text-white/80 text-[12px] leading-relaxed">{m.content}</p>
               <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
                 <button
                   onClick={() => togglePin(m)}
                   className={`p-1 rounded hover:bg-white/10 cursor-pointer ${m.pinned ? 'text-yellow-400' : 'text-white/40'}`}
-                  title={m.pinned ? 'Unpin' : 'Pin'}
+                  title={m.pinned ? t('memory.action_unpin') : t('memory.action_pin')}
                 >
                   <Pin size={11} />
                 </button>
                 <button
                   onClick={() => deleteMemory(m.id)}
                   className="p-1 rounded hover:bg-red-500/20 text-white/40 hover:text-red-400 cursor-pointer"
-                  title="Delete"
+                  title={t('memory.action_delete')}
                 >
                   <Trash2 size={11} />
                 </button>
@@ -282,14 +291,14 @@ export function MemoryPanel({ onClose }: MemoryPanelProps) {
         {/* Footer */}
         <div className="px-4 py-2.5 border-t border-white/10 flex items-center justify-between">
           <p className="text-[10px] text-white/30">
-            Stored locally. Never sent to the cloud.
+            {t('memory.footer_local')}
           </p>
           {stats.total > 0 && (
             <button
               onClick={clearAll}
               className="text-[11px] text-red-400 hover:text-red-300 cursor-pointer"
             >
-              Clear all
+              {t('memory.clear_all')}
             </button>
           )}
         </div>

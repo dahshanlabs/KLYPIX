@@ -2,6 +2,7 @@ import React from 'react';
 import { MessageCircle, LayoutGrid } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { t, useLocale } from '../i18n/strings';
 
 const cn = (...inputs: ClassValue[]) => twMerge(clsx(inputs));
 
@@ -13,17 +14,18 @@ interface ModeTabsProps {
 }
 
 export function ModeTabs({ active, onChange }: ModeTabsProps) {
+    useLocale();
     return (
         <div className="no-drag flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-black/40 border border-white/10 shadow-[0_2px_10px_rgba(0,0,0,0.3)]">
             <TabButton
                 icon={<MessageCircle size={10} />}
-                label="Chat"
+                label={t('chat.tab.chat')}
                 active={active === 'chat'}
                 onClick={() => onChange('chat')}
             />
             <TabButton
                 icon={<LayoutGrid size={10} />}
-                label="Canvas"
+                label={t('chat.tab.canvas')}
                 active={active === 'canvas'}
                 onClick={() => onChange('canvas')}
             />

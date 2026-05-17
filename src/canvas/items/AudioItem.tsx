@@ -101,7 +101,7 @@ function AudioItemViewImpl({ item, selected }: Props) {
         display: 'flex',
         flexDirection: 'column',
         gap: 8,
-        fontFamily: 'Outfit, system-ui, sans-serif',
+        fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
         color: '#e8e8ed',
         pointerEvents: 'auto',
         WebkitAppRegion: 'no-drag',

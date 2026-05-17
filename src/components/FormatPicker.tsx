@@ -2,6 +2,7 @@ import React from 'react';
 import { X, FileSpreadsheet, FileText, Presentation, FileType, Image, Code, File } from 'lucide-react';
 import type { GenerationFormat } from '../core/docGeneration';
 import { FORMAT_LABELS } from '../core/docGeneration';
+import { t } from '../i18n/strings';
 
 interface FormatPickerProps {
     formats: GenerationFormat[];
@@ -26,7 +27,7 @@ export function FormatPicker({ formats, onSelect, onCancel }: FormatPickerProps)
     return (
         <div className="bg-[#1a1a1a] border border-white/10 rounded-xl p-4 shadow-xl mb-3">
             <div className="flex items-center justify-between mb-3">
-                <span className="text-white/60 text-xs font-medium uppercase tracking-wider">What format?</span>
+                <span className="text-white/60 text-xs font-medium uppercase tracking-wider">{t('dialog.format.title')}</span>
                 <button onClick={onCancel} className="text-white/30 hover:text-white/60 transition-colors cursor-pointer">
                     <X size={14} />
                 </button>

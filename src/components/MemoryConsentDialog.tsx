@@ -1,5 +1,6 @@
 import React from 'react';
 import { Brain, Shield, Check, X } from 'lucide-react';
+import { t } from '../i18n/strings';
 
 interface MemoryConsentDialogProps {
   onEnable: () => void;
@@ -19,9 +20,9 @@ export function MemoryConsentDialog({ onEnable, onCancel }: MemoryConsentDialogP
             <Brain size={18} className="text-purple-400" />
           </div>
           <div className="flex-1">
-            <h2 className="text-white text-[15px] font-semibold">Enable Agent Memory?</h2>
+            <h2 className="text-white text-[15px] font-semibold">{t('dialog.memory.title')}</h2>
             <p className="text-white/60 text-[12px] mt-0.5 leading-relaxed">
-              KLYPIX will remember things about you to give better help over time.
+              {t('dialog.memory.desc')}
             </p>
           </div>
         </div>
@@ -29,7 +30,7 @@ export function MemoryConsentDialog({ onEnable, onCancel }: MemoryConsentDialogP
         {/* What we remember */}
         <div className="px-5 py-3 border-t border-white/5">
           <p className="text-emerald-400 text-[11px] font-medium uppercase tracking-wider mb-2 flex items-center gap-1.5">
-            <Check size={12} /> What we remember
+            <Check size={12} /> {t('dialog.memory.we_remember')}
           </p>
           <ul className="space-y-1 text-white/70 text-[12px]">
             <li>• Your name, role, and workplace context</li>
@@ -42,7 +43,7 @@ export function MemoryConsentDialog({ onEnable, onCancel }: MemoryConsentDialogP
         {/* What we never remember */}
         <div className="px-5 py-3 border-t border-white/5">
           <p className="text-red-400 text-[11px] font-medium uppercase tracking-wider mb-2 flex items-center gap-1.5">
-            <X size={12} /> What we NEVER remember
+            <X size={12} /> {t('dialog.memory.we_never_remember')}
           </p>
           <ul className="space-y-1 text-white/70 text-[12px]">
             <li>• Passwords, API keys, tokens</li>
@@ -56,7 +57,7 @@ export function MemoryConsentDialog({ onEnable, onCancel }: MemoryConsentDialogP
         <div className="mx-5 my-3 p-3 bg-emerald-500/5 border border-emerald-500/20 rounded-lg flex items-start gap-2">
           <Shield size={14} className="text-emerald-400 mt-0.5 flex-shrink-0" />
           <p className="text-emerald-300/90 text-[11px] leading-relaxed">
-            <span className="font-medium">All memory is stored locally on your machine only.</span> Nothing is sent to Anthropic, Google, or any cloud service. You can view, edit, or delete memories any time.
+            <span className="font-medium">{t('dialog.memory.local_only')}</span> Nothing is sent to Anthropic, Google, or any cloud service. You can view, edit, or delete memories any time.
           </p>
         </div>
 
@@ -66,13 +67,13 @@ export function MemoryConsentDialog({ onEnable, onCancel }: MemoryConsentDialogP
             onClick={onCancel}
             className="flex-1 px-4 py-2 text-xs rounded-lg bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 transition-all cursor-pointer"
           >
-            Not Now
+            {t('dialog.memory.not_now')}
           </button>
           <button
             onClick={onEnable}
             className="flex-1 px-4 py-2 text-xs rounded-lg bg-purple-500/25 border border-purple-500/50 text-purple-200 hover:bg-purple-500/35 transition-all cursor-pointer font-medium"
           >
-            Enable Memory
+            {t('dialog.memory.enable')}
           </button>
         </div>
       </div>

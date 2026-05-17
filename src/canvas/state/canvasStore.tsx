@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useReducer, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef, useCallback } from 'react';
 import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing';
 import {
     type CanvasItem,
@@ -11,6 +11,7 @@ import {
     type ItemStatus,
     DEFAULT_VIEW,
 } from '../items/types';
+import { computeZoomCollapsedIds } from '../items/ContainerItem';
 
 // --- zKey helpers (fractional indexing) ---
 
@@ -218,7 +219,11 @@ const INITIAL_STATE: CanvasState = {
     editingId: null,
     drawingId: null,
     color: '#10b981',
-    strokeWidth: 2,
+    // Default 5 world-px: thin enough for precise marks, thick enough to
+    // read as a confident marker stroke. Previous 2px default looked
+    // scratchy at 100% zoom and didn't match the Virgil hand-drawn
+    // aesthetic the canvas uses elsewhere.
+    strokeWidth: 5,
     shape: 'rect',
     lineStyle: 'solid',
     opacity: 1,
@@ -277,7 +282,6 @@ export type CanvasAction =
     | { type: 'SET_FILL_COLOR'; color: string }
     | { type: 'SET_STROKE_ENABLED'; enabled: boolean }
     | { type: 'SET_TEXT_DEFAULTS'; patch: Partial<CanvasState['textDefaults']> }
-    | { type: 'SET_ZOOM_COLLAPSED'; id: string; collapsed: boolean }
     | { type: 'SET_OVERRIDE_EXPANDED'; id: string; overridden: boolean }
     | { type: 'RESTORE'; snapshot: StateSnapshot }
     // --- File ops ---
@@ -569,16 +573,11 @@ function reducerImpl(state: CanvasState, action: CanvasAction): CanvasState {
                 focusedContainerId: doomed.has(state.focusedContainerId ?? '') ? null : state.focusedContainerId,
                 renamingContainerId: doomed.has(state.renamingContainerId ?? '') ? null : state.renamingContainerId,
                 textCapsuleAnchorId: doomed.has(state.textCapsuleAnchorId ?? '') ? null : state.textCapsuleAnchorId,
-                // Drop any zoom-collapse / override entries tied to
-                // deleted containers so the transient maps don't hold
-                // orphan ids indefinitely.
-                zoomCollapsedIds: (() => {
-                    const next: Record<string, boolean> = {};
-                    for (const [id, v] of Object.entries(state.zoomCollapsedIds)) {
-                        if (!doomed.has(id)) next[id] = v;
-                    }
-                    return next;
-                })(),
+                // Drop user-override entries tied to deleted containers so
+                // the transient map doesn't hold orphan ids indefinitely.
+                // (zoomCollapsedIds is derived in CanvasStoreProvider, so
+                // a deleted container disappears from the derived set on
+                // the next render automatically — no cleanup needed.)
                 userOverrideExpandedIds: (() => {
                     const next: Record<string, boolean> = {};
                     for (const [id, v] of Object.entries(state.userOverrideExpandedIds)) {
@@ -667,15 +666,6 @@ function reducerImpl(state: CanvasState, action: CanvasAction): CanvasState {
 
         case 'SET_TEXT_DEFAULTS':
             return { ...state, textDefaults: { ...state.textDefaults, ...action.patch } };
-
-        case 'SET_ZOOM_COLLAPSED': {
-            const prev = !!state.zoomCollapsedIds[action.id];
-            if (prev === action.collapsed) return state;
-            const next = { ...state.zoomCollapsedIds };
-            if (action.collapsed) next[action.id] = true;
-            else delete next[action.id];
-            return { ...state, zoomCollapsedIds: next };
-        }
 
         case 'SET_OVERRIDE_EXPANDED': {
             const prev = !!state.userOverrideExpandedIds[action.id];
@@ -1342,8 +1332,47 @@ export function CanvasStoreProvider({ children }: { children: React.ReactNode })
         bumpStack();
     }, []);
 
+    // Pure derivation of which containers are zoom-collapsed. Replaces the
+    // previous per-container useEffect that dispatched SET_ZOOM_COLLAPSED on
+    // every item.w/h/zoom change — that effect fought with resize because
+    // every drag frame both shrank the group AND re-evaluated the threshold,
+    // toggling the capsule mode mid-drag. Computing here once per render
+    // guarantees the derived set is internally consistent with current
+    // (items, lines, strokes, zoom) and never feeds back into a dispatch.
+    const derivedZoomCollapsedIds = useMemo(
+        () => computeZoomCollapsedIds(state.items, state.lines, state.strokes, state.view.zoom),
+        [state.items, state.lines, state.strokes, state.view.zoom],
+    );
+
+    // Drop user-overrides for groups that are no longer zoom-collapsed.
+    // Preserves the prior behavior where overriding-while-zoomed-out is
+    // forgotten once the user zooms back in. Keyed on view.zoom only —
+    // NOT on item.w/h — so a resize never triggers this. Resize-driven
+    // override clears were never the intent; only zoom-driven ones.
+    useEffect(() => {
+        const stale: string[] = [];
+        for (const id of Object.keys(state.userOverrideExpandedIds)) {
+            if (!derivedZoomCollapsedIds[id]) stale.push(id);
+        }
+        for (const id of stale) {
+            dispatch({ type: 'SET_OVERRIDE_EXPANDED', id, overridden: false });
+        }
+        // Intentional: only react to zoom changes. Adding the other deps
+        // would re-create the resize feedback loop this refactor exists
+        // to kill.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [state.view.zoom]);
+
+    // Merge derived value into the state object exposed to consumers, so
+    // every existing read of `state.zoomCollapsedIds` transparently gets
+    // the derived map. No call site needs to change.
+    const stateWithDerived = useMemo(
+        () => ({ ...state, zoomCollapsedIds: derivedZoomCollapsedIds }),
+        [state, derivedZoomCollapsedIds],
+    );
+
     const value = useMemo<CanvasStoreValue>(() => ({
-        state,
+        state: stateWithDerived,
         dispatch,
         commit,
         pushSnapshot,
@@ -1352,7 +1381,7 @@ export function CanvasStoreProvider({ children }: { children: React.ReactNode })
         redo,
         canUndo: undoStackRef.current.length > 0,
         canRedo: redoStackRef.current.length > 0,
-    }), [state, commit, pushSnapshot, popLastSnapshot, undo, redo, stackTick]);
+    }), [stateWithDerived, commit, pushSnapshot, popLastSnapshot, undo, redo, stackTick]);
 
     return <CanvasStoreContext.Provider value={value}>{children}</CanvasStoreContext.Provider>;
 }

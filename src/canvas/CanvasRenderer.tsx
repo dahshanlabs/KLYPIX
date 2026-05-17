@@ -19,6 +19,7 @@ import { MultiSelectionBox } from './interaction/MultiSelectionBox';
 import { DotClusterLayer } from './drawing/DotClusterLayer';
 import { DrawingResizeHandles } from './interaction/DrawingResizeHandles';
 import { rectsIntersect, type Rect } from './CanvasEngine';
+import type { CanvasItem } from './items/types';
 
 // Renders all canvas items on a single transform layer with viewport culling:
 // only items whose world bounds intersect the current (visible rect + padding)
@@ -314,7 +315,7 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld }: CanvasRe
     // Memoized so non-item state changes (focus toggle, panel open/close,
     // tool switch) don't pay the per-render iteration cost.
     const selRects = useMemo(() => {
-    const out: { id: string; x: number; y: number; w: number; h: number }[] = [];
+    const out: { id: string; x: number; y: number; w: number; h: number; rotation?: number }[] = [];
     const TITLE_BAR = 28; void TITLE_BAR;
     for (const id of selectedIds) {
         const it = items[id];
@@ -373,6 +374,11 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld }: CanvasRe
             y: view.panY + it.y * z,
             w: renderWidthWorld * z,
             h: screenH,
+            // Pass-through item rotation so the selection ring follows
+            // the rotated body (applied as a CSS transform on the ring
+            // div below). Containers/non-rotatable items just don't set
+            // this field — ring stays axis-aligned for them.
+            rotation: (it as any).rotation || 0,
         });
     }
     // Selection rings for drawings (pen strokes + straight lines). Same
@@ -621,6 +627,12 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld }: CanvasRe
                         border: '1px dashed rgba(16,185,129,0.75)',
                         boxShadow: '0 0 0 2px rgba(16,185,129,0.22)',
                         borderRadius: 6,
+                        // Rotate the selection ring with the item so the ring
+                        // hugs the rotated visual instead of floating around
+                        // the original axis-aligned bounds. Rotation pivots
+                        // around the same center the item body uses.
+                        transform: r.rotation ? `rotate(${r.rotation}deg)` : undefined,
+                        transformOrigin: 'center',
                     }}
                 />
             ))}
@@ -634,6 +646,32 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld }: CanvasRe
         {(() => {
             const totalDrawings = state.selectedLineIds.length + state.selectedStrokeIds.length;
             if (totalDrawings !== 1 || state.selectedIds.length > 0) return null;
+            // Hide handles when the selected drawing's container ancestor
+            // isn't the focused one (or an ancestor of the focused one).
+            // Click + marquee already promote child drawings to the
+            // container, but a stale selection that survived a focus
+            // exit shouldn't expose handles that let the user resize a
+            // child without re-entering the group.
+            const drawingParentId = state.selectedLineIds.length === 1
+                ? state.lines[state.selectedLineIds[0]]?.parentId
+                : state.strokes[state.selectedStrokeIds[0]]?.parentId;
+            if (drawingParentId) {
+                let cur: CanvasItem | undefined = state.items[drawingParentId];
+                let containerAncestor: CanvasItem | undefined = undefined;
+                while (cur) {
+                    if (cur.type === 'container') { containerAncestor = cur; break; }
+                    cur = cur.parentId ? state.items[cur.parentId] : undefined;
+                }
+                if (containerAncestor) {
+                    let focusCheck: CanvasItem | undefined = containerAncestor;
+                    let isUnderFocus = false;
+                    while (focusCheck) {
+                        if (focusCheck.id === state.focusedContainerId) { isUnderFocus = true; break; }
+                        focusCheck = focusCheck.parentId ? state.items[focusCheck.parentId] : undefined;
+                    }
+                    if (!isUnderFocus) return null;
+                }
+            }
             if (state.selectedLineIds.length === 1) {
                 const lid = state.selectedLineIds[0];
                 const ln = state.lines[lid];

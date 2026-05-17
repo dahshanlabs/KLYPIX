@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { AgentStep } from '../core/agent/claudeAgent';
 import type { CostSummary } from '../core/agent/costTracker';
 import { useNarration } from '../hooks/useNarration';
+import { t, useLocale } from '../i18n/strings';
 
 function AnimatedDots() {
   const [count, setCount] = useState(0);
@@ -52,6 +53,7 @@ const STATUS_ICON: Record<string, string> = {
 export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
   steps, cost, isRunning, wasStopped = false, onAbort, trustMode, onTrustModeChange, onFollowUp, fileCount = 0, routerMetrics,
 }) => {
+  useLocale();
   const narration = useNarration();
   const [followUpText, setFollowUpText] = useState('');
   const [collapsed, setCollapsed] = useState(true); // Collapsed by default
@@ -106,10 +108,10 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
           <div className="flex flex-col">
             <span className={`text-sm font-medium leading-tight ${wasStopped ? 'text-amber-300' : 'text-white'}`}>
               {isRunning ? (
-                <>Agent Working<span className="inline-flex w-[18px]" style={{ fontFamily: 'monospace' }}><AnimatedDots /></span></>
+                <>{t('agent.working')}<span className="inline-flex w-[18px]" style={{ fontFamily: 'monospace' }}><AnimatedDots /></span></>
               ) : wasStopped ? (
-                'Agent Stopped'
-              ) : 'Agent Complete'}
+                t('agent.stopped')
+              ) : t('agent.complete')}
             </span>
             <div className="flex items-center gap-2 text-[10px] font-mono text-gray-500 leading-tight">
               <span className={isRunning ? 'text-purple-400' : 'text-gray-500'}>{formatTime(elapsed)}</span>
@@ -143,13 +145,13 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
           }`}>
             <input type="checkbox" checked={trustMode} onChange={e => onTrustModeChange(e.target.checked)}
               className="w-3 h-3 accent-amber-500" />
-            Trust
+            {t('agent.trust')}
           </label>
           {/* Collapse chevron */}
           <button
             onClick={(e) => { e.stopPropagation(); setCollapsed(!collapsed); }}
             className="p-1 text-gray-500 hover:text-white transition-colors"
-            title={collapsed ? 'Expand console' : 'Collapse console'}
+            title={collapsed ? t('agent.expand_console') : t('agent.collapse_console')}
           >
             <svg width="12" height="12" viewBox="0 0 12 12" className={`transition-transform ${collapsed ? 'rotate-180' : ''}`}>
               <path d="M2 4 L6 8 L10 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -160,7 +162,7 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
               onClick={onAbort}
               className="text-xs px-2.5 py-1 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30 transition-colors"
             >
-              Stop
+              {t('agent.stop')}
             </button>
           )}
         </div>
@@ -225,7 +227,7 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
                   type="text"
                   value={followUpText}
                   onChange={e => setFollowUpText(e.target.value)}
-                  placeholder="Tell agent something..."
+                  placeholder={t('agent.tell_agent')}
                   className="flex-1 px-3 py-1.5 bg-purple-500/5 border border-purple-500/20 rounded-lg text-xs text-white placeholder-purple-300/30 focus:outline-none focus:border-purple-500/40 transition-colors"
                 />
                 <button
@@ -233,7 +235,7 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
                   disabled={!followUpText.trim()}
                   className="px-3 py-1.5 bg-purple-500/20 border border-purple-500/30 rounded-lg text-xs text-purple-300 hover:bg-purple-500/30 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                 >
-                  Send
+                  {t('agent.send')}
                 </button>
               </form>
             </div>

@@ -1,5 +1,6 @@
 import React from 'react';
 import type { ScreenshotEntry } from '../hooks/useScreenshot';
+import { t } from '../i18n/strings';
 
 interface ScreenshotStackProps {
     stack: ScreenshotEntry[];
@@ -64,7 +65,7 @@ export function ScreenshotStackBar({ stack, onCapture, onCompare, onAskAbout, on
                         onClick={onCompare}
                         className="h-7 px-2.5 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 text-[10px] font-medium transition-all cursor-pointer shrink-0 whitespace-nowrap"
                     >
-                        Compare
+                        {t('screenshot.compare')}
                     </button>
                 )}
 
@@ -72,7 +73,7 @@ export function ScreenshotStackBar({ stack, onCapture, onCompare, onAskAbout, on
                 <button
                     onClick={onClear}
                     className="text-white/15 hover:text-white/40 transition-colors cursor-pointer p-0.5 shrink-0 ml-auto"
-                    title="Clear all"
+                    title={t('screenshot.clear_all')}
                 >
                     <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 1L9 9M9 1L1 9" stroke="currentColor" strokeWidth="1.5" /></svg>
                 </button>

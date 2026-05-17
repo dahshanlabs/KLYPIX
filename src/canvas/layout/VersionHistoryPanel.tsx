@@ -3,6 +3,7 @@ import { X, Clock, RotateCcw } from 'lucide-react';
 import { useCanvasStore } from '../state/canvasStore';
 import { deserialize, titleFromPath, type CanvasDocumentV3 } from '../file/anyFormat';
 import type { CanvasItem, Connection, DrawnLine, FreehandStroke } from '../items/types';
+import { t, useLocale } from '../../i18n/strings';
 
 interface Props {
     open: boolean;
@@ -19,6 +20,7 @@ interface VersionEntry {
 // save into versions/<iso>.json by the main-process saveAnyFile handler.
 
 export function VersionHistoryPanel({ open, onClose }: Props) {
+    useLocale();
     const { state, dispatch } = useCanvasStore();
     const [versions, setVersions] = useState<VersionEntry[]>([]);
     const [loading, setLoading] = useState(false);
@@ -28,7 +30,7 @@ export function VersionHistoryPanel({ open, onClose }: Props) {
 
     useEffect(() => {
         if (!open) return;
-        if (!filePath) { setVersions([]); setError('Save the canvas first to start tracking versions.'); return; }
+        if (!filePath) { setVersions([]); setError(t('version_history.save_first')); return; }
         let cancelled = false;
         setLoading(true);
         setError(null);
@@ -50,7 +52,7 @@ export function VersionHistoryPanel({ open, onClose }: Props) {
 
     const restore = async (v: VersionEntry) => {
         if (!filePath) return;
-        const ok = window.confirm(`Restore this version?\n\n${formatTs(v.timestamp)}\n\nThe current canvas will be replaced. (You can save again afterwards to create a new version.)`);
+        const ok = window.confirm(`${t('canvas.version.restore_q')}\n\n${formatTs(v.timestamp)}\n\n${t('canvas.version.restore_warn')}`);
         if (!ok) return;
         const api: any = (window as any).electron?.canvas;
         const res = await api?.loadVersion?.({ filePath, versionPath: v.path });
@@ -81,7 +83,7 @@ export function VersionHistoryPanel({ open, onClose }: Props) {
             dispatch({ type: 'SET_DIRTY', dirty: true });
             onClose();
         } catch (err: any) {
-            window.alert('Failed to restore: ' + (err?.message || String(err)));
+            window.alert(t('version_history.restore_failed') + ': ' + (err?.message || String(err)));
         }
     };
 
@@ -91,14 +93,14 @@ export function VersionHistoryPanel({ open, onClose }: Props) {
         <div data-canvas-ui="1" className="absolute top-3 right-3 bottom-16 z-30 no-drag w-[280px] rounded-xl bg-[#12121a]/95 border border-white/10 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden animate-in slide-in-from-right-2 fade-in duration-150">
             <div className="px-3 py-2 border-b border-white/5 flex items-center gap-2">
                 <Clock size={12} className="text-emerald-400" />
-                <span className="text-[10px] font-bold uppercase tracking-widest text-white/60 flex-1">Version history</span>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-white/60 flex-1">{t('version_history.title')}</span>
                 <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-white/40"><X size={12} /></button>
             </div>
             <div className="flex-1 overflow-y-auto">
-                {loading && <div className="p-3 text-[11px] text-white/40 italic">Loading…</div>}
+                {loading && <div className="p-3 text-[11px] text-white/40 italic">{t('version_history.loading')}</div>}
                 {error && <div className="p-3 text-[11px] text-amber-400/80">{error}</div>}
                 {!loading && !error && versions.length === 0 && (
-                    <div className="p-3 text-[11px] text-white/40 italic">No versions yet. Save the canvas to start the history.</div>
+                    <div className="p-3 text-[11px] text-white/40 italic">{t('version_history.empty')}</div>
                 )}
                 {!loading && versions.map((v, i) => (
                     <div
@@ -108,12 +110,12 @@ export function VersionHistoryPanel({ open, onClose }: Props) {
                         <div className="flex items-center justify-between gap-2">
                             <div className="min-w-0 flex-1">
                                 <div className="text-[11.5px] text-white/80 truncate">{formatTs(v.timestamp)}</div>
-                                <div className="text-[9.5px] text-white/35 uppercase tracking-wider">{relativeTs(v.timestamp)}{i === 0 ? ' · latest' : ''}</div>
+                                <div className="text-[9.5px] text-white/35 uppercase tracking-wider">{relativeTs(v.timestamp)}{i === 0 ? ` · ${t('version_history.latest')}` : ''}</div>
                             </div>
                             <button
                                 onClick={() => restore(v)}
                                 className="opacity-60 group-hover:opacity-100 p-1.5 rounded bg-emerald-500/10 hover:bg-emerald-500/25 text-emerald-300 transition-all"
-                                title="Restore this version"
+                                title={t('version_history.restore')}
                             >
                                 <RotateCcw size={11} />
                             </button>

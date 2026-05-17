@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, FileText, Image as ImageIcon, File as FileIc
 import { useCanvasStore } from '../state/canvasStore';
 import { fitToViewport } from '../CanvasEngine';
 import type { CanvasItem } from '../items/types';
+import { t } from '../../i18n/strings';
 
 // Synthetic outline entry for drawings. Drawings aren't CanvasItems so
 // they don't flow through state.order / state.items; we materialize them
@@ -115,13 +116,14 @@ export function OutlineSidebar({ open, onClose }: Props) {
     return (
         <div data-canvas-ui="1" className="absolute top-3 left-3 bottom-16 z-30 no-drag w-[260px] rounded-xl bg-[#12121a]/95 border border-white/10 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden animate-in slide-in-from-left-2 fade-in duration-150">
             <div className="px-3 py-2 border-b border-white/5 flex items-center gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-white/60 flex-1">Outline</span>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-white/60 flex-1">{t('canvas_top.outline')}</span>
                 <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-white/40"><X size={12} /></button>
             </div>
             <div className="px-3 py-2 border-b border-white/5 flex items-center gap-2">
                 <Search size={11} className="text-white/30" />
                 <input
-                    placeholder="Filter"
+                    dir="auto"
+                    placeholder={t('canvas.filter')}
                     value={q}
                     onChange={(e) => setQ(e.target.value)}
                     onKeyDown={(e) => e.stopPropagation()}
@@ -161,7 +163,7 @@ export function OutlineSidebar({ open, onClose }: Props) {
                     />
                 ))}
                 {topLevel.length === 0 && topLevelDrawings.length === 0 && (
-                    <div className="text-[10px] text-white/30 text-center py-6">empty canvas</div>
+                    <div className="text-[10px] text-white/30 text-center py-6">{t('canvas.outline_empty')}</div>
                 )}
             </div>
             <div className="border-t border-white/5 px-3 py-1.5 text-[9px] uppercase tracking-widest text-white/30">
@@ -170,7 +172,9 @@ export function OutlineSidebar({ open, onClose }: Props) {
                         state.order.length
                         + Object.keys(state.lines).length
                         + Object.keys(state.strokes).length;
-                    return `${total} ${total === 1 ? 'item' : 'items'}`;
+                    return total === 1
+                        ? t('canvas.item_count_one')
+                        : t('canvas.items_count').replace('{n}', String(total));
                 })()}
             </div>
         </div>

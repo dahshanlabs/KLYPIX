@@ -2,6 +2,14 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { CustomColorPick } from './CustomColorPick';
+import { t, useLocale } from '../../i18n/strings';
+
+// Map for translating dotted/dashed/solid keywords inside the panel.
+const LINE_STYLE_KEY = {
+    solid: 'panel.solid',
+    dashed: 'panel.dashed',
+    dotted: 'panel.dotted',
+} as const;
 
 const cn = (...inputs: ClassValue[]) => twMerge(clsx(inputs));
 
@@ -35,6 +43,7 @@ interface Props {
 }
 
 export const StrokePanel = React.forwardRef<HTMLDivElement, Props>(function StrokePanel(props, ref) {
+    useLocale();
     const {
         strokeColor, strokeEnabled, strokeWidth, lineStyle, recentColors,
         onPreviewColor, onCommitColor,
@@ -125,7 +134,7 @@ export const StrokePanel = React.forwardRef<HTMLDivElement, Props>(function Stro
             }}
         >
             <div className="flex flex-col">
-                <Section title="Stroke">
+                <Section title={t('panel.stroke')}>
                     <button
                         onClick={() => { cancelRevert(); if (noStrokeActive) onCommitStrokeOn(); else onCommitStrokeOff(); }}
                         onMouseEnter={() => { if (!noStrokeActive) { cancelRevert(); onPreviewStrokeOff(); } }}
@@ -148,7 +157,7 @@ export const StrokePanel = React.forwardRef<HTMLDivElement, Props>(function Stro
                                 }}
                             />
                         </span>
-                        No stroke
+                        {t('panel.no_stroke')}
                     </button>
                 </Section>
 
@@ -165,7 +174,7 @@ export const StrokePanel = React.forwardRef<HTMLDivElement, Props>(function Stro
                     aria-hidden={recentColors.length === 0}
                 >
                     <div className="overflow-hidden">
-                        <Section title="Recent">
+                        <Section title={t('panel.recent')}>
                             <ColorRow
                                 colors={recentColors}
                                 active={strokeEnabled === true ? strokeColor : undefined}
@@ -178,7 +187,7 @@ export const StrokePanel = React.forwardRef<HTMLDivElement, Props>(function Stro
                     </div>
                 </div>
 
-                <Section title="Palette">
+                <Section title={t('panel.palette')}>
                     <ColorRow
                         colors={PALETTE_COLORS}
                         active={strokeEnabled === true ? strokeColor : undefined}
@@ -189,13 +198,13 @@ export const StrokePanel = React.forwardRef<HTMLDivElement, Props>(function Stro
                         onCustomCommit={onCommitColor}
                     />
                     {strokeEnabled === undefined && (
-                        <div className="text-[10px] text-white/35 mt-1">Mixed</div>
+                        <div className="text-[10px] text-white/35 mt-1">{t('panel.mixed')}</div>
                     )}
                 </Section>
 
                 <Divider />
 
-                <Section title="Width">
+                <Section title={t('panel.width')}>
                     <input
                         type="range"
                         min={STROKE_MIN}
@@ -209,7 +218,7 @@ export const StrokePanel = React.forwardRef<HTMLDivElement, Props>(function Stro
                     />
                     <div className="flex items-center justify-between mt-1">
                         <div className="text-[10px] text-white/50">
-                            {mixedWidth ? 'Mixed' : `${Math.round(sliderWidthValue)}px`}
+                            {mixedWidth ? t('panel.mixed') : `${Math.round(sliderWidthValue)}px`}
                         </div>
                         <div
                             style={{
@@ -225,7 +234,7 @@ export const StrokePanel = React.forwardRef<HTMLDivElement, Props>(function Stro
 
                 <Divider />
 
-                <Section title="Line style">
+                <Section title={t('panel.line_style')}>
                     <div className="flex gap-1" onMouseLeave={scheduleRevert}>
                         {(['solid', 'dashed', 'dotted'] as const).map(ls => {
                             const isActive = lineStyle === ls;
@@ -241,7 +250,7 @@ export const StrokePanel = React.forwardRef<HTMLDivElement, Props>(function Stro
                                             : 'bg-white/5 text-white/55 hover:bg-white/10',
                                     )}
                                 >
-                                    {ls}
+                                    {t(LINE_STYLE_KEY[ls])}
                                 </button>
                             );
                         })}

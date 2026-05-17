@@ -189,7 +189,7 @@ export function LoginScreen({ trialExpired }: { trialExpired?: boolean } = {}) {
                     <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
                         <img src="./logo.png" alt="Klypix" className="w-8 h-8" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                     </div>
-                    <h1 className="text-xl font-bold tracking-wider text-white font-[Outfit] uppercase">Klypix</h1>
+                    <h1 className="text-xl font-bold tracking-wider text-white font-poppins uppercase">Klypix</h1>
                     <p className="text-white/40 text-sm mt-1">AI Desktop Assistant</p>
                     {trialExpired && (
                         <div className="mt-3 px-4 py-2 bg-amber-500/10 border border-amber-500/20 rounded-lg">

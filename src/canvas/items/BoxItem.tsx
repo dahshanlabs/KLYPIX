@@ -1,6 +1,7 @@
 import React from 'react';
 import type { BoxItem as BoxItemType, TextItem } from './types';
 import { ResizeHandle } from '../interaction/ResizeHandle';
+import { RotateHandle } from '../interaction/RotateHandle';
 import { useCanvasStore } from '../state/canvasStore';
 import { newId } from './types';
 import { defaultTextColorFor, getCurrentGridSettings } from '../gridSettings';
@@ -93,6 +94,9 @@ function BoxItemViewImpl({ item, selected }: Props) {
 
     // Wrapper positions + sizes the shape. Shapes themselves render as SVG so
     // we can do circle/triangle/diamond with the same code path.
+    // Rotation is applied via CSS transform around the center — visual only;
+    // hit-testing + resize handles still use the un-rotated AABB.
+    const rotation = item.rotation ?? 0;
     const wrap: React.CSSProperties = {
         position: 'absolute',
         left: item.x,
@@ -102,6 +106,8 @@ function BoxItemViewImpl({ item, selected }: Props) {
         pointerEvents: 'auto',
         opacity,
         filter: selected ? 'drop-shadow(0 0 0.01px #10b981)' : undefined,
+        transform: rotation ? `rotate(${rotation}deg)` : undefined,
+        transformOrigin: 'center',
     };
 
     let shapeEl: React.ReactNode;
@@ -144,7 +150,8 @@ function BoxItemViewImpl({ item, selected }: Props) {
     return (
         <>
             <div data-canvas-item={item.id} style={wrap} onDoubleClick={onDoubleClick} title={shape === 'rect' ? 'Double-click to type inside' : 'Double-click to add text'}>{shapeEl}</div>
-            {selected && <ResizeHandle itemId={item.id} x={item.x} y={item.y} w={item.w} h={item.h} />}
+            {selected && <ResizeHandle itemId={item.id} x={item.x} y={item.y} w={item.w} h={item.h} rotation={rotation} />}
+            {selected && <RotateHandle itemId={item.id} x={item.x} y={item.y} w={item.w} h={item.h} rotation={rotation} />}
         </>
     );
 }

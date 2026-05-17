@@ -4,6 +4,7 @@ import type { CanvasItem, ThreadMessage } from '../items/types';
 import { newId } from '../items/types';
 import { useCanvasStore } from '../state/canvasStore';
 import { runCanvasThread } from '../agent/canvasThread';
+import { t } from '../../i18n/strings';
 
 // Floating chat panel anchored near a canvas item. Screen coords, not world —
 // stays same size while the canvas pans/zooms, always readable. Agent sees
@@ -212,6 +213,7 @@ export function ChatThread({ item, screenX, screenY, itemScreenW, itemScreenH, o
             <div className="p-2 border-t border-white/5">
                 <div className="flex items-end gap-2 rounded-lg bg-white/5 px-2 py-1.5 focus-within:bg-white/[0.08] transition-colors">
                     <textarea
+                        dir="auto"
                         ref={inputRef}
                         value={draft}
                         onChange={(e) => setDraft(e.target.value)}

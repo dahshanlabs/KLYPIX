@@ -1,44 +1,23 @@
 import { useState, useEffect, useRef } from 'react';
 import { KlypixEyes } from './KlypixEyes';
+import { t } from '../i18n/strings';
 
 /**
  * RespondingKlypix — Klypix eyes + animated pencil accessory + rotating fun phrases.
  * Shown while the AI is generating/streaming a response.
+ *
+ * Phrase counts per mode are encoded here so the pool length is known
+ * statically; the strings themselves live in i18n under
+ * `responding.<mode>.<n>` keys so they switch with the active locale.
  */
 
-const PHRASES = {
-    chat: [
-        'Klypixing your answer...',
-        'Crafting something smart...',
-        'Connecting the dots...',
-        'Neurons firing...',
-        'Cooking up a response...',
-        'Putting words together...',
-        'Composing brilliance...',
-        'Thinking out loud...',
-    ],
-    document: [
-        'Reading between the lines...',
-        'Digesting your document...',
-        'Deep in the text...',
-        'Finding the good parts...',
-        'Scanning the pages...',
-        'Extracting insights...',
-    ],
-    screen: [
-        'Analyzing what you see...',
-        'Making sense of your screen...',
-        'Examining the pixels...',
-        'Decoding your display...',
-        'Processing the view...',
-    ],
-} as const;
+const PHRASE_COUNTS = { chat: 8, document: 6, screen: 5 } as const;
 
-type Mode = keyof typeof PHRASES;
+type Mode = keyof typeof PHRASE_COUNTS;
 
 export function RespondingKlypix({ mode = 'chat', className = '' }: { mode?: Mode; className?: string }) {
-    const pool = PHRASES[mode];
-    const [idx, setIdx] = useState(() => Math.floor(Math.random() * pool.length));
+    const count = PHRASE_COUNTS[mode];
+    const [idx, setIdx] = useState(() => Math.floor(Math.random() * count));
     const [fading, setFading] = useState(false);
     const timerRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
@@ -46,12 +25,12 @@ export function RespondingKlypix({ mode = 'chat', className = '' }: { mode?: Mod
         timerRef.current = setInterval(() => {
             setFading(true);
             setTimeout(() => {
-                setIdx(prev => (prev + 1) % pool.length);
+                setIdx(prev => (prev + 1) % count);
                 setFading(false);
             }, 400); // fade-out duration before swap
         }, 3500);
         return () => clearInterval(timerRef.current);
-    }, [pool.length]);
+    }, [count]);
 
     return (
         <div className={`flex items-center gap-3 py-2 ${className}`}>
@@ -82,9 +61,9 @@ export function RespondingKlypix({ mode = 'chat', className = '' }: { mode?: Mod
             <div className="flex flex-col gap-0.5 min-w-0">
                 <span className={`text-[13px] text-emerald-400/80 font-medium tracking-wide font-poppins transition-opacity duration-400 ${fading ? 'opacity-0' : 'opacity-100'}`}
                     style={{ animation: fading ? 'none' : 'klypixTextFade 2.8s ease-in-out infinite' }}>
-                    {pool[idx]}
+                    {t(`responding.${mode}.${idx}` as any)}
                 </span>
-                <span className="text-[10px] text-white/25 uppercase tracking-[0.15em] font-poppins">klypix responding</span>
+                <span className="text-[10px] text-white/25 uppercase tracking-[0.15em] font-poppins">{t('responding.klypix_responding')}</span>
             </div>
 
             <style>{`

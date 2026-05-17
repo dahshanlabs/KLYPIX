@@ -7,6 +7,7 @@ import {
     getContainerRenderMode,
     isTabMode,
 } from '../items/ContainerItem';
+import { t } from '../../i18n/strings';
 
 const W = 148;
 const H = 100;
@@ -222,7 +223,7 @@ export function Minimap() {
             )}
             {!data && (
                 <div className="w-full h-full flex items-center justify-center text-[9px] text-white/50 tracking-widest uppercase">
-                    empty
+                    {t('canvas.empty_short')}
                 </div>
             )}
         </div>

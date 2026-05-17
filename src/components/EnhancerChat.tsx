@@ -274,6 +274,7 @@ export function EnhancerChat({
                     {msg.isText && !msg.answered && (
                       <div className="flex gap-1.5">
                         <input
+                          dir="auto"
                           ref={inputRef}
                           type="text"
                           value={textInput}

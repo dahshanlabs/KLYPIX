@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Lock, X, Loader2 } from 'lucide-react';
+import { t } from '../i18n/strings';
 
 interface PdfPasswordModalProps {
     fileName: string;
@@ -25,7 +26,7 @@ export function PdfPasswordModal({ fileName, filePath, onSubmit, onDismiss }: Pd
         const success = await onSubmit(password.trim());
         setLoading(false);
         if (!success) {
-            setError('Incorrect password. Try again.');
+            setError(t('dialog.pdf.wrong_password'));
             setPassword('');
             inputRef.current?.focus();
         }
@@ -39,9 +40,9 @@ export function PdfPasswordModal({ fileName, filePath, onSubmit, onDismiss }: Pd
                         <Lock size={16} className="text-amber-400" />
                     </div>
                     <div className="flex-1 min-w-0">
-                        <div className="text-white/90 text-sm font-medium mb-1">Password Required</div>
+                        <div className="text-white/90 text-sm font-medium mb-1">{t('dialog.pdf.title')}</div>
                         <div className="text-white/40 text-xs mb-3 truncate">
-                            <span className="text-amber-400/80 font-mono">{fileName}</span> is password-protected.
+                            <span className="text-amber-400/80 font-mono">{fileName}</span> {t('dialog.pdf.is_protected')}
                         </div>
                         <div className="flex items-center gap-2">
                             <input
@@ -50,7 +51,7 @@ export function PdfPasswordModal({ fileName, filePath, onSubmit, onDismiss }: Pd
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                                 onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); if (e.key === 'Escape') onDismiss(); }}
-                                placeholder="Enter PDF password..."
+                                placeholder={t('dialog.pdf.placeholder')}
                                 className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white/80 placeholder:text-white/30 outline-none focus:border-amber-500/50 transition-colors"
                             />
                             <button
@@ -59,14 +60,14 @@ export function PdfPasswordModal({ fileName, filePath, onSubmit, onDismiss }: Pd
                                 className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-all cursor-pointer flex items-center gap-1.5"
                             >
                                 {loading ? <Loader2 size={12} className="animate-spin" /> : null}
-                                Unlock
+                                {t('dialog.pdf.unlock')}
                             </button>
                         </div>
                         {error && (
                             <div className="text-red-400 text-xs mt-2">{error}</div>
                         )}
                         <div className="text-white/25 text-[10px] mt-2">
-                            Or drag & drop the file as an attachment instead.
+                            {t('dialog.pdf.drag_drop_hint')}
                         </div>
                     </div>
                     <button onClick={onDismiss} className="text-white/30 hover:text-white/60 cursor-pointer p-1 shrink-0">

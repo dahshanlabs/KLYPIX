@@ -82,7 +82,7 @@ function LinkItemViewImpl({ item, selected }: Props) {
                     gap: px(4),
                     flex: 1,
                     minHeight: 0,
-                    fontFamily: 'Outfit, system-ui, sans-serif',
+                    fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
                 }}>
                     <div style={{
                         display: 'flex',

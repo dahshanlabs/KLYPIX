@@ -124,7 +124,7 @@ function CodeItemViewImpl({ item, selected, editing }: Props) {
                         gap: 8,
                         borderBottom: '1px solid rgba(255,255,255,0.05)',
                         background: '#111119',
-                        fontFamily: 'Outfit, system-ui, sans-serif',
+                        fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
                     }}
                 >
                     <span style={{ fontSize: 9.5, color: '#10b981', letterSpacing: '0.07em', textTransform: 'uppercase' }}>
@@ -217,7 +217,7 @@ function CodeItemViewImpl({ item, selected, editing }: Props) {
                             whiteSpace: 'pre-wrap',
                         }}
                     >
-                        <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.08em', marginBottom: 3, fontFamily: 'Outfit, system-ui, sans-serif' }}>
+                        <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.08em', marginBottom: 3, fontFamily: 'Thmanyah Sans, system-ui, sans-serif' }}>
                             {item.lastRun.exitCode === 0 ? 'STDOUT' : `EXIT ${item.lastRun.exitCode} · STDERR`}
                         </div>
                         {(item.lastRun.exitCode === 0 ? item.lastRun.stdout : (item.lastRun.stderr || item.lastRun.stdout)).trim() || '(no output)'}
@@ -228,7 +228,7 @@ function CodeItemViewImpl({ item, selected, editing }: Props) {
                         padding: '4px 10px',
                         fontSize: 10,
                         color: '#10b981',
-                        fontFamily: 'Outfit, system-ui, sans-serif',
+                        fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
                         borderTop: '1px solid rgba(16,185,129,0.2)',
                         background: 'rgba(16,185,129,0.05)',
                     }}>

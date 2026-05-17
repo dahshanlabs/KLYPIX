@@ -67,7 +67,7 @@ function ApprovalItemViewImpl({ item, selected }: Props) {
         flexDirection: 'column',
         gap: 10,
         color: '#e8e8ed',
-        fontFamily: 'Outfit, system-ui, sans-serif',
+        fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
         pointerEvents: 'auto',
         WebkitAppRegion: 'no-drag',
     } as React.CSSProperties & { WebkitAppRegion?: string };

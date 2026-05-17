@@ -2,6 +2,7 @@ import React from 'react';
 import { Download, RefreshCw, FileSpreadsheet, FileText, Presentation, FileType, Image, Code, File, Check } from 'lucide-react';
 import type { GeneratedDoc } from '../hooks/useDocGenerator';
 import { FORMAT_LABELS } from '../core/docGeneration';
+import { t, useLocale } from '../i18n/strings';
 
 interface GeneratedDocCardProps {
     doc: GeneratedDoc;
@@ -42,15 +43,17 @@ const FORMAT_SHORT: Record<string, string> = {
     csv: 'CSV', txt: 'TXT', md: 'MD', json: 'JSON',
 };
 
-// Generation stages for animated progress
+// Generation stages for animated progress. labelKey is resolved through t()
+// at render time so a mid-generation locale switch shows the new language.
 const GEN_STAGES = [
-    { label: 'Reading context', duration: 1500 },
-    { label: 'Analyzing content', duration: 2000 },
-    { label: 'Structuring document', duration: 3000 },
-    { label: 'Rendering output', duration: 2000 },
+    { labelKey: 'generated_doc.reading' as const, duration: 1500 },
+    { labelKey: 'generated_doc.analyzing' as const, duration: 2000 },
+    { labelKey: 'generated_doc.structuring' as const, duration: 3000 },
+    { labelKey: 'generated_doc.rendering' as const, duration: 2000 },
 ];
 
 export function GeneratedDocCard({ doc, isGenerating, genProgress, onDownload, onRevise, onConvert, onDismiss, onCancel }: GeneratedDocCardProps) {
+    useLocale();
     const [downloaded, setDownloaded] = React.useState(false);
     const [showReviseInput, setShowReviseInput] = React.useState(false);
     const [reviseText, setReviseText] = React.useState('');
@@ -103,7 +106,7 @@ export function GeneratedDocCard({ doc, isGenerating, genProgress, onDownload, o
                     <span className="text-white/80 text-sm font-medium">{FORMAT_LABELS[doc.format]}</span>
                     {isGenerating && (
                         <span className="text-emerald-400/70 text-[10px] font-medium animate-pulse">
-                            {GEN_STAGES[genStage]?.label || 'Generating'}...
+                            {GEN_STAGES[genStage] ? t(GEN_STAGES[genStage].labelKey) : t('chat.working')}...
                         </span>
                     )}
                 </div>
@@ -172,7 +175,7 @@ export function GeneratedDocCard({ doc, isGenerating, genProgress, onDownload, o
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/80 hover:bg-red-500 text-white text-xs font-medium rounded-lg transition-all cursor-pointer"
                     >
                         <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect width="10" height="10" rx="1"/></svg>
-                        Stop Generation
+                        {t('generated_doc.stop')}
                     </button>
                 ) : (
                     <button
@@ -181,7 +184,7 @@ export function GeneratedDocCard({ doc, isGenerating, genProgress, onDownload, o
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded-lg transition-all disabled:opacity-50 cursor-pointer"
                     >
                         {downloaded ? <Check size={12} /> : <Download size={12} />}
-                        {downloaded ? 'Saved' : `Download .${doc.format === 'image' ? 'png' : doc.format}`}
+                        {downloaded ? t('generated_doc.saved') : `${t('generated_doc.download')} .${doc.format === 'image' ? 'png' : doc.format}`}
                     </button>
                 )}
                 {!showReviseInput ? (
@@ -191,7 +194,7 @@ export function GeneratedDocCard({ doc, isGenerating, genProgress, onDownload, o
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-white/60 text-xs font-medium rounded-lg transition-all disabled:opacity-50 cursor-pointer"
                     >
                         <RefreshCw size={12} />
-                        Revise
+                        {t('generated_doc.revise')}
                     </button>
                 ) : (
                     <div className="flex items-center gap-1.5 flex-1">
@@ -207,14 +210,14 @@ export function GeneratedDocCard({ doc, isGenerating, genProgress, onDownload, o
                                 }
                                 if (e.key === 'Escape') { setShowReviseInput(false); setReviseText(''); }
                             }}
-                            placeholder="What to change..."
+                            placeholder={t('generated_doc.what_to_change')}
                             className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white/80 placeholder:text-white/30 outline-none focus:border-emerald-500/50"
                         />
                         <button
                             onClick={() => { if (reviseText.trim()) { onRevise(reviseText.trim()); setReviseText(''); setShowReviseInput(false); } }}
                             className="px-2 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-lg cursor-pointer"
                         >
-                            Go
+                            {t('generated_doc.go')}
                         </button>
                         <button
                             onClick={() => { setShowReviseInput(false); setReviseText(''); }}
@@ -229,7 +232,7 @@ export function GeneratedDocCard({ doc, isGenerating, genProgress, onDownload, o
             {/* Convert to other formats */}
             {onConvert && !isGenerating && CONVERSION_TARGETS[doc.format] && (
                 <div className="flex items-center gap-1.5 px-4 py-2 border-t border-white/5">
-                    <span className="text-white/25 text-[10px] uppercase tracking-wider font-medium mr-1">Convert to</span>
+                    <span className="text-white/25 text-[10px] uppercase tracking-wider font-medium mr-1">{t('generated_doc.convert_to')}</span>
                     {CONVERSION_TARGETS[doc.format]!.map(fmt => (
                         <button
                             key={fmt}

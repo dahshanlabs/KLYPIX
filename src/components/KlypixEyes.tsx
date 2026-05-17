@@ -44,7 +44,14 @@ export function KlypixEyes({ size = 18, className = '' }: { size?: EyeSize; clas
     );
 
     return (
-        <div className={`flex-shrink-0 ${className}`}>
+        // dir="ltr" — same fix as KlypixMascot. The iris parent at line 30
+        // uses position:absolute with no left/right, so its static position
+        // shifts to the right edge of the eye box under RTL inheritance and
+        // the iris renders outside the visible area (eyes look empty). The
+        // mascot is graphics, not text; pinning direction is the simplest
+        // fix and propagates to every consumer (ThinkingBrain, RespondingKlypix,
+        // WhatISee skeleton card).
+        <div dir="ltr" className={`flex-shrink-0 ${className}`}>
             <div className="flex" style={{ gap: d.gap, animation: `${bounceId} 4s ease-in-out infinite` }}>
                 {eye}
                 {eye}

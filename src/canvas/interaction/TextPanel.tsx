@@ -22,6 +22,12 @@ export const FONT_OPTIONS: { label: string; value: string }[] = [
     { label: 'JetBrains Mono', value: 'JetBrains Mono' },
     { label: 'Caveat', value: 'Caveat' },
     { label: 'Bricolage Grotesque', value: 'Bricolage Grotesque' },
+    // Arabic-first family (also covers Latin). Three sub-families — Sans is
+    // the bilingual default; Serif Text is for body copy; Serif Display is
+    // for headings. All three render Arabic with proper shaping.
+    { label: 'Thmanyah Sans', value: 'Thmanyah Sans' },
+    { label: 'Thmanyah Serif Text', value: 'Thmanyah Serif Text' },
+    { label: 'Thmanyah Serif Display', value: 'Thmanyah Serif Display' },
 ];
 const SIZE_MIN = 8;
 const SIZE_MAX = 128;

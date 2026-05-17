@@ -1,6 +1,7 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { t } from '../../i18n/strings';
 
 const cn = (...inputs: ClassValue[]) => twMerge(clsx(inputs));
 
@@ -99,9 +100,9 @@ export const ScalePanel = React.forwardRef<HTMLDivElement, Props>(function Scale
         >
             <div className="flex flex-col">
                 <div className="px-3 py-2.5">
-                    <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1.5">Scale</div>
+                    <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1.5">{t('scale.title')}</div>
                     {!hasSelection && (
-                        <div className="text-[10px] text-white/35 mb-2">Select something first.</div>
+                        <div className="text-[10px] text-white/35 mb-2">{t('scale.select_first')}</div>
                     )}
                     <div className="grid grid-cols-3 gap-1">
                         {PRESETS.map(p => (
@@ -125,12 +126,12 @@ export const ScalePanel = React.forwardRef<HTMLDivElement, Props>(function Scale
                 <div className="h-px bg-white/5" />
 
                 <div className="px-3 py-2.5">
-                    <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1.5">Custom</div>
+                    <div className="text-[10px] text-white/40 uppercase tracking-widest mb-1.5">{t('scale.custom')}</div>
                     <div className="flex items-center gap-1.5">
                         <input
                             type="text"
                             inputMode="decimal"
-                            placeholder="e.g. 1.25"
+                            placeholder={t('scale.eg_placeholder')}
                             value={customText}
                             onChange={(e) => setCustomText(e.target.value)}
                             onKeyDown={(e) => {
@@ -139,7 +140,13 @@ export const ScalePanel = React.forwardRef<HTMLDivElement, Props>(function Scale
                                     submitCustom();
                                 }
                             }}
-                            className="flex-1 bg-black/40 border border-white/10 rounded-md px-2 py-1 text-[12px] text-white/85 placeholder-white/25 focus:outline-none focus:border-emerald-500/40"
+                            // Fixed-width input keeps the row balanced: a wide
+                            // flex-1 input dwarfed the × symbol and Apply
+                            // button and looked unfinished in both locales.
+                            // w-20 fits "e.g. 1.25" / "مثال: 1.25" with a few
+                            // extra chars of typed input, then the Apply
+                            // button claims the remaining row.
+                            className="w-20 bg-black/40 border border-white/10 rounded-md px-2 py-1 text-[12px] text-white/85 placeholder-white/25 focus:outline-none focus:border-emerald-500/40"
                         />
                         <span className="text-[11px] text-white/40">×</span>
                         <button
@@ -152,11 +159,11 @@ export const ScalePanel = React.forwardRef<HTMLDivElement, Props>(function Scale
                                     : 'bg-white/5 text-white/25 cursor-not-allowed',
                             )}
                         >
-                            Apply
+                            {t('scale.apply')}
                         </button>
                     </div>
                     <div className="text-[10px] text-white/35 mt-1.5">
-                        Each apply multiplies. Center stays the selection's center.
+                        {t('scale.hint')}
                     </div>
                 </div>
             </div>

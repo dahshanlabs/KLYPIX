@@ -6,6 +6,7 @@ import { AlignmentGrid, type TextAlignH, type TextAlignV } from './AlignmentGrid
 import { ItemAlignPanel } from './ItemAlignPanel';
 import type { AlignOp } from './alignItems';
 import { PALETTE_COLORS, FONT_OPTIONS } from './TextPanel';
+import { t } from '../../i18n/strings';
 
 // Patch shape for the Format section — same fields a StyleRun can carry,
 // minus offsets (the menu doesn't know them; the caller applies the patch
@@ -113,15 +114,18 @@ interface Props {
     onPositioned?: (rect: { left: number; top: number; width: number; height: number }) => void;
 }
 
-const STATUSES: { v: ItemStatus; label: string; color: string }[] = [
-    { v: 'none', label: 'None', color: '#555' },
-    { v: 'todo', label: 'To do', color: '#6b6b80' },
-    { v: 'in_progress', label: 'In progress', color: '#f5a623' },
-    { v: 'in_review', label: 'In review', color: '#3b82f6' },
-    { v: 'done', label: 'Done', color: '#2dd4a0' },
-    { v: 'blocked', label: 'Blocked', color: '#ef4444' },
-    { v: 'waiting', label: 'Waiting', color: '#a855f7' },
+// Status labels are resolved through i18n at render time. Color stays
+// constant; label key matches `status.<v>` in src/i18n/strings.ts.
+const STATUSES: { v: ItemStatus; color: string }[] = [
+    { v: 'none', color: '#555' },
+    { v: 'todo', color: '#6b6b80' },
+    { v: 'in_progress', color: '#f5a623' },
+    { v: 'in_review', color: '#3b82f6' },
+    { v: 'done', color: '#2dd4a0' },
+    { v: 'blocked', color: '#ef4444' },
+    { v: 'waiting', color: '#a855f7' },
 ];
+const statusLabel = (v: ItemStatus): string => t(`status.${v}` as any);
 
 // Simple right-click menu. Closes on any outside click or Escape. Kept local
 // to the surface; no store state, no ref-counting.
@@ -239,45 +243,45 @@ export function ContextMenu({
             {onExtractText && canExtractText && (
                 <MenuItem
                     icon={<ScanText size={13} />}
-                    label={extractingText ? 'Extracting text…' : 'Extract text (OCR)'}
+                    label={extractingText ? t('menu.extracting_text') : t('menu.extract_text')}
                     disabled={!!extractingText}
                     onClick={extractingText ? () => {} : run(onExtractText)}
                 />
             )}
-            <MenuItem icon={<Sparkles size={13} />} label="Ask agent" disabled={!hasSelection} onClick={run(onAskAgent)} />
+            <MenuItem icon={<Sparkles size={13} />} label={t('menu.ask_agent')} disabled={!hasSelection} onClick={run(onAskAgent)} />
             {onOpenThread && (
-                <MenuItem icon={<MessagesSquare size={13} />} label="Open chat thread" disabled={!canOpenThread} onClick={run(onOpenThread)} />
+                <MenuItem icon={<MessagesSquare size={13} />} label={t('menu.open_chat_thread')} disabled={!canOpenThread} onClick={run(onOpenThread)} />
             )}
             {onEnterGroup && canEnterGroup && (
-                <MenuItem icon={<LogIn size={13} />} label="Enter group" onClick={run(onEnterGroup)} />
+                <MenuItem icon={<LogIn size={13} />} label={t('menu.enter_group')} onClick={run(onEnterGroup)} />
             )}
             {onExitGroup && canExitGroup && (
-                <MenuItem icon={<LogOut size={13} />} label="Exit group" onClick={run(onExitGroup)} />
+                <MenuItem icon={<LogOut size={13} />} label={t('menu.exit_group')} onClick={run(onExitGroup)} />
             )}
             {onFitContents && canFitContents && (
-                <MenuItem icon={<Minimize2 size={13} />} label="Fit to contents" onClick={run(onFitContents)} />
+                <MenuItem icon={<Minimize2 size={13} />} label={t('menu.fit_to_contents')} onClick={run(onFitContents)} />
             )}
             {onSaveAsTemplate && (
-                <MenuItem icon={<Stamp size={13} />} label="Save as template…" disabled={!hasSelection} onClick={run(onSaveAsTemplate)} />
+                <MenuItem icon={<Stamp size={13} />} label={t('menu.save_as_template')} disabled={!hasSelection} onClick={run(onSaveAsTemplate)} />
             )}
             {onConvertToLink && canConvertToLink && (
-                <MenuItem icon={<LinkIcon size={13} />} label="Convert to link preview" onClick={run(onConvertToLink)} />
+                <MenuItem icon={<LinkIcon size={13} />} label={t('menu.convert_to_link')} onClick={run(onConvertToLink)} />
             )}
             {onConvertToText && canConvertToText && (
-                <MenuItem icon={<TypeIcon size={13} />} label="Convert to text" onClick={run(onConvertToText)} />
+                <MenuItem icon={<TypeIcon size={13} />} label={t('menu.convert_to_text')} onClick={run(onConvertToText)} />
             )}
             <Separator />
-            <MenuItem icon={<Copy size={13} />} label="Duplicate" shortcut="Ctrl+D" disabled={!hasSelection} onClick={run(onDuplicate)} />
-            <MenuItem icon={<BorderIcon size={13} />} label={selectionAllHaveBorder ? 'Remove border' : 'Add border'} disabled={!hasSelection} onClick={run(onAddBorder)} />
-            <MenuItem icon={<FolderOpen size={13} />} label="Group" shortcut="Ctrl+G" disabled={!hasSelection} onClick={run(onGroup)} />
+            <MenuItem icon={<Copy size={13} />} label={t('menu.duplicate')} shortcut="Ctrl+D" disabled={!hasSelection} onClick={run(onDuplicate)} />
+            <MenuItem icon={<BorderIcon size={13} />} label={selectionAllHaveBorder ? t('menu.remove_border') : t('menu.add_border')} disabled={!hasSelection} onClick={run(onAddBorder)} />
+            <MenuItem icon={<FolderOpen size={13} />} label={t('menu.group')} shortcut="Ctrl+G" disabled={!hasSelection} onClick={run(onGroup)} />
             {onUngroup && canUngroup && (
-                <MenuItem icon={<FolderMinus size={13} />} label="Ungroup" shortcut="Ctrl+Shift+G" onClick={run(onUngroup)} />
+                <MenuItem icon={<FolderMinus size={13} />} label={t('menu.ungroup')} shortcut="Ctrl+Shift+G" onClick={run(onUngroup)} />
             )}
             {onArrange && (
                 <div className="relative">
                     <MenuItem
                         icon={<Layers size={13} />}
-                        label="Arrange ▸"
+                        label={t('menu.arrange')}
                         disabled={!hasSelection}
                         onClick={() => setArrangeOpen(v => !v)}
                     />
@@ -285,25 +289,25 @@ export function ContextMenu({
                         <Submenu className="py-1 min-w-[200px]">
                             <ArrangeRow
                                 icon={<ChevronsUp size={13} />}
-                                label="Bring to Front"
+                                label={t('menu.arrange_front')}
                                 shortcut="Ctrl+Shift+]"
                                 onClick={() => { onArrange('front'); setArrangeOpen(false); onClose(); }}
                             />
                             <ArrangeRow
                                 icon={<ChevronUp size={13} />}
-                                label="Bring Forward"
+                                label={t('menu.arrange_forward')}
                                 shortcut="Ctrl+]"
                                 onClick={() => { onArrange('forward'); setArrangeOpen(false); onClose(); }}
                             />
                             <ArrangeRow
                                 icon={<ChevronDown size={13} />}
-                                label="Send Backward"
+                                label={t('menu.arrange_backward')}
                                 shortcut="Ctrl+["
                                 onClick={() => { onArrange('backward'); setArrangeOpen(false); onClose(); }}
                             />
                             <ArrangeRow
                                 icon={<ChevronsDown size={13} />}
-                                label="Send to Back"
+                                label={t('menu.arrange_back')}
                                 shortcut="Ctrl+Shift+["
                                 onClick={() => { onArrange('back'); setArrangeOpen(false); onClose(); }}
                             />
@@ -315,7 +319,7 @@ export function ContextMenu({
                 <div className="relative">
                     <MenuItem
                         icon={<AlignVerticalJustifyCenter size={13} />}
-                        label="Align items ▸"
+                        label={t('menu.align_items')}
                         onClick={() => setItemAlignOpen(v => !v)}
                     />
                     {itemAlignOpen && (
@@ -334,7 +338,7 @@ export function ContextMenu({
             )}
             {onScaleSelection && hasSelection && (
                 <div className="relative">
-                    <MenuItem icon={<Scaling size={13} />} label="Scale ▸" onClick={() => setScaleOpen(v => !v)} />
+                    <MenuItem icon={<Scaling size={13} />} label={t('menu.scale')} onClick={() => setScaleOpen(v => !v)} />
                     {scaleOpen && (
                         <Submenu className="p-2 w-[176px]">
                             <div className="grid grid-cols-3 gap-1 mb-2">
@@ -359,7 +363,7 @@ export function ContextMenu({
                                 <input
                                     type="text"
                                     inputMode="decimal"
-                                    placeholder="custom"
+                                    placeholder={t('menu.custom_placeholder')}
                                     value={scaleCustom}
                                     onChange={(e) => setScaleCustom(e.target.value)}
                                     onKeyDown={(e) => {
@@ -386,7 +390,7 @@ export function ContextMenu({
                                     }}
                                     className="text-[10px] font-medium px-2 py-1 rounded-md bg-emerald-500/25 text-emerald-300 hover:bg-emerald-500/35 transition-all"
                                 >
-                                    Go
+                                    {t('menu.go')}
                                 </button>
                             </div>
                         </Submenu>
@@ -395,7 +399,7 @@ export function ContextMenu({
             )}
             {onSetTextAlignment && canSetTextAlignment && (
                 <div className="relative">
-                    <MenuItem icon={<AlignCenter size={13} />} label="Align ▸" onClick={() => setAlignOpen(v => !v)} />
+                    <MenuItem icon={<AlignCenter size={13} />} label={t('menu.text_align')} onClick={() => setAlignOpen(v => !v)} />
                     {alignOpen && (
                         <Submenu>
                             <AlignmentGrid
@@ -412,11 +416,11 @@ export function ContextMenu({
                 </div>
             )}
             {onAddTag && (
-                <MenuItem icon={<Tag size={13} />} label="Add tag…" disabled={!hasSelection} onClick={run(onAddTag)} />
+                <MenuItem icon={<Tag size={13} />} label={t('menu.add_tag')} disabled={!hasSelection} onClick={run(onAddTag)} />
             )}
             {onSetStatus && (
                 <div className="relative">
-                    <MenuItem icon={<CircleDot size={13} />} label="Set status ▸" disabled={!hasSelection} onClick={() => setStatusOpen(v => !v)} />
+                    <MenuItem icon={<CircleDot size={13} />} label={t('menu.set_status')} disabled={!hasSelection} onClick={() => setStatusOpen(v => !v)} />
                     {statusOpen && (
                         <Submenu className="py-1 min-w-[140px]">
                             {STATUSES.map(s => (
@@ -431,7 +435,7 @@ export function ContextMenu({
                                     <span style={{ width: 10, height: 10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                                         <span style={{ width: 7, height: 7, borderRadius: 1, background: s.color, transform: 'rotate(45deg)' }} />
                                     </span>
-                                    {s.label}
+                                    {statusLabel(s.v)}
                                 </button>
                             ))}
                         </Submenu>
@@ -439,12 +443,12 @@ export function ContextMenu({
                 </div>
             )}
             {onAddComment && (
-                <MenuItem icon={<MessageSquarePlus size={13} />} label="Add comment…" disabled={!hasSelection} onClick={run(onAddComment)} />
+                <MenuItem icon={<MessageSquarePlus size={13} />} label={t('menu.add_comment')} disabled={!hasSelection} onClick={run(onAddComment)} />
             )}
             <Separator />
             <MenuItem
                 icon={<Trash2 size={13} />}
-                label="Delete"
+                label={t('menu.delete')}
                 shortcut="Del"
                 danger
                 disabled={!hasSelection}
@@ -573,8 +577,8 @@ function FormatSection({ state, recentColors, onApply }: FormatSectionProps) {
     const fontFamilyValue = state?.fontFamily;
     const fontFamilyMixed = fontFamilyValue === 'mixed';
     const fontFamilyLabel = fontFamilyMixed
-        ? 'Mixed'
-        : (typeof fontFamilyValue === 'string' ? fontFamilyValue : 'Font');
+        ? t('menu.mixed')
+        : (typeof fontFamilyValue === 'string' ? fontFamilyValue : t('menu.font'));
     // Toggle rule: Word-style. If the selection is uniformly ON, click
     // clears the override (undefined). Otherwise (off or mixed), click
     // turns everything ON. Explicit undefined in the patch signals
@@ -616,7 +620,7 @@ function FormatSection({ state, recentColors, onApply }: FormatSectionProps) {
             <div className="relative" ref={fontMenuRef}>
                 <button
                     onClick={() => setFontMenuOpen(v => !v)}
-                    title={fontFamilyMixed ? 'Font (mixed)' : 'Font'}
+                    title={fontFamilyMixed ? t('menu.font_mixed') : t('menu.font')}
                     className={`w-full flex items-center justify-between gap-2 bg-white/5 hover:bg-white/10 rounded px-2 py-1 text-[11px] transition-colors ${
                         fontFamilyMixed ? 'text-white/55 italic' : 'text-white/85'
                     }`}
@@ -653,7 +657,7 @@ function FormatSection({ state, recentColors, onApply }: FormatSectionProps) {
                 <FormatToggle
                     active={isActive('bold')}
                     mixed={isMixed('bold')}
-                    label="Bold"
+                    label={t('menu.bold')}
                     onClick={() => onApply(togglePatch('bold'))}
                 >
                     <Bold size={12} strokeWidth={2.5} />
@@ -661,7 +665,7 @@ function FormatSection({ state, recentColors, onApply }: FormatSectionProps) {
                 <FormatToggle
                     active={isActive('italic')}
                     mixed={isMixed('italic')}
-                    label="Italic"
+                    label={t('menu.italic')}
                     onClick={() => onApply(togglePatch('italic'))}
                 >
                     <Italic size={12} strokeWidth={2.5} />
@@ -669,7 +673,7 @@ function FormatSection({ state, recentColors, onApply }: FormatSectionProps) {
                 <FormatToggle
                     active={isActive('underline')}
                     mixed={isMixed('underline')}
-                    label="Underline"
+                    label={t('menu.underline')}
                     onClick={() => onApply(togglePatch('underline'))}
                 >
                     <Underline size={12} strokeWidth={2.5} />
@@ -677,14 +681,14 @@ function FormatSection({ state, recentColors, onApply }: FormatSectionProps) {
                 <FormatToggle
                     active={isActive('strikethrough')}
                     mixed={isMixed('strikethrough')}
-                    label="Strikethrough"
+                    label={t('menu.strikethrough')}
                     onClick={() => onApply(togglePatch('strikethrough'))}
                 >
                     <Strikethrough size={12} strokeWidth={2.5} />
                 </FormatToggle>
                 <div className="w-px h-4 bg-white/10 mx-0.5" />
                 <button
-                    title="Clear formatting"
+                    title={t('menu.clear_formatting')}
                     onClick={() => onApply({
                         color: undefined, bold: undefined, italic: undefined,
                         underline: undefined, strikethrough: undefined, fontSize: undefined,
@@ -704,7 +708,7 @@ function FormatSection({ state, recentColors, onApply }: FormatSectionProps) {
                     <ColorSwatch key={c} color={c} active={state?.color === c} onClick={() => onApply({ color: c })} />
                 ))}
                 <button
-                    title="Custom color"
+                    title={t('menu.custom_color')}
                     onClick={() => colorInputRef.current?.click()}
                     className="w-5 h-5 rounded-full flex items-center justify-center border border-white/20 text-[10px] text-white/60 hover:text-white hover:border-white/50 relative overflow-hidden"
                     style={{

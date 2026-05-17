@@ -133,6 +133,7 @@ export function PromptEnhancer({
                   </div>
                 ) : (
                   <input
+                    dir="auto"
                     type="text"
                     placeholder={field.placeholder || 'Type values...'}
                     className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white/80 placeholder:text-white/30 focus:outline-none focus:border-purple-500/40"
@@ -145,6 +146,7 @@ export function PromptEnhancer({
             {/* Text input */}
             {field.type === 'text' && (
               <input
+                dir="auto"
                 type="text"
                 value={fieldValues[field.id] || ''}
                 placeholder={field.placeholder || ''}

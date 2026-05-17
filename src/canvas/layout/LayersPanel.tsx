@@ -1,6 +1,18 @@
 import React, { useMemo } from 'react';
 import { Eye, EyeOff, Lock, Unlock, X } from 'lucide-react';
 import { useCanvasStore } from '../state/canvasStore';
+import { t } from '../../i18n/strings';
+
+// Display name for known layer ids. Custom layer ids fall back to the raw
+// id (which is what the user named them).
+function layerDisplayName(id: string): string {
+    switch (id) {
+        case 'content': return t('canvas.layer_content');
+        case 'agent': return t('canvas.layer_agent');
+        case 'drawings': return t('canvas.layer_drawings');
+        default: return id;
+    }
+}
 
 interface Props {
     open: boolean;
@@ -34,7 +46,7 @@ export function LayersPanel({ open, onClose }: Props) {
     return (
         <div data-canvas-ui="1" className="absolute top-3 right-3 z-30 no-drag w-[200px] rounded-xl bg-[#12121a]/95 border border-white/10 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] overflow-hidden animate-in slide-in-from-right-2 fade-in duration-150">
             <div className="px-3 py-2 border-b border-white/5 flex items-center gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-white/60 flex-1">Layers</span>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-white/60 flex-1">{t('canvas_top.layers')}</span>
                 <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-white/40"><X size={12} /></button>
             </div>
             <div className="py-1">
@@ -57,7 +69,7 @@ export function LayersPanel({ open, onClose }: Props) {
                             >
                                 {locked ? <Lock size={11} /> : <Unlock size={11} />}
                             </button>
-                            <span className={`flex-1 text-[11px] truncate ${hidden ? 'text-white/30' : 'text-white/75'}`}>{layer}</span>
+                            <span className={`flex-1 text-[11px] truncate ${hidden ? 'text-white/30' : 'text-white/75'}`}>{layerDisplayName(layer)}</span>
                             <span className="text-[9px] text-white/30 tabular-nums">{count}</span>
                         </div>
                     );

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { DEEPSEEK_MODELS } from '../core/agent/modelAdapter';
 import { EvalRunner } from '../evals/EvalRunner';
+import { useLocale, t, type Locale } from '../i18n/strings';
 
 const PROVIDERS = [
   { id: 'claude', name: 'Claude', placeholder: 'sk-ant-...', color: 'text-orange-400' },
@@ -16,6 +17,7 @@ const keyApi = (provider: string, electron: any) => {
 };
 
 export const AgentSettings: React.FC = () => {
+  useLocale();
   const [provider, setProvider] = useState(() => localStorage.getItem('klypix:agentProvider') || 'claude');
   const [storedKey, setStoredKey] = useState('');
   const [deepseekModel, setDeepseekModel] = useState(() => {
@@ -52,13 +54,13 @@ export const AgentSettings: React.FC = () => {
   const saveKey = async (key: string) => {
     await keyApi(provider, electron)?.store(key);
     setStoredKey(`${key.slice(0, 7)}..${key.slice(-4)}`);
-    flash('Key saved');
+    flash(t('agent_settings.key_saved'));
   };
 
   const clearKey = async () => {
     await keyApi(provider, electron)?.clear();
     setStoredKey('');
-    flash('Key cleared');
+    flash(t('agent_settings.key_cleared'));
   };
 
   const currentProvider = PROVIDERS.find(p => p.id === provider);
@@ -66,25 +68,25 @@ export const AgentSettings: React.FC = () => {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-white">Agent Settings</h3>
+        <h3 className="text-sm font-semibold text-white">{t('agent_settings.title')}</h3>
         <label className="flex items-center gap-2 text-xs">
           <input
             type="checkbox" checked={enabled}
             onChange={e => { setEnabled(e.target.checked); electron?.agentSettings?.setEnabled(e.target.checked); }}
             className="w-3.5 h-3.5 accent-emerald-500"
           />
-          <span className="text-gray-400">{enabled ? 'Enabled' : 'Disabled'}</span>
+          <span className="text-gray-400">{enabled ? t('common.enabled') : t('common.disabled')}</span>
         </label>
       </div>
 
       {/* AI Provider Selector */}
       <div className="space-y-1.5">
-        <label className="text-xs text-gray-400">AI Provider</label>
+        <label className="text-xs text-gray-400">{t('agent_settings.ai_provider')}</label>
         <div className="grid grid-cols-2 gap-1.5">
           {PROVIDERS.map(p => (
             <button
               key={p.id}
-              onClick={() => { setProvider(p.id); localStorage.setItem('klypix:agentProvider', p.id); flash(`Switched to ${p.name}`); }}
+              onClick={() => { setProvider(p.id); localStorage.setItem('klypix:agentProvider', p.id); flash(`${t('agent_settings.switched_to')} ${p.name}`); }}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                 provider === p.id
                   ? 'bg-purple-500/20 border border-purple-500/40 text-purple-300'
@@ -100,12 +102,12 @@ export const AgentSettings: React.FC = () => {
       {/* DeepSeek model picker */}
       {provider === 'deepseek' && (
         <div className="space-y-1.5">
-          <label className="text-xs text-gray-400">DeepSeek Model</label>
+          <label className="text-xs text-gray-400">{t('agent_settings.deepseek_model')}</label>
           <div className="grid grid-cols-2 gap-1.5">
             {DEEPSEEK_MODELS.map(m => (
               <button
                 key={m.id}
-                onClick={() => { setDeepseekModel(m.id); localStorage.setItem('klypix:deepseekModel', m.id); flash(`Model: ${m.name}`); }}
+                onClick={() => { setDeepseekModel(m.id); localStorage.setItem('klypix:deepseekModel', m.id); flash(`${t('agent_settings.model')}: ${m.name}`); }}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all text-left ${
                   deepseekModel === m.id
                     ? 'bg-cyan-500/20 border border-cyan-500/40 text-cyan-300'
@@ -123,31 +125,31 @@ export const AgentSettings: React.FC = () => {
 
       {/* API Key */}
       <div className="space-y-1.5">
-        <label className="text-xs text-gray-400">{currentProvider?.name || 'API'} Key</label>
+        <label className="text-xs text-gray-400">{currentProvider?.name || 'API'} {t('agent_settings.key_suffix')}</label>
         <div className="flex gap-2">
           <input
-            type="password" placeholder={currentProvider?.placeholder || 'API key...'}
+            type="password" placeholder={currentProvider?.placeholder || t('agent_settings.api_key_placeholder')}
             onChange={e => { if (e.target.value.length > 10) saveKey(e.target.value); }}
             className="flex-1 px-3 py-1.5 bg-black/30 border border-white/10 rounded-lg text-white text-xs placeholder-gray-500"
           />
           {storedKey && (
-            <button onClick={clearKey} className="px-2 py-1.5 text-xs text-red-400 hover:text-red-300">Clear</button>
+            <button onClick={clearKey} className="px-2 py-1.5 text-xs text-red-400 hover:text-red-300">{t('common.clear')}</button>
           )}
         </div>
-        {storedKey && <p className="text-[10px] text-emerald-400">Stored: {storedKey}</p>}
+        {storedKey && <p className="text-[10px] text-emerald-400">{t('agent_settings.stored')}: {storedKey}</p>}
       </div>
 
       {/* Budget */}
       <div className="space-y-1.5">
-        <label className="text-xs text-gray-400">Daily Budget: ${budget.toFixed(2)}</label>
+        <label className="text-xs text-gray-400">{t('agent_settings.daily_budget')}: ${budget.toFixed(2)}</label>
         <input
           type="range" min="0.5" max="50" step="0.5" value={budget}
           onChange={e => { const v = parseFloat(e.target.value); setBudget(v); electron?.agentSettings?.setBudget(v); }}
           className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
         />
         <div className="flex justify-between text-[10px] text-gray-500">
-          <span>Today: ${dailySpend.toFixed(4)}</span>
-          <span>Budget: ${budget.toFixed(2)}</span>
+          <span>{t('agent_settings.today')}: ${dailySpend.toFixed(4)}</span>
+          <span>{t('agent_settings.budget')}: ${budget.toFixed(2)}</span>
         </div>
         <div className="w-full bg-gray-700 rounded-full h-1.5 overflow-hidden">
           <div
@@ -162,7 +164,7 @@ export const AgentSettings: React.FC = () => {
       {/* Cost History */}
       {costHistory.some(c => c > 0) && (
         <div className="space-y-1.5">
-          <label className="text-xs text-gray-400">Last 7 Days</label>
+          <label className="text-xs text-gray-400">{t('agent_settings.last_7_days')}</label>
           <div className="flex items-end gap-1 h-12">
             {costHistory.map((c, i) => {
               const max = Math.max(...costHistory, budget);
@@ -177,17 +179,55 @@ export const AgentSettings: React.FC = () => {
         </div>
       )}
 
+      {/* Language toggle — flips app to RTL when Arabic is picked. Stored
+          in localStorage as 'klypix:locale'; setLocale() in i18n/strings.ts
+          also updates document.documentElement.dir/lang so the whole tree
+          re-lays-out. */}
+      <LanguageToggleRow />
+
       {savedMsg && <p className="text-xs text-emerald-400">{savedMsg}</p>}
 
       {/* Eval Harness — gated behind a details toggle so it stays out of the way */}
       <details className="pt-2 border-t border-white/10">
         <summary className="text-xs text-gray-400 cursor-pointer hover:text-white py-1">
-          Eval Harness (Dev) — measure model swaps before you ship them
+          {t('agent_settings.eval_harness')}
         </summary>
         <div className="pt-3">
           <EvalRunner />
         </div>
       </details>
+    </div>
+  );
+};
+
+const LANGUAGES: { id: Locale; labelKey: 'settings.language.english' | 'settings.language.arabic' }[] = [
+  { id: 'en', labelKey: 'settings.language.english' },
+  { id: 'ar', labelKey: 'settings.language.arabic' },
+];
+
+const LanguageToggleRow: React.FC = () => {
+  const [locale, setLocaleFn] = useLocale();
+  return (
+    <div className="space-y-1.5">
+      <label className="text-xs text-gray-400">{t('settings.language.label')}</label>
+      <div className="grid grid-cols-2 gap-1.5">
+        {LANGUAGES.map(lang => (
+          <button
+            key={lang.id}
+            onClick={() => setLocaleFn(lang.id)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              locale === lang.id
+                ? 'bg-purple-500/20 border border-purple-500/40 text-purple-300'
+                : 'bg-white/5 border border-white/10 text-gray-500 hover:text-white/70 hover:bg-white/10'
+            }`}
+            // Reset direction on the button itself so the Arabic label still
+            // reads naturally regardless of the app-level dir attribute.
+            dir={lang.id === 'ar' ? 'rtl' : 'ltr'}
+          >
+            {t(lang.labelKey)}
+          </button>
+        ))}
+      </div>
     </div>
   );
 };

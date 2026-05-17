@@ -3,6 +3,7 @@ import { X, Filter, Tag as TagIcon, CircleDot, ChevronRight, Type, Square, Image
 import { useCanvasStore } from '../state/canvasStore';
 import type { ItemStatus, CanvasItem } from '../items/types';
 import { fitToViewport, itemsBounds } from '../CanvasEngine';
+import { t } from '../../i18n/strings';
 
 interface Props {
     open: boolean;
@@ -134,7 +135,7 @@ export function SmartCollectionsPanel({ open, onClose }: Props) {
         <div data-canvas-ui="1" className="absolute top-3 right-3 bottom-16 z-30 no-drag w-[260px] rounded-xl bg-[#12121a]/95 border border-white/10 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden animate-in slide-in-from-right-2 fade-in duration-150">
             <div className="px-3 py-2 border-b border-white/5 flex items-center gap-2">
                 <Filter size={12} className="text-emerald-400" />
-                <span className="text-[10px] font-bold uppercase tracking-widest text-white/60 flex-1">Smart collections</span>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-white/60 flex-1">{t('canvas_top.smart_collections')}</span>
                 <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-white/40"><X size={12} /></button>
             </div>
 
@@ -142,7 +143,7 @@ export function SmartCollectionsPanel({ open, onClose }: Props) {
                 <section>
                     <div className="flex items-center gap-1.5 mb-2 text-[10px] uppercase tracking-wider text-white/40">
                         <CircleDot size={11} />
-                        <span className="flex-1">Status</span>
+                        <span className="flex-1">{t('canvas.sc_status')}</span>
                         {state.statusFilterHidden.length > 0 && (
                             <button
                                 onClick={() => dispatch({ type: 'SET_STATUS_FILTER_HIDDEN', statuses: [] })}
@@ -154,7 +155,7 @@ export function SmartCollectionsPanel({ open, onClose }: Props) {
                         )}
                     </div>
                     {statusCounts.length === 0 && (
-                        <div className="text-[11px] text-white/30 italic">No statuses set yet. Right-click any item → Set status.</div>
+                        <div className="text-[11px] text-white/30 italic">{t('canvas.sc_no_status')}</div>
                     )}
                     <div className="flex flex-col gap-0.5">
                         {statusCounts.map(([status, count]) => {
@@ -225,10 +226,10 @@ export function SmartCollectionsPanel({ open, onClose }: Props) {
                 <section>
                     <div className="flex items-center gap-1.5 mb-2 text-[10px] uppercase tracking-wider text-white/40">
                         <TagIcon size={11} />
-                        <span>Tags</span>
+                        <span>{t('canvas.sc_tags')}</span>
                     </div>
                     {tagCounts.length === 0 && (
-                        <div className="text-[11px] text-white/30 italic">No tags yet. Drop a file — auto-tagger fills these in.</div>
+                        <div className="text-[11px] text-white/30 italic">{t('canvas.sc_no_tags')}</div>
                     )}
                     <div className="flex flex-col gap-0.5">
                         {tagCounts.map(([tag, count]) => {

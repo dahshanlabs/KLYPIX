@@ -98,8 +98,9 @@ export function CommandBar({ open, onClose, onToast, onProgress, onError }: Prop
                 <div className="flex items-center gap-2 px-4 py-3">
                     <span className="text-emerald-400 text-lg font-bold leading-none">/</span>
                     <input
+                        dir="auto"
                         ref={inputRef}
-                        className="flex-1 bg-transparent outline-none text-white/90 text-[15px] placeholder-white/30 font-[Outfit,system-ui,sans-serif]"
+                        className="flex-1 bg-transparent outline-none text-white/90 text-[15px] placeholder-white/30 font-[Thmanyah_Sans,system-ui,sans-serif]"
                         placeholder={busy ? 'thinking…' : 'ask the agent, or pick a command below'}
                         value={input}
                         disabled={busy}

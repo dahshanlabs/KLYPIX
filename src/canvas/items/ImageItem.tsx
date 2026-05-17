@@ -1,6 +1,7 @@
 import React from 'react';
 import type { ImageItem as ImageItemType } from './types';
 import { ResizeHandle } from '../interaction/ResizeHandle';
+import { RotateHandle } from '../interaction/RotateHandle';
 import { getAsset } from '../file/assetRegistry';
 import { useCanvasStore } from '../state/canvasStore';
 
@@ -32,6 +33,7 @@ function ImageItemViewImpl({ item, selected }: Props) {
     const effectiveAssetId = useThumbnail ? item.thumbnailAssetId : item.assetId;
     const blobUrl = effectiveAssetId ? getAsset(effectiveAssetId)?.blobUrl : undefined;
     const imgSrc = blobUrl || (item.assetId ? getAsset(item.assetId)?.blobUrl : undefined) || item.src || '';
+    const rotation = item.rotation ?? 0;
     const style: React.CSSProperties = {
         position: 'absolute',
         left: item.x,
@@ -45,6 +47,8 @@ function ImageItemViewImpl({ item, selected }: Props) {
             : '0 4px 16px rgba(0,0,0,0.35)',
         pointerEvents: 'auto',
         WebkitAppRegion: 'no-drag',
+        transform: rotation ? `rotate(${rotation}deg)` : undefined,
+        transformOrigin: 'center',
     } as React.CSSProperties & { WebkitAppRegion?: string };
 
     return (
@@ -71,6 +75,14 @@ function ImageItemViewImpl({ item, selected }: Props) {
                     x={item.x} y={item.y} w={item.w} h={item.h}
                     preserveAspect
                     minW={40} minH={40}
+                    rotation={rotation}
+                />
+            )}
+            {selected && (
+                <RotateHandle
+                    itemId={item.id}
+                    x={item.x} y={item.y} w={item.w} h={item.h}
+                    rotation={rotation}
                 />
             )}
         </>

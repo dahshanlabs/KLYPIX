@@ -37,7 +37,7 @@ function CanvasLinkItemViewImpl({ item, selected }: Props) {
         flexDirection: 'column',
         padding: 12,
         gap: 6,
-        fontFamily: 'Outfit, system-ui, sans-serif',
+        fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
         color: '#e8e8ed',
         pointerEvents: 'auto',
         cursor: 'pointer',

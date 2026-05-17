@@ -1,5 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Shield, CheckCircle, XCircle } from 'lucide-react';
+import { t, useLocale } from '../i18n/strings';
+
+const RISK_LABEL_KEY = {
+  safe: 'sandbox.risk.safe',
+  moderate: 'sandbox.risk.moderate',
+  dangerous: 'sandbox.risk.dangerous',
+  blocked: 'sandbox.risk.blocked',
+} as const;
 
 interface ApprovalRequest {
   command: string;
@@ -37,6 +45,7 @@ const RISK_STYLES: Record<string, { bg: string; border: string; text: string; ic
 };
 
 export function SandboxApprovalDialog() {
+  useLocale();
   const [request, setRequest] = useState<ApprovalRequest | null>(null);
   const [streamLines, setStreamLines] = useState<Array<{ type: 'stdout' | 'stderr'; line: string }>>([]);
   const [running, setRunning] = useState(false);
@@ -91,7 +100,7 @@ export function SandboxApprovalDialog() {
             {style.icon}
             <div className="flex-1 min-w-0">
               <p className={`${style.text} text-[11px] font-medium uppercase tracking-wider`}>
-                Sandbox Command — {request.riskLevel}
+                {t('sandbox.command_label')} — {t(RISK_LABEL_KEY[request.riskLevel])}
               </p>
               <p className="text-white/80 text-[13px] mt-0.5">{request.description}</p>
             </div>
@@ -107,14 +116,14 @@ export function SandboxApprovalDialog() {
               onClick={handleDeny}
               className="px-3 py-1 text-xs rounded-lg bg-white/5 border border-white/10 text-white/70 hover:bg-red-500/15 hover:border-red-500/30 hover:text-red-300 transition-all cursor-pointer"
             >
-              Deny
+              {t('permission.deny')}
             </button>
             <button
               onClick={handleAllow}
               disabled={request.riskLevel === 'blocked'}
               className="px-3 py-1 text-xs rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/30 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Allow
+              {t('permission.allow')}
             </button>
           </div>
         </div>
@@ -125,7 +134,7 @@ export function SandboxApprovalDialog() {
         <div className="bg-black/40 border border-white/10 rounded-xl p-2 animate-slideIn">
           <div className="flex items-center justify-between mb-1 px-1">
             <span className="text-[10px] text-white/40 uppercase tracking-wider">
-              {running ? 'Running…' : 'Output'}
+              {running ? t('sandbox.running') : t('sandbox.output')}
             </span>
             {running && (
               <span className="flex gap-0.5">

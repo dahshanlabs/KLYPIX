@@ -305,6 +305,31 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
             hitLineId = hitTestLine(world, allowedLines, zoomInv);
             if (!hitLineId) hitStrokeId = hitTestStroke(world, allowedStrokes, zoomInv);
 
+            // Atomic-group rule for drawings — same as items at L242-253.
+            // A stroke/line parented to a non-focused container promotes
+            // to the topmost container ancestor, so children stay trapped
+            // until the user double-clicks to enter focus mode. Without
+            // this, drawings (unlike items) bypassed the group lock and
+            // could be dragged out of their group on a single click.
+            if (!focusedId && (hitLineId || hitStrokeId)) {
+                const drawingParent = hitLineId
+                    ? s.lines[hitLineId]?.parentId
+                    : s.strokes[hitStrokeId!]?.parentId;
+                if (drawingParent) {
+                    let cur: CanvasItem | undefined = s.items[drawingParent];
+                    let topContainer: CanvasItem | undefined = undefined;
+                    while (cur) {
+                        if (cur.type === 'container') topContainer = cur;
+                        cur = cur.parentId ? s.items[cur.parentId] : undefined;
+                    }
+                    if (topContainer) {
+                        hit = topContainer;
+                        hitLineId = null;
+                        hitStrokeId = null;
+                    }
+                }
+            }
+
             // Resolve by zKey: if both an item AND a drawing are under the
             // pointer, whichever has the higher zKey wins. Tie-break via >=
             // so drawings beat items when both lack zKey — that matches
@@ -872,13 +897,21 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
                 return;
             }
             if (connectPendingId === hit.id) return; // don't self-connect
+            // Connection default width is INTENTIONALLY decoupled from
+            // s.strokeWidth (the pen-tool slider). Pen-tool default went
+            // up to 5px to feel like a marker stroke; arrows want to stay
+            // delicate next to small items — a 5px arrow looked chunky
+            // and dominated the canvas. 2 matches the historic arrow
+            // weight; per-connection width can be tuned later if we add
+            // a connection-style panel.
+            const CONNECTION_DEFAULT_WIDTH = 2;
             const conn: Connection = {
                 id: newId('conn'),
                 fromId: connectPendingId,
                 toId: hit.id,
                 label: '',
                 color: s.color,
-                width: s.strokeWidth,
+                width: CONNECTION_DEFAULT_WIDTH,
                 arrowHead: true,
                 style: 'solid',
                 createdBy: 'user',
@@ -1606,14 +1639,32 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
                 // Drawings inside the marquee: include lines/strokes whose
                 // bbox intersects the rect. Dispatched separately because
                 // they live in their own selection buckets — SELECT carries
-                // items only.
+                // items only. Same atomic-group promotion as items: a
+                // drawing inside a non-focused container is swapped for
+                // the container itself.
+                const promoteDrawingParent = (parentId: string | null | undefined): string | null => {
+                    if (!parentId || focusedId) return null;
+                    let cur: CanvasItem | undefined = s.items[parentId];
+                    let top: CanvasItem | undefined = undefined;
+                    while (cur) {
+                        if (cur.type === 'container') top = cur;
+                        cur = cur.parentId ? s.items[cur.parentId] : undefined;
+                    }
+                    return top ? top.id : null;
+                };
                 const hitLineIds: string[] = [];
                 for (const [id, ln] of Object.entries(s.lines)) {
-                    if (rectsIntersect(lineBounds(ln), marqueeRect)) hitLineIds.push(id);
+                    if (!rectsIntersect(lineBounds(ln), marqueeRect)) continue;
+                    const containerId = promoteDrawingParent(ln.parentId);
+                    if (containerId) hitSet.add(containerId);
+                    else hitLineIds.push(id);
                 }
                 const hitStrokeIds: string[] = [];
                 for (const [id, st] of Object.entries(s.strokes)) {
-                    if (rectsIntersect(strokeBounds(st), marqueeRect)) hitStrokeIds.push(id);
+                    if (!rectsIntersect(strokeBounds(st), marqueeRect)) continue;
+                    const containerId = promoteDrawingParent(st.parentId);
+                    if (containerId) hitSet.add(containerId);
+                    else hitStrokeIds.push(id);
                 }
                 // CLEAR first so the three SELECT_* dispatches compose
                 // cleanly via additive:true instead of each one clobbering

@@ -144,28 +144,28 @@ function ConnectionsLayerImpl({ connections, items, hiddenIds, selectedIds, onPi
                     (emerald/blue/…) are kept below for backward compat
                     so existing connections that reference them still
                     render until they're re-picked by getMarkerId. */}
-                <marker id="klpx-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <marker id="klpx-arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" />
                 </marker>
-                <marker id="klpx-arrow-emerald" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <marker id="klpx-arrow-emerald" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" fill="#10b981" />
                 </marker>
-                <marker id="klpx-arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <marker id="klpx-arrow-blue" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" fill="#3b82f6" />
                 </marker>
-                <marker id="klpx-arrow-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <marker id="klpx-arrow-purple" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" fill="#a855f7" />
                 </marker>
-                <marker id="klpx-arrow-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <marker id="klpx-arrow-gray" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" fill="#9ca3af" />
                 </marker>
-                <marker id="klpx-arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <marker id="klpx-arrow-red" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" fill="#ef4444" />
                 </marker>
-                <marker id="klpx-arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <marker id="klpx-arrow-amber" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" fill="#f59e0b" />
                 </marker>
-                <marker id="klpx-arrow-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <marker id="klpx-arrow-orange" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" fill="#f97316" />
                 </marker>
             </defs>
@@ -179,7 +179,6 @@ function ConnectionsLayerImpl({ connections, items, hiddenIds, selectedIds, onPi
                 if (hiddenIds && (hiddenIds.has(c.fromId) || hiddenIds.has(c.toId))) return null;
                 const aRect = rectOf(a);
                 const bRect = rectOf(b);
-                const path = bezierBetween(aRect, bRect);
                 const isSelected = selectedIds?.has(c.id) ?? false;
                 const rel = styleForConnection(c);
                 // Stroke color: explicit c.color wins (user-customized connection),
@@ -201,12 +200,18 @@ function ConnectionsLayerImpl({ connections, items, hiddenIds, selectedIds, onPi
                 // heavily-shrunk group scales.
                 const baseWidth = (c.width || 2) + rel.widthBoost;
                 const width = baseWidth * connScale + (isSelected ? 1.5 : 0);
-                const mid = midpoint(aRect, bRect);
+                // Path geometry uses the SAME width the visible stroke
+                // renders at, so the apex-offset stays in sync with the
+                // actual stroke (apex sits at rect edge regardless of
+                // line thickness).
+                const hasArrowEnd = !!c.arrowHead;
+                const path = bezierBetween(aRect, bRect, hasArrowEnd, width);
+                const mid = midpoint(aRect, bRect, hasArrowEnd, width);
                 // Arrow marker inherits the path's stroke color via the
                 // context-stroke marker. Prior behavior locked user-colored
                 // connections to an emerald arrowhead regardless of the
                 // line color, which was visibly wrong.
-                const arrowMarker = !c.arrowHead ? undefined : 'klpx-arrow';
+                const arrowMarker = !hasArrowEnd ? undefined : 'klpx-arrow';
                 return (
                     <g key={c.id}>
                         {/* Invisible wide stroke for click targeting — makes
@@ -270,7 +275,7 @@ function ConnectionsLayerImpl({ connections, items, hiddenIds, selectedIds, onPi
             })}
             {hasPreview && previewFrom && previewToWorld && (
                 <path
-                    d={bezierToPoint(rectOf(previewFrom), previewToWorld)}
+                    d={bezierToPoint(rectOf(previewFrom), previewToWorld, previewWidth ?? 2)}
                     stroke={previewColor ?? '#10b981'}
                     strokeWidth={previewWidth ?? 2}
                     strokeDasharray="6 4"
@@ -287,24 +292,44 @@ function rectCenter(r: Rect) {
     return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
 }
 
-/** Point on the rect's border along the line from the rect's center
- *  toward (tx, ty). Used so connections anchor to the edge of each
- *  endpoint instead of the center. */
-function edgePointTowardRect(r: Rect, tx: number, ty: number): { x: number; y: number } {
+/** Snap the connection anchor to the MIDPOINT of one of the rect's
+ *  four cardinal sides (top, right, bottom, left), picked by which
+ *  side is "facing" (tx, ty). Replaces the previous arbitrary-edge-
+ *  point math (which landed the arrow at any point along the edge
+ *  the center-to-center line happened to cross — looked off-center,
+ *  especially for text items where the bbox includes invisible
+ *  padding). Side-midpoint snapping gives the Miro / diagramming-
+ *  tool look: every arrow attaches perpendicular to one of 4 well-
+ *  defined points on each shape, which reads as deliberate and tidy.
+ *
+ *  Side choice rule: compare the horizontal-vs-vertical "pull" of
+ *  the target point against the rect's aspect ratio. Wider rects
+ *  need a steeper diagonal before preferring top/bottom over
+ *  left/right — without aspect-weighting, a long thin shape would
+ *  flip to its short sides on tiny vertical offsets. */
+function sideAnchorToward(r: Rect, tx: number, ty: number): { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left' } {
     const cx = r.x + r.w / 2;
     const cy = r.y + r.h / 2;
     const dx = tx - cx;
     const dy = ty - cy;
-    if (dx === 0 && dy === 0) return { x: cx, y: cy };
+    // Default to the right side if the other point is exactly on the
+    // center (degenerate; arrow has no direction). Picks a stable side
+    // instead of NaN-ing.
+    if (dx === 0 && dy === 0) return { x: r.x + r.w, y: cy, side: 'right' };
+    // Aspect-weighted comparison: |dx|/halfW vs |dy|/halfH. Whichever
+    // crosses the boundary first determines the dominant side.
     const hw = r.w / 2;
     const hh = r.h / 2;
-    // Parametric line: center + t × (dx, dy). Smallest t that hits
-    // either the vertical or horizontal edge wins. Infinity-clamp a
-    // zero delta so the OTHER axis wins.
-    const tX = dx === 0 ? Infinity : hw / Math.abs(dx);
-    const tY = dy === 0 ? Infinity : hh / Math.abs(dy);
-    const t = Math.min(tX, tY);
-    return { x: cx + dx * t, y: cy + dy * t };
+    if (Math.abs(dx) * hh > Math.abs(dy) * hw) {
+        // Horizontal dominant → left or right side midpoint.
+        return dx > 0
+            ? { x: r.x + r.w, y: cy, side: 'right' }
+            : { x: r.x,        y: cy, side: 'left' };
+    }
+    // Vertical dominant → top or bottom side midpoint.
+    return dy > 0
+        ? { x: cx, y: r.y + r.h, side: 'bottom' }
+        : { x: cx, y: r.y,        side: 'top' };
 }
 
 /** Handle magnitude along the line from p1 to p2 — used by the cubic
@@ -316,45 +341,115 @@ function handleMag(p1: { x: number; y: number }, p2: { x: number; y: number }): 
     return Math.max(40, Math.abs(dx) * 0.5);
 }
 
+/** Build the cubic-bezier control points for an arrow that LEAVES the
+ *  source side perpendicular to the side and ARRIVES at the target side
+ *  perpendicular. For 'left'/'right' sides the handle extends horizontally;
+ *  for 'top'/'bottom' it extends vertically. Gives the curve a clean
+ *  "out from the side, into the side" feel instead of the previous
+ *  always-horizontal handles (which kinked when arrows attached to
+ *  top/bottom sides). */
+function handleForSide(p: { x: number; y: number }, side: 'top' | 'right' | 'bottom' | 'left', mag: number): { cx: number; cy: number } {
+    switch (side) {
+        case 'right':  return { cx: p.x + mag, cy: p.y };
+        case 'left':   return { cx: p.x - mag, cy: p.y };
+        case 'bottom': return { cx: p.x, cy: p.y + mag };
+        case 'top':    return { cx: p.x, cy: p.y - mag };
+    }
+}
+
+/** Push a side anchor point OUTWARD from the rect by `offset` path-units
+ *  along the side's perpendicular. Used to position the path endpoint
+ *  outside the rect so the arrow marker (refX=5) has room to extend its
+ *  apex back to the rect edge without burying it inside. Without this
+ *  offset, with refX=5 the apex would stab ~15px into the target item;
+ *  with the offset, the apex sits exactly on the rect's side. */
+function pushOutward(anchor: { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left' }, offset: number): { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left' } {
+    switch (anchor.side) {
+        case 'top':    return { x: anchor.x, y: anchor.y - offset, side: anchor.side };
+        case 'bottom': return { x: anchor.x, y: anchor.y + offset, side: anchor.side };
+        case 'left':   return { x: anchor.x - offset, y: anchor.y, side: anchor.side };
+        case 'right':  return { x: anchor.x + offset, y: anchor.y, side: anchor.side };
+    }
+}
+
+/** Path-units to push the path endpoint OUTSIDE the target rect so the
+ *  arrow marker's apex lands at the rect edge. Derived from the marker
+ *  geometry: refX=5 in a viewBox of 10 means the apex is 5 marker-units
+ *  past the path endpoint along the tangent. Marker is scaled by
+ *  markerWidth=6 stroke-units / viewBoxWidth=10 = 0.6 stroke-units per
+ *  viewBox unit. So apex-past-endpoint distance = 5 × 0.6 × strokeWidth
+ *  = 3 × strokeWidth path-units. */
+function arrowApexOffset(strokeWidth: number): number {
+    return 3 * Math.max(1, strokeWidth);
+}
+
 /** Midpoint of the cubic bezier at t=0.5 — used to anchor the
  *  relationship icon on top of the arrow. Takes RECTs (rendered
  *  bounds) so collapsed containers anchor to the capsule, not the
  *  phantom expanded frame. */
-function midpoint(a: Rect, b: Rect): { x: number; y: number } {
+function midpoint(a: Rect, b: Rect, hasArrowEnd: boolean, strokeWidth: number): { x: number; y: number } {
     const centerA = rectCenter(a);
     const centerB = rectCenter(b);
-    const p1 = edgePointTowardRect(a, centerB.x, centerB.y);
-    const p2 = edgePointTowardRect(b, centerA.x, centerA.y);
-    const dir = p2.x >= p1.x ? 1 : -1;
-    const h = handleMag(p1, p2);
-    const c1x = p1.x + dir * h;
-    const c2x = p2.x - dir * h;
-    const x = (p1.x + 3 * c1x + 3 * c2x + p2.x) / 8;
-    const y = (p1.y + 3 * p1.y + 3 * p2.y + p2.y) / 8;
+    const p1 = sideAnchorToward(a, centerB.x, centerB.y);
+    const p2Anchor = sideAnchorToward(b, centerA.x, centerA.y);
+    // Match the endpoint offset bezierBetween uses so the icon stays
+    // anchored to the actual rendered path midpoint.
+    const p2 = hasArrowEnd ? pushOutward(p2Anchor, arrowApexOffset(strokeWidth)) : p2Anchor;
+    const mag = handleMag(p1, p2);
+    const h1 = handleForSide(p1, p1.side, mag);
+    const h2 = handleForSide(p2, p2.side, mag);
+    // Bezier midpoint at t=0.5: (p1 + 3·c1 + 3·c2 + p2) / 8
+    const x = (p1.x + 3 * h1.cx + 3 * h2.cx + p2.x) / 8;
+    const y = (p1.y + 3 * h1.cy + 3 * h2.cy + p2.y) / 8;
     return { x, y };
 }
 
-/** S-curve between the two rect EDGES. Arrowhead lands on the target
- *  rect's border, not its interior. */
-function bezierBetween(a: Rect, b: Rect): string {
+/** S-curve between the two rect SIDES. Arrow leaves the source side
+ *  perpendicular and lands on the target side perpendicular — Miro-
+ *  style edge anchoring with clean orthogonal handles.
+ *
+ *  When the connection has an arrow head at the end (hasArrowEnd=true),
+ *  the target endpoint is pushed OUTWARD from the rect by the marker's
+ *  apex offset. Combined with marker refX=5, this puts the visual
+ *  arrow tip exactly at the rect edge AND ensures the marker's body
+ *  (which is widest at the middle, narrowest at the apex) is wider
+ *  than the path stroke at every point the stroke renders — so the
+ *  line is fully swallowed by the arrow head with no edges peeking out. */
+function bezierBetween(a: Rect, b: Rect, hasArrowEnd: boolean, strokeWidth: number): string {
     const centerA = rectCenter(a);
     const centerB = rectCenter(b);
-    const p1 = edgePointTowardRect(a, centerB.x, centerB.y);
-    const p2 = edgePointTowardRect(b, centerA.x, centerA.y);
-    const dir = p2.x >= p1.x ? 1 : -1;
-    const h = handleMag(p1, p2);
-    const c1x = p1.x + dir * h;
-    const c2x = p2.x - dir * h;
-    return `M ${p1.x} ${p1.y} C ${c1x} ${p1.y}, ${c2x} ${p2.y}, ${p2.x} ${p2.y}`;
+    const p1 = sideAnchorToward(a, centerB.x, centerB.y);
+    const p2Anchor = sideAnchorToward(b, centerA.x, centerA.y);
+    const p2 = hasArrowEnd ? pushOutward(p2Anchor, arrowApexOffset(strokeWidth)) : p2Anchor;
+    const mag = handleMag(p1, p2);
+    const h1 = handleForSide(p1, p1.side, mag);
+    const h2 = handleForSide(p2, p2.side, mag);
+    return `M ${p1.x} ${p1.y} C ${h1.cx} ${h1.cy}, ${h2.cx} ${h2.cy}, ${p2.x} ${p2.y}`;
 }
 
-/** Bezier from rect edge to an arbitrary world point — used for
- *  rubber-band preview while the user is picking the second endpoint. */
-function bezierToPoint(a: Rect, p: { x: number; y: number }): string {
-    const p1 = edgePointTowardRect(a, p.x, p.y);
-    const dir = p.x >= p1.x ? 1 : -1;
-    const h = handleMag(p1, p);
-    const c1x = p1.x + dir * h;
-    const c2x = p.x - dir * h;
-    return `M ${p1.x} ${p1.y} C ${c1x} ${p1.y}, ${c2x} ${p.y}, ${p.x} ${p.y}`;
+/** Bezier from rect side to an arbitrary world point — used for
+ *  rubber-band preview while the user is picking the second endpoint.
+ *  Source side picked the same way as committed arrows; target end is
+ *  a free point with a horizontal handle (no side to perpendicular-to).
+ *  Preview always shows the arrow marker, so push the cursor endpoint
+ *  slightly back from the cursor in the tangent direction to match the
+ *  committed-arrow apex-offset look. */
+function bezierToPoint(a: Rect, p: { x: number; y: number }, strokeWidth: number): string {
+    const p1 = sideAnchorToward(a, p.x, p.y);
+    const mag = handleMag(p1, p);
+    const h1 = handleForSide(p1, p1.side, mag);
+    // Pull the cursor end toward p1 horizontally so the preview curve
+    // doesn't fishhook at weird angles. Also shorten the path by the
+    // arrow apex offset so the marker's tip aligns with the actual
+    // cursor position rather than overshooting it.
+    const dx = p.x - p1.x;
+    const dir = dx >= 0 ? -1 : 1;
+    const apexOffset = arrowApexOffset(strokeWidth);
+    const dxFromP1 = p.x - p1.x;
+    const dyFromP1 = p.y - p1.y;
+    const dist = Math.sqrt(dxFromP1 * dxFromP1 + dyFromP1 * dyFromP1) || 1;
+    const endX = p.x - (dxFromP1 / dist) * apexOffset;
+    const endY = p.y - (dyFromP1 / dist) * apexOffset;
+    const h2 = { cx: endX + dir * mag, cy: endY };
+    return `M ${p1.x} ${p1.y} C ${h1.cx} ${h1.cy}, ${h2.cx} ${h2.cy}, ${endX} ${endY}`;
 }

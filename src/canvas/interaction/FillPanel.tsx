@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { CustomColorPick } from './CustomColorPick';
+import { t, useLocale } from '../../i18n/strings';
 
 const cn = (...inputs: ClassValue[]) => twMerge(clsx(inputs));
 
@@ -34,6 +35,7 @@ interface Props {
 }
 
 export const FillPanel = React.forwardRef<HTMLDivElement, Props>(function FillPanel(props, ref) {
+    useLocale();
     const {
         fillColor, fillEnabled, opacity, recentColors,
         onPreviewColor, onCommitColor,
@@ -145,7 +147,7 @@ export const FillPanel = React.forwardRef<HTMLDivElement, Props>(function FillPa
             }}
         >
             <div className="flex flex-col">
-                <Section title="Fill">
+                <Section title={t('panel.fill')}>
                     <button
                         onClick={() => { cancelRevert(); if (noFillActive) onCommitFillOn(); else onCommitFillOff(); }}
                         onMouseEnter={() => { if (!noFillActive) { cancelRevert(); onPreviewFillOff(); } }}
@@ -168,7 +170,7 @@ export const FillPanel = React.forwardRef<HTMLDivElement, Props>(function FillPa
                                 }}
                             />
                         </span>
-                        No fill
+                        {t('panel.no_fill')}
                     </button>
                 </Section>
 
@@ -183,7 +185,7 @@ export const FillPanel = React.forwardRef<HTMLDivElement, Props>(function FillPa
                     aria-hidden={recentColors.length === 0}
                 >
                     <div className="overflow-hidden">
-                        <Section title="Recent">
+                        <Section title={t('panel.recent')}>
                             <ColorRow
                                 colors={recentColors}
                                 active={fillEnabled === true ? fillColor : undefined}
@@ -196,7 +198,7 @@ export const FillPanel = React.forwardRef<HTMLDivElement, Props>(function FillPa
                     </div>
                 </div>
 
-                <Section title="Palette">
+                <Section title={t('panel.palette')}>
                     <ColorRow
                         colors={PALETTE_COLORS}
                         active={fillEnabled === true ? fillColor : undefined}
@@ -207,13 +209,13 @@ export const FillPanel = React.forwardRef<HTMLDivElement, Props>(function FillPa
                         onCustomCommit={onCommitColor}
                     />
                     {fillEnabled === undefined && (
-                        <div className="text-[10px] text-white/35 mt-1">Mixed</div>
+                        <div className="text-[10px] text-white/35 mt-1">{t('panel.mixed')}</div>
                     )}
                 </Section>
 
                 <Divider />
 
-                <Section title="Opacity">
+                <Section title={t('panel.opacity')}>
                     <input
                         type="range"
                         min={0.1}
@@ -226,7 +228,7 @@ export const FillPanel = React.forwardRef<HTMLDivElement, Props>(function FillPa
                         className={cn('w-full accent-emerald-500', mixedOpacity && 'opacity-50')}
                     />
                     <div className="text-[10px] text-white/50 text-right mt-1">
-                        {mixedOpacity ? 'Mixed' : `${Math.round(sliderOpacityValue * 100)}%`}
+                        {mixedOpacity ? t('panel.mixed') : `${Math.round(sliderOpacityValue * 100)}%`}
                     </div>
                 </Section>
 

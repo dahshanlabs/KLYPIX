@@ -51,6 +51,7 @@ export function InlinePrompt({
             >
                 <div className="text-[13px] font-medium text-white/80 mb-2">{title}</div>
                 <input
+                    dir="auto"
                     ref={inputRef}
                     type="text"
                     value={value}

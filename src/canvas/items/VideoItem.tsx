@@ -152,7 +152,7 @@ function VideoItemViewImpl({ item, selected }: Props) {
                         gap: 8,
                         background: '#12121a',
                         borderTop: '1px solid rgba(255,255,255,0.05)',
-                        fontFamily: 'Outfit, system-ui, sans-serif',
+                        fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
                     }}
                 >
                     <button

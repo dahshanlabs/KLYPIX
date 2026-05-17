@@ -72,7 +72,14 @@ export function KlypixMascot({ onScreenEnabled, agentMode, onToggleOnScreen, onT
     const eyesWidth = 34;
 
     return (
-        <div className={`flex-shrink-0 no-drag ${className}`} style={{ marginTop: agentMode ? 10 : 4 }}>
+        // Force LTR direction on the mascot wrapper. Several inner layers
+        // use `position: absolute` without explicit left/right (e.g. the
+        // iris div at the top of `eye`), which makes their static position
+        // shift to the right edge of the eye box under RTL inheritance —
+        // the iris ends up rendered outside its parent and the eyes look
+        // empty. The mascot is graphics, not text; direction has no
+        // semantic meaning here, so pinning ltr is the cleanest fix.
+        <div dir="ltr" className={`flex-shrink-0 no-drag ${className}`} style={{ marginTop: agentMode ? 10 : 4 }}>
             <div className="flex flex-col items-center gap-1">
                 {/* Main mascot area — includes helmet/antenna + eyes + corners */}
                 <div className="relative cursor-default" title={

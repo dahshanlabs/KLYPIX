@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { X, Stamp, Trash2 } from 'lucide-react';
 import { useCanvasStore } from '../state/canvasStore';
 import { deleteTemplate, listTemplates, stampTemplate, type Template } from '../file/templates';
+import { t } from '../../i18n/strings';
 
 interface Props {
     open: boolean;
@@ -33,57 +34,76 @@ export function TemplatesPanel({ open, onClose }: Props) {
     };
 
     const remove = (tpl: Template) => {
-        if (!window.confirm(`Delete template "${tpl.name}"?`)) return;
+        if (!window.confirm(`${t('canvas.template.delete_q')} "${tpl.name}"?`)) return;
         deleteTemplate(tpl.id);
         setTemplates(listTemplates());
     };
 
     if (!open) return null;
 
+    // Map built-in template ids → i18n key. User-named templates use
+    // their stored name (which the user picked).
+    const displayName = (tpl: Template): string => {
+        if (!tpl.isBuiltin) return tpl.name;
+        switch (tpl.id) {
+            case 'builtin_sticky_note': return t('canvas.template_sticky_note');
+            case 'builtin_pros_cons': return t('canvas.template_pros_cons');
+            case 'builtin_kanban': return t('canvas.template_kanban');
+            default: return tpl.name;
+        }
+    };
+
     return (
         <div data-canvas-ui="1" className="absolute top-3 right-3 bottom-16 z-30 no-drag w-[280px] rounded-xl bg-[#12121a]/95 border border-white/10 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden animate-in slide-in-from-right-2 fade-in duration-150">
             <div className="px-3 py-2 border-b border-white/5 flex items-center gap-2">
                 <Stamp size={12} className="text-emerald-400" />
-                <span className="text-[10px] font-bold uppercase tracking-widest text-white/60 flex-1">Templates</span>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-white/60 flex-1">{t('canvas_top.templates')}</span>
                 <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-white/40"><X size={12} /></button>
             </div>
             <div className="flex-1 overflow-y-auto">
                 {templates.length === 0 && (
                     <div className="p-3 text-[11px] text-white/40 italic">
-                        No templates yet. Select items on the canvas and right-click → "Save as template…" to add one.
+                        {t('canvas.outline_empty')}
                     </div>
                 )}
-                {templates.map(t => (
+                {templates.map(tpl => (
                     <div
-                        key={t.id}
+                        key={tpl.id}
                         className="group px-3 py-2 border-b border-white/5 hover:bg-white/[0.03] transition-colors flex items-center gap-2"
                     >
                         <div className="min-w-0 flex-1">
                             <div className="text-[12px] text-white/80 truncate flex items-center gap-1.5">
-                                {t.name}
-                                {t.isBuiltin && (
+                                {displayName(tpl)}
+                                {tpl.isBuiltin && (
                                     <span className="text-[8.5px] uppercase tracking-wider text-emerald-300/70 bg-emerald-500/10 border border-emerald-500/20 rounded px-1 py-[1px]">
-                                        Sample
+                                        {t('canvas.template_sample_badge')}
                                     </span>
                                 )}
                             </div>
                             <div className="text-[9.5px] text-white/35 uppercase tracking-wider">
-                                {t.items.length} {t.items.length === 1 ? 'item' : 'items'}
-                                {t.connections.length > 0 && ` · ${t.connections.length} arrow${t.connections.length === 1 ? '' : 's'}`}
+                                {tpl.items.length === 1
+                                    ? t('canvas.item_count_one')
+                                    : t('canvas.items_count').replace('{n}', String(tpl.items.length))}
+                                {tpl.connections.length > 0 && ' · '}
+                                {tpl.connections.length > 0 && (
+                                    tpl.connections.length === 1
+                                        ? t('canvas.arrow_count_one')
+                                        : t('canvas.arrows_count').replace('{n}', String(tpl.connections.length))
+                                )}
                             </div>
                         </div>
                         <button
-                            onClick={() => stamp(t)}
+                            onClick={() => stamp(tpl)}
                             className="p-1.5 rounded bg-emerald-500/10 hover:bg-emerald-500/25 text-emerald-300 transition-all"
-                            title="Stamp at viewport center"
+                            title={t('canvas.template_sample_badge')}
                         >
                             <Stamp size={11} />
                         </button>
-                        {!t.isBuiltin && (
+                        {!tpl.isBuiltin && (
                             <button
-                                onClick={() => remove(t)}
+                                onClick={() => remove(tpl)}
                                 className="p-1.5 rounded hover:bg-red-500/15 text-white/40 hover:text-red-300 transition-all"
-                                title="Delete template"
+                                title={t('canvas.dismiss')}
                             >
                                 <Trash2 size={11} />
                             </button>

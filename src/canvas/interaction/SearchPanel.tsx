@@ -100,6 +100,7 @@ export function SearchPanel({ open, onClose }: Props) {
             <div className="flex items-center gap-2 px-3 py-2 border-b border-white/5">
                 <Search size={13} className="text-emerald-400" />
                 <input
+                    dir="auto"
                     ref={inputRef}
                     placeholder="Search canvas"
                     className="flex-1 bg-transparent outline-none text-[13px] text-white/85 placeholder-white/30"

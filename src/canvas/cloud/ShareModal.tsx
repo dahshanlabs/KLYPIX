@@ -4,6 +4,7 @@ import { Link2, Copy, Check, AlertCircle, X, Loader2, Cloud, Users } from 'lucid
 import { shareCurrentCanvas, type ShareResult } from './shareCurrentCanvas';
 import { getCloudShare } from './cloudShareStore';
 import { useAuth } from '../../components/AuthProvider';
+import { t } from '../../i18n/strings';
 
 interface Props {
     /** Path of the canvas file to share. Null = canvas not saved yet. */
@@ -128,7 +129,7 @@ export const ShareModal: React.FC<Props> = ({ canvasFilePath, canvasTitle, onClo
                     borderRadius: 14,
                     padding: '20px 22px 18px',
                     boxShadow: '0 24px 64px rgba(0, 0, 0, 0.6)',
-                    fontFamily: 'Outfit, system-ui, sans-serif',
+                    fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
                     color: '#e8e8ed',
                 }}
             >
@@ -143,9 +144,9 @@ export const ShareModal: React.FC<Props> = ({ canvasFilePath, canvasTitle, onClo
                             <Cloud size={15} />
                         </div>
                         <div>
-                            <div style={{ fontSize: 15, fontWeight: 600 }}>Share canvas</div>
+                            <div style={{ fontSize: 15, fontWeight: 600 }}>{t('share.title')}</div>
                             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 1 }}>
-                                End-to-end encrypted — server cannot read your canvas
+                                {t('share.e2e')}
                             </div>
                         </div>
                     </div>
@@ -156,8 +157,8 @@ export const ShareModal: React.FC<Props> = ({ canvasFilePath, canvasTitle, onClo
                         // the click that should have closed the modal.
                         onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }}
                         onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }}
-                        title="Close (Esc)"
-                        aria-label="Close share dialog"
+                        title={t('canvas.close_esc')}
+                        aria-label={t('share.close_dialog')}
                         style={{
                             padding: 8,
                             borderRadius: 8,
@@ -305,7 +306,7 @@ function InviteCollaboratorsSection({ share }: { share: { blobId: string; keyB64
             });
             setLatest(res);
         } catch (e: any) {
-            setErr(e?.message || 'Failed to create invite');
+            setErr(e?.message || t('share.create_invite_failed'));
         } finally {
             setBusy(false);
         }
@@ -351,15 +352,15 @@ function InviteCollaboratorsSection({ share }: { share: { blobId: string; keyB64
         }}>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Users size={11} />
-                Invite collaborators (Editor access)
+                {t('share.invite_section')}
             </div>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginBottom: 10, lineHeight: 1.5 }}>
-                Share-by-URL above is read-only. Invitations grant edit access — recipients sign in, accept the invite, and the canvas appears in their library.
+                {t('share.invite_desc')}
             </div>
             <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
                 <input
                     type="email"
-                    placeholder="Email (optional, for your records)"
+                    placeholder={t('share.email_placeholder')}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     disabled={busy}
@@ -372,7 +373,7 @@ function InviteCollaboratorsSection({ share }: { share: { blobId: string; keyB64
                         color: '#fff',
                         fontSize: 11,
                         outline: 'none',
-                        fontFamily: 'Outfit, system-ui, sans-serif',
+                        fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
                     }}
                 />
                 <button
@@ -392,7 +393,7 @@ function InviteCollaboratorsSection({ share }: { share: { blobId: string; keyB64
                         whiteSpace: 'nowrap',
                     }}
                 >
-                    {busy ? 'Creating…' : 'Get invite link'}
+                    {busy ? t('share.creating') : t('share.get_invite_link')}
                 </button>
             </div>
             {err && (
@@ -586,7 +587,7 @@ function InlineSignInForm({ onSignedIn }: { onSignedIn: () => void }) {
         color: '#fff',
         fontSize: 12,
         outline: 'none',
-        fontFamily: 'Outfit, system-ui, sans-serif',
+        fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
     };
 
     return (

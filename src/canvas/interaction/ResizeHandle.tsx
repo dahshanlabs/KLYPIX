@@ -61,6 +61,13 @@ interface Props {
         minScale?: number;    // default 0.3
         maxScale?: number;    // default unbounded
     };
+    /** Current rotation of the item in degrees. When set, handles orbit
+     *  around the item center to match the rotated visual, AND drag
+     *  deltas are inverse-rotated into the item's local frame before
+     *  being applied — so dragging an "NE" handle on a 45°-rotated item
+     *  still grows the item's north-east corner relative to its own
+     *  axes (not the screen's). Default 0 = unchanged behavior. */
+    rotation?: number;
 }
 
 const DEFAULT_ALL: HandlePos[] = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
@@ -99,7 +106,7 @@ function offsetFor(pos: HandlePos, w: number, h: number): { x: number; y: number
     }
 }
 
-function SingleHandle({ itemId, x, y, w, h, minW = 20, minH = 20, preserveAspect, aspectLockedByDefault, scaleField, lockHeight, widthField, scaleAnchor, pos }: Props & { pos: HandlePos }) {
+function SingleHandle({ itemId, x, y, w, h, minW = 20, minH = 20, preserveAspect, aspectLockedByDefault, scaleField, lockHeight, widthField, scaleAnchor, rotation = 0, pos }: Props & { pos: HandlePos }) {
     const { state, dispatch, pushSnapshot } = useCanvasStore();
     const zoomRef = useRef(state.view.zoom);
     zoomRef.current = state.view.zoom;
@@ -184,8 +191,22 @@ function SingleHandle({ itemId, x, y, w, h, minW = 20, minH = 20, preserveAspect
         const d = dragRef.current;
         if (!d) return;
         const z = zoomRef.current || 1;
-        const dx = (e.clientX - d.startX) / z;
-        const dy = (e.clientY - d.startY) / z;
+        const rawDx = (e.clientX - d.startX) / z;
+        const rawDy = (e.clientY - d.startY) / z;
+        // Inverse-rotate the screen-space drag delta into the item's
+        // local frame. Without this, dragging an "NE" handle on a 45°-
+        // rotated item would still apply the screen-X / screen-Y deltas
+        // directly to item.w / item.h — so grabbing the visual NE corner
+        // and dragging it visually outward wouldn't grow the right axis.
+        // By rotating the delta by -rotation, we get a "what the user
+        // intends in the item's own frame" delta, which the existing
+        // resize math (already in local-frame terms via offsetFor) can
+        // then apply correctly.
+        const rotRad = -rotation * Math.PI / 180;
+        const cosR = Math.cos(rotRad);
+        const sinR = Math.sin(rotRad);
+        const dx = rawDx * cosR - rawDy * sinR;
+        const dy = rawDx * sinR + rawDy * cosR;
 
         // Scale-field mode: crop-style handle semantics.
         //
@@ -388,6 +409,26 @@ function SingleHandle({ itemId, x, y, w, h, minW = 20, minH = 20, preserveAspect
                 if (Math.abs(dx) * d.h >= Math.abs(dy) * d.w) nh = nw / aspect;
                 else nw = nh * aspect;
             }
+            // Re-clamp after aspect derivation. The pre-aspect clamp at
+            // L371-372 only protects the axis the user is dragging; aspect
+            // lock then derives the OTHER axis, which can fall below its
+            // floor. Without this re-check, the dispatch goes through with
+            // (say) w < naturalHeaderW, and the container's header-floor
+            // effect bumps w back up next render — breaking aspect and
+            // producing the visible width tug-of-war when shrinking an
+            // aspect-locked group from a single edge.
+            if (nw < zMinW) {
+                nw = zMinW;
+                nh = nw / aspect;
+                if (pos.includes('w')) nx = d.x + d.w - nw;
+                if (pos.includes('n')) ny = d.y + d.h - nh;
+            }
+            if (nh < zMinH) {
+                nh = zMinH;
+                nw = nh * aspect;
+                if (pos.includes('w')) nx = d.x + d.w - nw;
+                if (pos.includes('n')) ny = d.y + d.h - nh;
+            }
         }
 
         // lockHeight (used by collapsed containers): dispatch only width/x
@@ -494,6 +535,19 @@ function SingleHandle({ itemId, x, y, w, h, minW = 20, minH = 20, preserveAspect
     const SHADOW_WORLD_PX = 2 / viewZoom;
 
     const off = offsetFor(pos, w, h);
+    // Handle position: rotate the un-rotated handle offset around the
+    // item center by item.rotation, so each handle orbits with the
+    // rotated visual. With rotation=0 the math reduces to the original
+    // (cx + (off.x - w/2), cy + (off.y - h/2)) = (x + off.x, y + off.y).
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    const localHX = off.x - w / 2;
+    const localHY = off.y - h / 2;
+    const renderRad = (rotation * Math.PI) / 180;
+    const renderCos = Math.cos(renderRad);
+    const renderSin = Math.sin(renderRad);
+    const handleX = cx + (localHX * renderCos - localHY * renderSin);
+    const handleY = cy + (localHX * renderSin + localHY * renderCos);
     return (
         <div
             onPointerDown={onPointerDown}
@@ -503,8 +557,8 @@ function SingleHandle({ itemId, x, y, w, h, minW = 20, minH = 20, preserveAspect
             className="no-drag"
             style={{
                 position: 'absolute',
-                left: x + off.x - SIZE / 2,
-                top: y + off.y - SIZE / 2,
+                left: handleX - SIZE / 2,
+                top: handleY - SIZE / 2,
                 width: SIZE,
                 height: SIZE,
                 // Full circle (radius = half the size) for every handle.

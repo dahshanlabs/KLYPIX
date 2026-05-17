@@ -88,7 +88,7 @@ export const ItemBadges = React.memo(function ItemBadges({ item, renderRect }: P
                                 borderRadius: 3,
                                 background: tagColor(tag),
                                 color: 'rgba(255,255,255,0.9)',
-                                fontFamily: 'Outfit, system-ui, sans-serif',
+                                fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
                                 letterSpacing: '0.02em',
                                 lineHeight: 1.3,
                                 whiteSpace: 'nowrap',

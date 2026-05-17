@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import type { TextItem as TextItemType, StyleRun } from './types';
 import { useCanvasStore } from '../state/canvasStore';
 import { ResizeHandle } from '../interaction/ResizeHandle';
+import { RotateHandle } from '../interaction/RotateHandle';
 import { useGridSettings, luminance, isDarkBackground } from '../gridSettings';
 import { getStyleAt, shiftRuns, diffSingleEdit } from './styleRuns';
 import { renumberNumberedLines, stripListPrefixes, LIST_PREFIX_RE } from './listOps';
@@ -28,6 +29,32 @@ function haloShadowFor(textColor: string, bgColor: string): string | undefined {
 // Pretty-liberal URL matcher — good enough for "I pasted a link" detection.
 // Requires a protocol so we don't underline every "word.thing".
 const URL_REGEX = /\b(https?:\/\/[^\s<>"]+)/gi;
+
+// Arabic-script Unicode ranges: base (U+0600–06FF), supplement (U+0750–077F),
+// presentation-forms-A (U+FB50–FDFF), presentation-forms-B (U+FE70–FEFF).
+const ARABIC_RANGE = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
+export function containsArabic(text: string | undefined | null): boolean {
+    return !!text && ARABIC_RANGE.test(text);
+}
+
+// fontFamily stack for the canvas. Explicit user choice wins. Otherwise: if
+// the content is Arabic, fall back to Thmanyah Sans (an Arabic-first family
+// that also covers Latin); else Virgil, the Excalidraw-style default.
+//
+// Critical: when an explicit font is set on English content, the fallback
+// chain stays IDENTICAL to the pre-Arabic-support code path — we don't
+// inject Thmanyah anywhere it could affect English rendering. Thmanyah only
+// enters the cascade when the content actually contains Arabic characters.
+export function resolveCanvasFontFamily(explicit: string | undefined, content: string | undefined): string {
+    const hasArabic = containsArabic(content);
+    if (explicit) {
+        return hasArabic
+            ? `"${explicit}", "Thmanyah Sans", Virgil, system-ui, sans-serif`
+            : `"${explicit}", Virgil, "Thmanyah Sans", system-ui, sans-serif`;
+    }
+    if (hasArabic) return '"Thmanyah Sans", "Segoe UI", system-ui, sans-serif';
+    return 'Virgil, "Thmanyah Sans", system-ui, sans-serif';
+}
 
 export function containsUrl(text: string): boolean {
     URL_REGEX.lastIndex = 0;
@@ -121,7 +148,13 @@ function renderStyledContent(
         if (decos.length) spanStyle.textDecoration = decos.join(' ');
         if (style.fontSize !== undefined) spanStyle.fontSize = style.fontSize;
         if (style.fontFamily !== undefined) {
-            spanStyle.fontFamily = `"${style.fontFamily}", Virgil, Outfit, system-ui, sans-serif`;
+            // Per-run font cascade. Match resolveCanvasFontFamily: only thread
+            // Thmanyah into the fallback when this chunk actually contains
+            // Arabic glyphs, otherwise keep the pre-Arabic-support cascade
+            // identical so English style runs render exactly as before.
+            spanStyle.fontFamily = containsArabic(chunk)
+                ? `"${style.fontFamily}", "Thmanyah Sans", Virgil, system-ui, sans-serif`
+                : `"${style.fontFamily}", Virgil, "Thmanyah Sans", system-ui, sans-serif`;
         }
         const hasOverride =
             style.color !== undefined || !!style.bold || !!style.italic ||
@@ -481,7 +514,7 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
         textShadow,
         fontWeight: item.heading || item.fontWeight === 'bold' ? 700 : 400,
         fontStyle: item.fontStyle === 'italic' ? 'italic' : 'normal',
-        fontFamily: item.fontFamily ? `"${item.fontFamily}", Virgil, Outfit, system-ui, sans-serif` : 'Virgil, Outfit, system-ui, sans-serif',
+        fontFamily: resolveCanvasFontFamily(item.fontFamily, item.content),
         textDecoration: [item.textDecoration === 'underline' && 'underline', item.strikethrough && 'line-through'].filter(Boolean).join(' ') || 'none',
         lineHeight: 1.35,
         padding: item.border ? '8px 10px' : '2px',
@@ -514,6 +547,8 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
         // border color the card already has, with no layout cost.
         ...(isAgentCard ? { boxShadow: 'inset 3px 0 0 rgba(139,92,246,0.9)' } : null),
         opacity: item.opacity ?? 1,
+        transform: item.rotation ? `rotate(${item.rotation}deg)` : undefined,
+        transformOrigin: 'center',
         userSelect: editing ? 'text' : 'none',
         // Electron's drag region is set on the window's glass wrapper; children
         // inside a `no-drag` region need no-drag too when they want keyboard
@@ -545,7 +580,7 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
         // word-break, letter-spacing.
         const typeset: React.CSSProperties = {
             fontSize: item.fontSize,
-            fontFamily: item.fontFamily ? `"${item.fontFamily}", Virgil, Outfit, system-ui, sans-serif` : 'Virgil, Outfit, system-ui, sans-serif',
+            fontFamily: resolveCanvasFontFamily(item.fontFamily, item.content),
             fontWeight: item.heading || item.fontWeight === 'bold' ? 700 : 400,
             fontStyle: item.fontStyle === 'italic' ? 'italic' : 'normal',
             textDecoration: [item.textDecoration === 'underline' && 'underline', item.strikethrough && 'line-through'].filter(Boolean).join(' ') || 'none',
@@ -990,6 +1025,7 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                     itemId={item.id}
                     x={item.x} y={item.y} w={item.w} h={item.h}
                     minW={80} minH={20}
+                    rotation={item.rotation ?? 0}
                     // Plain text: GROW drags scale font; SHRINK drags set
                     // authoredWidth so the text wraps at a narrower width
                     // with font held constant. Bordered text (cards) keeps
@@ -1007,6 +1043,13 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                         max: 100000,
                         authoredWidth: item.authoredWidth,
                     } : undefined}
+                />
+            )}
+            {selected && !editing && (
+                <RotateHandle
+                    itemId={item.id}
+                    x={item.x} y={item.y} w={item.w} h={item.h}
+                    rotation={item.rotation ?? 0}
                 />
             )}
         </>
