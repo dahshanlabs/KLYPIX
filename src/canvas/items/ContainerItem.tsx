@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, ChevronRight, Lock, LogOut, LogIn, FolderTree, ZoomIn } from 'lucide-react';
-import { t } from '../../i18n/strings';
+import { t, useLocale } from '../../i18n/strings';
 import { getReadabilityReference, hasTextDescendant } from './containerMinTextSize';
-import type { ContainerItem as ContainerItemType, CanvasItem } from './types';
+import type { ContainerItem as ContainerItemType, CanvasItem, DrawnLine, FreehandStroke } from './types';
 import { useCanvasStore } from '../state/canvasStore';
 import { ResizeHandle } from '../interaction/ResizeHandle';
 import { useGridSettings, isDarkBackground } from '../gridSettings';
@@ -375,6 +375,42 @@ export interface SemanticZoomInputs {
     userOverrideExpandedIds?: Record<string, boolean>;
 }
 
+/** Pure derivation of which containers should currently be zoom-collapsed.
+ *  Replaces the previous SET_ZOOM_COLLAPSED dispatching effect that fought
+ *  with resize: an effect keyed on item.w/h would re-evaluate the threshold
+ *  every drag frame and toggle state, causing a flicker between expanded
+ *  and capsule modes. Computing the set per render from current inputs
+ *  removes the entire feedback loop class.
+ *
+ *  Hysteresis is intentionally dropped here. With dispatch-based state
+ *  changes it was needed to dampen oscillation around the boundary; pure
+ *  derivation can't oscillate — same input always yields the same output.
+ *  Single threshold per content type:
+ *    - Text-bearing groups collapse at effective < 7 (midpoint of the
+ *      old 6/9 collapse-vs-reexpand pair).
+ *    - Text-free groups collapse at effective < 24 (midpoint of 20/30).
+ *  If a smooth-zoom gesture wobbles around the threshold and produces
+ *  visible flicker in practice, add hysteresis back via a useRef in the
+ *  caller (the previous result is the only state we'd need).
+ */
+export function computeZoomCollapsedIds(
+    _items: Record<string, CanvasItem>,
+    _lines: Record<string, DrawnLine>,
+    _strokes: Record<string, FreehandStroke>,
+    _viewZoom: number,
+): Record<string, boolean> {
+    // Auto-collapse-to-capsule retired. Product decision: if the group is
+    // already small at the current zoom, turning it into a capsule adds no
+    // information — and the mid-resize mode flip (expanded → capsule while
+    // the user drags inward, or capsule → expanded on enlarge) is what
+    // caused the "two concentric dashed rectangles" ghost during resize.
+    // Body, header, selection ring, and resize handles all read the same
+    // bounds now, so there's nothing left to disagree about. Manual
+    // chevron-collapse (item.userCollapsed / item.collapsed) still works —
+    // only the zoom-based auto-trigger is gone.
+    return {};
+}
+
 export function getContainerRenderMode(
     item: ContainerItemType,
     viewZoom: number,
@@ -393,52 +429,24 @@ export function getContainerRenderMode(
     const userCollapsed: boolean = isTopLevel
         ? (anyIt.userCollapsed ?? anyIt.collapsed ?? false)
         : false;
-    const zoomCollapsed = !!semantic?.zoomCollapsedIds?.[item.id];
-    const override = !!semantic?.userOverrideExpandedIds?.[item.id];
-    const isCollapsed = (userCollapsed || zoomCollapsed) && !override;
-    if (isCollapsed) {
-        // Dotted promotion: if the container is already in capsule
-        // mode AND its natural frame would render below
-        // DOT_TRIGGER_SCREEN_PX at current zoom, show a dot instead
-        // of the capsule. Gating on existing collapsed state gives us
-        // free hysteresis — the transition into capsule uses the
-        // zoom-collapsed watcher's own threshold pair, and we never
-        // flip straight from expanded to dotted and back.
-        const frameScreenW = item.w * Math.max(0.01, viewZoom);
-        if (frameScreenW < DOT_TRIGGER_SCREEN_PX) return 'dotted';
-        // Distinguish user-collapsed (explicit, chevron icon) from
-        // zoom-collapsed (automatic, magnifier icon) via the existing
-        // 'collapsed' / 'collapsed-visual' split. User-collapsed wins
-        // visually because the user's intent is explicit; only the
-        // purely-zoom-triggered case uses the visual variant.
-        return userCollapsed ? 'collapsed' : 'collapsed-visual';
-    }
-    // Below-5% skip historically lived here to guarantee groups stay
-    // visible as frames in overview mode. The semantic-zoom feature
-    // replaces that with the capsule floor + auto-collapse pair: at
-    // extreme zoom, groups auto-zoom-collapse (above branch) into a
-    // min-size capsule. No separate skip needed. The fallback below is
-    // kept only for legacy callers that don't yet pass `semantic`.
-    if (!semantic) {
-        if (viewZoom < 0.05) return 'expanded';
-    }
-    // Legacy body-visibility floor (kept as a sanity fallback per the
-    // standing rule — additive to the new content-aware triggers).
-    const bodyScreenH = Math.max(0, item.h - TITLE_BAR_HEIGHT) * Math.max(0.01, viewZoom);
-    if (bodyScreenH < BODY_VISIBILITY_THRESHOLD) return 'collapsed-visual';
-    // Nested-container cramped-headers rule — retained as an additive
-    // trigger alongside the new content-aware zoom-collapse path.
-    if (items) {
-        let directNestedContainers = 0;
-        for (const child of Object.values(items)) {
-            if (child.parentId === item.id && child.type === 'container') directNestedContainers++;
-        }
-        if (directNestedContainers > 0) {
-            const MIN_HEADER = 28;
-            const requiredBody = (directNestedContainers + 1) * MIN_HEADER;
-            if (bodyScreenH < requiredBody) return 'collapsed-visual';
-        }
-    }
+    // semantic kept in the signature for backwards compat — auto-capsule
+    // (collapsed-visual) was retired so zoomCollapsedIds / override no
+    // longer participate in this decision.
+    void semantic;
+    void items;
+    // Dot-at-extreme-zoom-out is INDEPENDENT of the collapse decision.
+    // When the group's expanded frame would render below DOT_TRIGGER_SCREEN_PX
+    // on screen, hand off to DotClusterLayer (which clusters tiny
+    // off-screen entities into visible dots). This used to be gated on
+    // isCollapsed so the dot only appeared via the capsule intermediate
+    // state — that gating accidentally killed dot mode when auto-capsule
+    // was removed. Lifting it out makes the dot tier work on its own
+    // screen-space trigger, regardless of collapse state.
+    const frameScreenW = item.w * Math.max(0.01, viewZoom);
+    if (frameScreenW < DOT_TRIGGER_SCREEN_PX) return 'dotted';
+    // Manual chevron-collapse (top-level only — userCollapsed already
+    // forced to false for nested groups above). Renders as capsule.
+    if (userCollapsed) return 'collapsed';
     return 'expanded';
 }
 
@@ -479,24 +487,30 @@ export function suppressContainerResizeScaling(id: string): void {
 //   always at least the minimum — readability beats strict proportionality
 //   per product decision. Same idea as resize handles' min-screen-px
 //   floor.
-export function computeContainerScales(item: ContainerItemType, viewZoom: number) {
+export function computeContainerScales(item: ContainerItemType, _viewZoom: number) {
+    const authoredW = item.authoredW || item.w;
     const authoredH = item.authoredH || item.h;
-    const rawScale = item.h / Math.max(1, authoredH);
+    // Uniform raw scale — follows the MORE squeezed dimension so a
+    // Shift-drag narrowing the group's width still shrinks chrome
+    // proportionally. Matches the children's vector-scale internally.
+    const scaleW = item.w / Math.max(1, authoredW);
+    const scaleH = item.h / Math.max(1, authoredH);
+    const rawScale = Math.min(scaleW, scaleH);
+    // chromeScale stays clamped to [0.5, 3] for VISUAL chrome only —
+    // border thickness, shadow width, corner radius. Without the cap a
+    // 10× enlarged group would draw 10× thicker borders / 30-px-radius
+    // corners, which reads as broken proportions.
     const chromeScale = Math.max(0.5, Math.min(3, rawScale || 1));
-    const z = Math.max(0.01, viewZoom);
-    // Target: title bar renders at ≥ MIN_HEADER_SCREEN_PX on screen, at
-    // any view zoom. title bar world height = TITLE_BAR_HEIGHT × titleScale,
-    // rendered = title × z, so minimum titleScale = MIN_HEADER / (TB × z).
-    const MIN_HEADER_SCREEN_PX = 28;
-    // Also cap at MAX_HEADER_SCREEN_PX so a container viewed at 400%+
-    // doesn't produce a 112-px-tall title bar (chromeScale=1 × 28 × 4).
-    // Every scaled header value (titleBarH, font, icons, padding, gap,
-    // separator) flows through titleScale, so capping here covers all
-    // of them in one place.
-    const MAX_HEADER_SCREEN_PX = 44;
-    const minTitleScale = MIN_HEADER_SCREEN_PX / (TITLE_BAR_HEIGHT * z);
-    const maxTitleScale = MAX_HEADER_SCREEN_PX / (TITLE_BAR_HEIGHT * z);
-    const titleScale = Math.max(minTitleScale, Math.min(maxTitleScale, chromeScale));
+    // titleScale is UNCAPPED — header dimensions (height, font, icons,
+    // padding) scale with the group's actual body size, exactly like
+    // the body content does. The chromeScale 3× cap was making the
+    // header look comparatively tiny on enlarged groups (body grows
+    // unbounded, header locked at 3× authored = invisible at low view
+    // zoom). Floor at 0.3 prevents the header from collapsing to a
+    // sub-pixel strip on heavily-shrunk groups; ceiling on the rawScale
+    // itself isn't needed because the body it scales with is naturally
+    // its own visual ceiling.
+    const titleScale = Math.max(0.3, rawScale || 1);
     return { chromeScale, titleScale };
 }
 
@@ -552,110 +566,25 @@ function ContainerItemViewImpl({ item, selected }: Props) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Frame must be at least as wide as its header's natural content
-    // (chevron + title + count badge + icons). Otherwise a small group
-    // (e.g. "Group 3" with a single-letter child) ends up with the
-    // header content visually overflowing past the narrower dashed
-    // frame — looks like the header and the body are different items.
-    // Auto-grow item.w only. authoredW stays frozen at what the user
-    // originally created — inflating it to preserve the w/authoredW
-    // ratio would push authoredWMin (0.3 × authoredW) above the post-
-    // grow item.w, causing the expanded resize handle to snap-jump on
-    // first drag. Derived scale is min(w/authoredW, h/authoredH); since
-    // h is unchanged, h/authoredH dominates and the capsule-chosen
-    // scale survives the expand without authoredW manipulation.
-    useEffect(() => {
-        if (!item.authoredW || !item.authoredH) return;
-        if (item.collapsed) return;
-        let hasSubGroups = false;
-        for (const c of Object.values(state.items)) {
-            if (c?.type === 'container' && c.parentId === item.id) { hasSubGroups = true; break; }
-        }
-        const naturalHeaderW = computeNaturalTabScreenW(item, { hasSubGroups, isFocused });
-        // Leave a 1-px tolerance so a tiny float mismatch doesn't loop.
-        if (item.w >= naturalHeaderW - 1) return;
-        dispatch({
-            type: 'UPDATE_ITEM',
-            id: item.id,
-            patch: {
-                w: naturalHeaderW,
-            } as any,
-        });
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [item.w, item.authoredW, item.title, item.scopeLocked, item.collapsed, state.items, isFocused]);
+    // Frame-width-must-fit-header floor retired. The header now scales
+    // uniformly with the group body (titleScale === chromeScale), so a
+    // shrunk group has a proportionally shrunk header — the title can't
+    // "overflow" the frame because both shrink together. Previously this
+    // effect bumped item.w UP to the header's natural content width
+    // whenever the user dragged smaller, which was the root of the
+    // resize tug-of-war on aspect-locked shrink (the bumped-back-up
+    // width fought the next pointermove). Removing the bump removes
+    // the fight at its source.
 
-    // Semantic-zoom watcher. Evaluates content-aware thresholds against
-    // the current zoom + items + this container's own geometry, and
-    // dispatches zoomCollapsed/userOverrideExpanded transitions. Core
-    // rules (all additive — ANY triggers collapse, ALL clear to expand):
-    //   (a) Content readability: minTextSize × zoom < 6 → collapse;
-    //       > 9 → re-expand. Hysteresis prevents boundary flicker.
-    //       Fallback to smallest child dimension × zoom (20/30) for
-    //       text-free groups; fallback to header font baseline for
-    //       empty groups.
-    //   (b) Body visibility floor (legacy, kept as sanity guard):
-    //       body screen-h < BODY_VISIBILITY_THRESHOLD → collapse.
-    //   (c) Nested-cramped-headers (legacy, kept): body too small to
-    //       fit direct-nested group headers → collapse.
-    //
-    // Debounced to one animation frame via requestAnimationFrame —
-    // during smooth zoom gestures (pinch/wheel) the effect re-runs many
-    // times per frame but only the last scheduled rAF actually fires,
-    // producing at most one dispatch per frame.
-    //
-    // Collapsing a user-collapsed group (userCollapsed=true) isn't
-    // meaningful here — that state dominates the render-mode formula
-    // already. Still compute zoomCollapsed for the "user uncollapsed
-    // at low zoom" case so the correct icon appears on next render.
-    useEffect(() => {
-        const rafId = requestAnimationFrame(() => {
-            const zoom = Math.max(0.01, state.view.zoom);
-            const bodyScreenH = Math.max(0, item.h - TITLE_BAR_HEIGHT) * zoom;
-            const hasText = hasTextDescendant(item.id, state.items);
-            const reference = getReadabilityReference(
-                item.id,
-                state.items,
-                state.lines,
-                state.strokes,
-            );
-            const effective = reference * zoom;
-            const collapseThreshold = hasText ? 6 : 20;
-            const reexpandThreshold = hasText ? 9 : 30;
-            const currentlyCollapsed = !!state.zoomCollapsedIds[item.id];
-            // Text/dimension readability with hysteresis: stay collapsed
-            // until crossing the re-expand threshold; stay expanded
-            // until crossing the collapse threshold.
-            const readabilityCollapse = currentlyCollapsed
-                ? effective < reexpandThreshold
-                : effective < collapseThreshold;
-            // Legacy body-visibility floor (additive).
-            const bodyCollapse = bodyScreenH < BODY_VISIBILITY_THRESHOLD;
-            // Legacy nested-cramped-headers rule (additive).
-            let directNestedContainers = 0;
-            for (const child of Object.values(state.items)) {
-                if (child.parentId === item.id && child.type === 'container') directNestedContainers++;
-            }
-            const crampedCollapse = directNestedContainers > 0
-                && bodyScreenH < (directNestedContainers + 1) * 28;
-            const shouldCollapse = readabilityCollapse || bodyCollapse || crampedCollapse;
-            if (shouldCollapse !== currentlyCollapsed) {
-                dispatch({ type: 'SET_ZOOM_COLLAPSED', id: item.id, collapsed: shouldCollapse });
-                // When we're crossing back out of zoom-collapsed (going
-                // to expanded) and an override was set, clear it — the
-                // natural expansion takes over and override is no
-                // longer needed (spec A5).
-                if (!shouldCollapse && state.userOverrideExpandedIds[item.id]) {
-                    dispatch({ type: 'SET_OVERRIDE_EXPANDED', id: item.id, overridden: false });
-                }
-            }
-        });
-        return () => cancelAnimationFrame(rafId);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [
-        item.id, item.w, item.h, state.view.zoom, state.items,
-        state.lines, state.strokes,
-        state.zoomCollapsedIds, state.userOverrideExpandedIds,
-    ]);
+    // Semantic-zoom decision is now PURELY DERIVED in CanvasStoreProvider
+    // via computeZoomCollapsedIds(items, lines, strokes, viewZoom). The
+    // previous per-container useEffect that dispatched SET_ZOOM_COLLAPSED
+    // was the source of the resize fight: deps included item.w/h, so every
+    // resize frame re-evaluated the threshold, dispatched a new collapse
+    // state, and on the next render the user saw the group flicker between
+    // expanded and capsule. Pure derivation can't oscillate — same input
+    // yields same output. The override-clear that lived here moved to a
+    // zoom-only effect in CanvasStoreProvider.
 
     // Vector-style group scaling, drift-free.
     //
@@ -746,21 +675,13 @@ function ContainerItemViewImpl({ item, selected }: Props) {
             const nextX = item.x + anchor.relX * scale;
             // Reserve the header's world-px zone at the top of the
             // container so children never visually slip under the title
-            // bar. Previously used chromeScale only — which at low view
-            // zoom left the rendered header (screen-floored at 28 px =
-            // up to 1400 world-px at 2%) covering its first children.
-            // User reported nested group's header landed under the
-            // parent's header at 2% zoom. Now headerWorldH also honors
-            // the screen-px floor: max(world-scale-derived, screen-floor
-            // / zoom). At normal zoom the world-scale path wins
-            // (unchanged behavior); at low zoom the screen-floor path
-            // wins and pushes children below the rendered header.
-            const MIN_HEADER_SCREEN_PX = 28;
-            const viewZoomSafe = Math.max(0.01, state.view.zoom);
-            const headerWorldH = Math.max(
-                TITLE_BAR_HEIGHT * scale,
-                MIN_HEADER_SCREEN_PX / viewZoomSafe,
-            );
+            // bar. Now that titleScale === chromeScale (uniform group
+            // scaling), the header height is just TITLE_BAR_HEIGHT × scale
+            // at every zoom — no screen-px floor needed, no risk of the
+            // rendered header covering its children. Previous floor
+            // (MIN_HEADER_SCREEN_PX / zoom) was a workaround for the
+            // header-stays-readable behavior, which is gone.
+            const headerWorldH = TITLE_BAR_HEIGHT * scale;
             const rawNextY = item.y + anchor.relY * scale;
             const nextY = Math.max(rawNextY, item.y + headerWorldH);
             const nextW = anchor.w * scale;
@@ -1071,6 +992,7 @@ function ContainerItemViewImpl({ item, selected }: Props) {
 // the interactive controls so they're reachable regardless of child
 // stacking order.
 function ContainerHeaderViewImpl({ item, childCount, selected }: Props) {
+    useLocale();  // re-render header chrome (tooltips, "items" label) on locale flip
     const { state, dispatch } = useCanvasStore();
     const inputRef = useRef<HTMLInputElement>(null);
     // Mirror the body's theme-aware tint logic so the title-bar strip
@@ -1288,16 +1210,19 @@ function ContainerHeaderViewImpl({ item, childCount, selected }: Props) {
         gap: headerGap,
         color: headerInkPrimary,
         fontSize: titleFontSize,
-        fontFamily: 'Outfit, system-ui, sans-serif',
+        fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
         fontWeight: 500,
         letterSpacing: '0.02em',
         pointerEvents: 'auto',
-        // Title must always be legible regardless of container width — a
-        // narrow group was showing "G…" instead of "Group 2". Header
-        // keeps its renderW-sized background but content (long title,
-        // badge, icons) is allowed to visibly extend past the right
-        // edge when the container is too narrow to fit the chrome.
-        overflow: 'visible',
+        // Header is bounded by the body width in display mode — long
+        // titles truncate with an ellipsis instead of pushing chrome
+        // past the right edge. EXCEPTION: while the user is renaming,
+        // flip to overflow:visible so the text input can grow with its
+        // content and the user sees everything they're typing past the
+        // header's normal bounds. Returns to clipped on blur/Enter, at
+        // which point the new title is subject to the same truncation
+        // rule as any other display state.
+        overflow: renaming ? 'visible' : 'hidden',
         whiteSpace: 'nowrap',
     };
 
@@ -1348,6 +1273,15 @@ function ContainerHeaderViewImpl({ item, childCount, selected }: Props) {
                     <input
                         ref={inputRef}
                         type="text"
+                        // dir="auto" — browser detects direction from the
+                        // first strong character of the typed value, so
+                        // typing English into the input in Arabic-locale
+                        // UI doesn't render as RTL-flowed Latin (which
+                        // looks backwards and hides the cursor on the
+                        // wrong side). Empty input falls back to the
+                        // document direction; the moment the user types
+                        // a strong char, the input picks the right side.
+                        dir="auto"
                         defaultValue={item.title}
                         onPointerDown={(e) => e.stopPropagation()}
                         onBlur={(e) => {
@@ -1364,20 +1298,40 @@ function ContainerHeaderViewImpl({ item, childCount, selected }: Props) {
                             }
                             e.stopPropagation();
                         }}
-                        className="flex-1 bg-transparent border border-emerald-400/40 rounded px-1 outline-none"
-                        style={{ color: headerInkPrimary, fontSize: titleFontSize }}
+                        className="bg-transparent border border-emerald-400/40 rounded px-1 outline-none"
+                        // field-sizing: content makes the input auto-grow
+                        // with its value so the user always sees every
+                        // character they've typed. Min-width keeps the
+                        // input usable when empty / very short, so it's
+                        // never just a 1-char box. Combined with the
+                        // header's overflow:'visible' (set when
+                        // renaming=true above), the input can extend
+                        // visibly past the header's normal bounds.
+                        // Dropped flex-1 since field-sizing owns the
+                        // sizing now.
+                        style={{
+                            color: headerInkPrimary,
+                            fontSize: titleFontSize,
+                            fieldSizing: 'content',
+                            minWidth: '12ch',
+                        } as React.CSSProperties}
                     />
                 ) : (
                     <span
-                        // No truncate: titles always render in full even
-                        // when the container is narrower than the chrome
-                        // needs. Together with the header's overflow:
-                        // visible this lets the title extend past the
-                        // right edge instead of collapsing to "G…". Badge
-                        // / sub-group menu / collapse button still flex
-                        // to the right of the title and overflow visibly
-                        // alongside it.
-                        className="flex-shrink-0 cursor-text whitespace-nowrap"
+                        // Title is the ONLY flex-shrinkable element in the
+                        // header row — `flex-1 min-w-0` lets it own the
+                        // remaining row width AND shrink below its content
+                        // size when needed (min-w-0 overrides the default
+                        // min-width:auto that would otherwise refuse to
+                        // shrink). text-overflow:ellipsis truncates the
+                        // overrun. Icons (count badge / lock / enter-exit)
+                        // keep flex-shrink-0 so they're always visible.
+                        // dir="auto" makes the title render in its own
+                        // script's direction regardless of the UI locale,
+                        // so an English title in Arabic UI doesn't show
+                        // backwards (and vice versa).
+                        dir="auto"
+                        className="flex-1 min-w-0 cursor-text whitespace-nowrap overflow-hidden text-ellipsis"
                         // Manual dblclick detector that runs BEFORE the
                         // surface's pointerdown handler gets a chance to
                         // hit-test the container. stopPropagation on both
@@ -1400,14 +1354,22 @@ function ContainerHeaderViewImpl({ item, childCount, selected }: Props) {
                             }
                         }}
                         onDoubleClick={(e) => { e.stopPropagation(); setRenaming(true); }}
-                        title="Double-click to rename"
+                        // Show the full title FIRST so a truncated header
+                        // ("dddddd…") reveals the real name on hover, then
+                        // the rename hint on the second line. Native title
+                        // tooltips render \n as a line break. Once a group
+                        // has a long enough title that truncation matters,
+                        // the rename hint alone (the old single-line
+                        // tooltip) was actively unhelpful — it hid the
+                        // very thing the user was hovering to discover.
+                        title={`${item.title}\n${t('canvas.group_dblclick_rename')}`}
                     >{item.title}</span>
                 )}
                 <span
                     className="flex-shrink-0 tracking-widest uppercase whitespace-nowrap"
                     style={{ fontSize: titleMetaFontSize, color: headerInkMeta }}
                 >
-                    {childCount} {childCount === 1 ? 'item' : 'items'}
+                    {childCount} {childCount === 1 ? t('canvas.group_item_one') : t('canvas.group_items')}
                 </span>
                 {hasSubGroups && <SubGroupMenu container={item} iconSize={subMenuIconSize} inkColor={headerInkIcon} />}
                 <button
@@ -1415,7 +1377,7 @@ function ContainerHeaderViewImpl({ item, childCount, selected }: Props) {
                     onClick={toggleLock}
                     className={`flex items-center justify-center transition-colors flex-shrink-0 ${item.scopeLocked ? 'text-amber-400' : ''}`}
                     style={item.scopeLocked ? undefined : { color: headerInkIcon }}
-                    title={item.scopeLocked ? 'Scope locked — agent outside cannot see inside' : 'Lock scope'}
+                    title={item.scopeLocked ? t('canvas.group_scope_locked') : t('canvas.group_lock_scope')}
                 >
                     <Lock size={Math.round(lockIconSize)} />
                 </button>
@@ -1432,7 +1394,7 @@ function ContainerHeaderViewImpl({ item, childCount, selected }: Props) {
                         }}
                         className="flex items-center justify-center transition-colors flex-shrink-0 hover:text-emerald-300"
                         style={{ color: headerInkIcon }}
-                        title="Enter group"
+                        title={t('canvas.group_enter')}
                     >
                         <LogIn size={Math.round(exitIconSize)} />
                     </button>
@@ -1452,7 +1414,7 @@ function ContainerHeaderViewImpl({ item, childCount, selected }: Props) {
                         }}
                         className="flex items-center justify-center transition-colors flex-shrink-0 hover:text-emerald-300"
                         style={{ color: headerInkIcon }}
-                        title="Exit group (Esc)"
+                        title={t('canvas.group_exit_esc')}
                     >
                         <LogOut size={Math.round(exitIconSize)} />
                     </button>
@@ -1511,25 +1473,31 @@ function ContainerHeaderViewImpl({ item, childCount, selected }: Props) {
                         />
                     );
                 }
-                // Minimum expanded-frame width respects the header's
-                // natural content width. Without this, a shrink-drag
-                // would push item.w below what the header row needs,
-                // the auto-grow effect would dispatch it back to
-                // naturalHeaderW, and the drag visibly fought with the
-                // correction every frame. Clamping at the handle prevents
-                // the tug-of-war entirely.
+                // Minimum width = larger of:
+                //   (a) 30% of authored width (the standard "don't crush
+                //       the body" floor), or
+                //   (b) the width needed to fit at least 15 characters of
+                //       title + all the standard header icons (chevron,
+                //       count badge, lock, optional sub-group menu, and
+                //       enter/exit). Computed via the same helper the
+                //       capsule render path uses, but with a 15-char
+                //       dummy title so the floor doesn't grow with long
+                //       titles — a 200-char title still floors at the
+                //       15-char width and truncates with "…" above it.
+                // This guarantees the user always sees at least 15 chars
+                // before the ellipsis, no matter how aggressively the
+                // group is shrunk.
                 let hdrHasSubGroups = false;
                 for (const c of Object.values(state.items)) {
                     if (c?.type === 'container' && c.parentId === item.id) { hdrHasSubGroups = true; break; }
                 }
-                const naturalHeaderW = computeNaturalTabScreenW(item, { hasSubGroups: hdrHasSubGroups, isFocused });
+                const MIN_VISIBLE_TITLE_CHARS = 15;
+                const fifteenCharDummyItem = { ...item, title: 'x'.repeat(MIN_VISIBLE_TITLE_CHARS) } as ContainerItemType;
+                const minHeaderForFifteen = computeNaturalTabScreenW(fifteenCharDummyItem, { hasSubGroups: hdrHasSubGroups, isFocused });
                 // Floor-clamp: the effective min can never exceed the
-                // item's current size. If the user shrunk the capsule
-                // below authoredWMin/authoredHMin and then expanded,
-                // the expanded handle would otherwise snap w/h up to
-                // the min on first drag. This lets them hold their
-                // current small size; they just can't shrink further.
-                const effMinW = Math.min(item.w, Math.max(authoredWMin, naturalHeaderW));
+                // item's current size, so a previously-shrunk group
+                // doesn't snap back up on first drag.
+                const effMinW = Math.min(item.w, Math.max(authoredWMin, minHeaderForFifteen));
                 const effMinH = Math.min(item.h, authoredHMin);
                 return (
                     <ResizeHandle

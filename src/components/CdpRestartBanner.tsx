@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Globe, X, Loader2, Check } from 'lucide-react';
+import { t, useLocale } from '../i18n/strings';
 
 interface CdpRestartBannerProps {
     browsers: string[]; // ['chrome', 'edge'] — which browsers need restart
@@ -7,6 +8,7 @@ interface CdpRestartBannerProps {
 }
 
 export function CdpRestartBanner({ browsers, onDismiss }: CdpRestartBannerProps) {
+    useLocale();
     const [restarting, setRestarting] = useState<string | null>(null);
     const [completed, setCompleted] = useState<Set<string>>(new Set());
 
@@ -38,7 +40,7 @@ export function CdpRestartBanner({ browsers, onDismiss }: CdpRestartBannerProps)
             <div className="mx-4 my-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 backdrop-blur-sm p-3" style={{ WebkitAppRegion: 'no-drag' } as any}>
                 <div className="flex items-center gap-2 text-emerald-400 text-xs">
                     <Check size={14} />
-                    <span>Browser integration enabled. Your tabs are being restored. This is a one-time setup.</span>
+                    <span>{t('cdp.integration_done')}</span>
                 </div>
             </div>
         );
@@ -52,9 +54,9 @@ export function CdpRestartBanner({ browsers, onDismiss }: CdpRestartBannerProps)
                         <Globe size={14} className="text-blue-400" />
                     </div>
                     <div className="flex-1 min-w-0">
-                        <div className="text-white/80 text-xs font-medium mb-1">Enable full browser integration</div>
+                        <div className="text-white/80 text-xs font-medium mb-1">{t('cdp.title')}</div>
                         <div className="text-white/35 text-[10px] mb-2.5">
-                            KLYPIX can read web pages directly. Restart each browser once to enable. Your tabs will be restored automatically.
+                            {t('cdp.desc')}
                         </div>
                         <div className="flex items-center gap-2 flex-wrap">
                             {browsers.map(browser => {
@@ -74,7 +76,7 @@ export function CdpRestartBanner({ browsers, onDismiss }: CdpRestartBannerProps)
                                         className="flex items-center gap-1.5 px-2.5 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white/60 text-[11px] transition-all cursor-pointer disabled:opacity-50"
                                     >
                                         {restarting === browser ? <Loader2 size={10} className="animate-spin" /> : null}
-                                        Restart {label}
+                                        {t('cdp.restart')} {label}
                                     </button>
                                 );
                             })}
@@ -82,7 +84,7 @@ export function CdpRestartBanner({ browsers, onDismiss }: CdpRestartBannerProps)
                                 onClick={onDismiss}
                                 className="text-white/25 text-[10px] hover:text-white/40 transition-colors cursor-pointer ml-auto"
                             >
-                                {completed.size > 0 ? 'Done' : 'Not now'}
+                                {completed.size > 0 ? t('cdp.done') : t('cdp.not_now')}
                             </button>
                         </div>
                     </div>
