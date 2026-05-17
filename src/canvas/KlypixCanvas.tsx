@@ -1,5 +1,23 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { FilePlus2, FolderOpen, Save, Paperclip, Pin, Copy, Home as HomeIcon } from 'lucide-react';
+import { FilePlus2, FolderOpen, Save, SaveAll, X as CloseIcon, Paperclip, Pin, Copy, Home as HomeIcon } from 'lucide-react';
+import { t as tLocale, useLocale } from '../i18n/strings';
+
+// Map raw tool keys → translation keys for the bottom-right status bar.
+// Falls through to the raw key (e.g. for canvas-internal tools we haven't
+// added translations for) so unknown tools still display readable text.
+function translateTool(tool: string): string {
+    const map: Record<string, string> = {
+        select: 'status.select_tool',
+        pen: 'status.pen_tool',
+        type: 'status.text_tool',
+        box: 'status.box_tool',
+        line: 'status.line_tool',
+        eraser: 'status.eraser_tool',
+        connect: 'status.connect_tool',
+    };
+    const key = map[tool];
+    return key ? tLocale(key as any) : tool;
+}
 import { CanvasStoreProvider, useCanvasStore } from './state/canvasStore';
 import { CanvasRenderer } from './CanvasRenderer';
 import { Toolbar } from './interaction/Toolbar';
@@ -7,6 +25,7 @@ import { useCanvasInteraction } from './interaction/useCanvasInteraction';
 import { useCanvasKeyboardShortcuts } from './interaction/useKeyboardShortcuts';
 import { useAnyFile } from './file/useAnyFile';
 import { fileToItem } from './file/dropHandler';
+import { folderToItem } from './file/folderToZip';
 import { base64ToBytes } from './file/assetRegistry';
 import { ocrImageAsset } from './file/ocrImage';
 import { suggestTags } from './file/autoTag';
@@ -42,13 +61,14 @@ import {
     getCollapsedRenderW,
     computeCapsuleRenderMetrics,
     DOT_SCREEN_PX,
+    computeNaturalTabScreenW,
 } from './items/ContainerItem';
 import type { CanvasLinkItem as CanvasLinkItemType } from './items/types';
 import { useGridSettings, hexToRgba, gridAlphaFor, isDarkBackground, defaultTextColorFor, getCurrentGridSettings } from './gridSettings';
 import { CanvasSettingsPopover } from './interaction/CanvasSettingsPopover';
 import { createAudioTranscribeController, type VoiceStatus } from './interaction/audioTranscribe';
 import { setDictateIntoHandler } from './interaction/voiceBridge';
-import { Search as SearchIcon, List, Layers, Play, Mic, History as HistoryIcon, Stamp as StampIcon, Filter as FilterIcon, FilePlus as LinkPlusIcon, Maximize2 as FitIcon, Loader2 } from 'lucide-react';
+import { Search as SearchIcon, List, Layers, Play, Mic, History as HistoryIcon, Stamp as StampIcon, Filter as FilterIcon, FilePlus as LinkPlusIcon, Maximize2 as FitIcon, Loader2, Square as StopIcon } from 'lucide-react';
 import { newId } from './items/types';
 import type { CanvasItem, ContainerItem, TextItem, StyleRun } from './items/types';
 import { applyStyleToRange, getSelectionStyle, type ItemTextDefaults } from './items/styleRuns';
@@ -115,6 +135,12 @@ interface TabInfo {
     // this path once on mount then clear. Used by canvas-to-canvas link
     // clicks that want a new tab preloaded with a specific .any file.
     pendingOpenPath?: string;
+    // One-shot signal: open the Canvas dashboard ("launcher") on mount.
+    // Set by onCloseTab when the user closed the LAST tab — gives them a
+    // "what now?" surface (New / Open / Recent / Shared) instead of dropping
+    // into a blank Untitled with no obvious next step. Consumed once and
+    // cleared so re-mounts (e.g. tab switch in/out) don't keep popping it.
+    openLauncherOnMount?: boolean;
 }
 
 let tabIdCounter = 0;
@@ -136,6 +162,16 @@ export function KlypixCanvas({ appVisible = true }: KlypixCanvasProps) {
         meta: { id: '', title: 'Untitled', dirty: false },
     }]);
     const [activeId, setActiveId] = useState<string>(() => tabs[0].id);
+    // Parent-owned launcher signal — keyed by tab id. Avoids relying on a
+    // useState-init reading a one-shot prop on the child (which was missing
+    // in some build/timing scenarios). When set to a tab id, the matching
+    // CanvasSurface must show the launcher dashboard until dismissed.
+    const [launcherForTabId, setLauncherForTabId] = useState<string | null>(null);
+    // Keep tabs in a ref so onCloseTab can read fresh values without listing
+    // `tabs` as a useCallback dep (which would recreate the callback on every
+    // tab change and re-render every FileOpButton that takes it).
+    const tabsRef = useRef(tabs);
+    tabsRef.current = tabs;
 
     const onMetaChange = useCallback((tabId: string, meta: { title: string; dirty: boolean }) => {
         setTabs((ts) => {
@@ -164,25 +200,36 @@ export function KlypixCanvas({ appVisible = true }: KlypixCanvasProps) {
     }, [onNewTab]);
 
     const onCloseTab = useCallback((id: string) => {
-        setTabs((ts) => {
-            const t = ts.find((x) => x.id === id);
-            if (!t) return ts;
-            if (t.meta.dirty && !window.confirm(`Close "${t.meta.title}"? Unsaved changes will be lost.`)) return ts;
-            const next = ts.filter((x) => x.id !== id);
-            // Never leave zero tabs open — spawn a fresh one.
-            if (next.length === 0) {
-                const fresh = makeTabId();
-                setActiveId(fresh);
-                return [{ id: fresh, meta: { id: fresh, title: 'Untitled', dirty: false } }];
-            }
-            // If we closed the active tab, jump to the neighbor to its left (or right).
-            if (id === activeId) {
-                const idx = ts.findIndex((x) => x.id === id);
-                const pick = next[Math.max(0, idx - 1)] || next[0];
-                setActiveId(pick.id);
-            }
-            return next;
-        });
+        // Read from ref to avoid setState-from-updater (which can fire twice
+        // in StrictMode and produces inconsistent fresh-id between setTabs
+        // and setActiveId). Top-level setState calls are auto-batched in
+        // React 18, so this still applies in a single render.
+        const ts = tabsRef.current;
+        const t = ts.find((x) => x.id === id);
+        if (!t) return;
+        if (t.meta.dirty && !window.confirm(`${tLocale('canvas.close_tab_q')} "${t.meta.title}" — ${tLocale('canvas.discard_tab')}`)) return;
+        const next = ts.filter((x) => x.id !== id);
+        // Never leave zero tabs open — spawn a fresh one. Mark it as needing
+        // the launcher via parent-owned state so the child can't miss the
+        // signal regardless of how it consumes props.
+        if (next.length === 0) {
+            const fresh = makeTabId();
+            setTabs([{
+                id: fresh,
+                meta: { id: fresh, title: 'Untitled', dirty: false },
+                openLauncherOnMount: true,
+            }]);
+            setActiveId(fresh);
+            setLauncherForTabId(fresh);
+            return;
+        }
+        // If we closed the active tab, jump to the neighbor to its left (or right).
+        if (id === activeId) {
+            const idx = ts.findIndex((x) => x.id === id);
+            const pick = next[Math.max(0, idx - 1)] || next[0];
+            setActiveId(pick.id);
+        }
+        setTabs(next);
     }, [activeId]);
 
     const tabMetas = tabs.map((t) => t.meta);
@@ -217,6 +264,9 @@ export function KlypixCanvas({ appVisible = true }: KlypixCanvasProps) {
                                 tabActive={t.id === activeId && appVisible}
                                 onMetaChange={(meta) => onMetaChange(t.id, meta)}
                                 pendingOpenPath={t.pendingOpenPath}
+                                openLauncherOnMount={t.openLauncherOnMount || launcherForTabId === t.id}
+                                onLauncherDismissed={launcherForTabId === t.id ? () => setLauncherForTabId(null) : undefined}
+                                onCloseCanvas={() => onCloseTab(t.id)}
                             />
                         </CanvasStoreProvider>
                     </div>
@@ -231,9 +281,20 @@ interface CanvasSurfaceProps {
     onMetaChange?: (meta: { title: string; dirty: boolean }) => void;
     /** Open this .any file once on mount (used for canvas-to-canvas links). */
     pendingOpenPath?: string;
+    /** Open the canvas launcher (dashboard) on mount. Derived in the parent
+     *  from a tab-id-keyed state so the signal can't get lost — set after
+     *  a close, cleared when the child dismisses. */
+    openLauncherOnMount?: boolean;
+    /** Called when the launcher is dismissed (action clicked, Esc, or click
+     *  outside the card). Only set when openLauncherOnMount is parent-owned;
+     *  lets the parent clear its launcherForTabId state. */
+    onLauncherDismissed?: () => void;
+    /** Close THIS canvas tab. Parent decides what to do when the last tab
+     *  closes (currently: spawn a fresh Untitled). */
+    onCloseCanvas?: () => void;
 }
 
-function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: CanvasSurfaceProps = {}) {
+function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath, openLauncherOnMount, onLauncherDismissed, onCloseCanvas }: CanvasSurfaceProps = {}) {
     const { state, dispatch, commit, pushSnapshot, undo } = useCanvasStore();
     // Banner shown when a drag auto-grew a parent because a child overflowed.
     // Lets the user pick: deparent (Yes), keep + extend (No), or revert
@@ -276,7 +337,12 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
     // every state change (keeps the window listener stable).
     const stateRef = useRef(state);
     stateRef.current = state;
-    const file = useAnyFile(tabActive);
+    // Close-spawned tabs skip the autosave restore prompt — the user
+    // explicitly closed something; we shouldn't pop a native confirm
+    // dialog at them, and on always-on-top Electron windows that dialog
+    // can render invisibly behind the overlay (which was leaving the
+    // chrome looking frozen after a close).
+    const file = useAnyFile(tabActive, !!openLauncherOnMount);
     // Consume pendingOpenPath (set by canvas-to-canvas link clicks) exactly
     // once — a ref prevents StrictMode's double-mount from opening twice.
     const pendingConsumedRef = useRef(false);
@@ -377,20 +443,44 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
         // in state (spec Issue 5). Counter persists across saves via
         // anyFormat.ts and never decrements on rename/delete, so a user
         // who renames "Group 1" still gets "Group 3" on the next create.
+        //
+        // Localized at CREATION TIME using the user's current locale, then
+        // baked into the canvas file. Never mutated by later locale flips
+        // (a group authored in English stays "Group 1" even if the user
+        // switches the UI to Arabic later). Matches the "your authored
+        // content doesn't change under you" expectation.
         const groupNumber = s.nextGroupNumber || 1;
+        const groupTitle = tLocale('canvas.group_default_name').replace('{n}', String(groupNumber));
+        // Minimum group width: enough to fit 15 visible characters of
+        // title + all the standard header icons (chevron + count + lock +
+        // optional sub-group + enter/exit). Without this, a group
+        // wrapped around a tiny selection ended up narrower than the
+        // header could display — flex layout collapsed the title to 0
+        // width and the user just saw the count badge with no title.
+        // Computed against a 15-char dummy title so the floor doesn't
+        // grow with the actual title's length; longer titles truncate
+        // with "…" above this floor as the user resizes.
+        const MIN_VISIBLE_TITLE_CHARS = 15;
+        const hasSubGroups = itemIds.some(id => s.items[id]?.type === 'container');
+        const minHeaderW = computeNaturalTabScreenW(
+            { title: 'x'.repeat(MIN_VISIBLE_TITLE_CHARS) } as ContainerItem,
+            { hasSubGroups, isFocused: false },
+        );
+        const contentW = (maxX - minX) + PAD * 2;
+        const finalW = Math.max(contentW, minHeaderW);
         const container: ContainerItem = {
             id: newId('ctn'),
             type: 'container',
             x: minX - PAD,
             y: minY - PAD - TITLE,
-            w: (maxX - minX) + PAD * 2,
+            w: finalW,
             h: (maxY - minY) + PAD * 2 + TITLE,
             zIndex: 0,
             locked: false,
             parentId: null,
             createdAt: Date.now(),
             createdBy: 'user',
-            title: `Group ${groupNumber}`,
+            title: groupTitle,
             collapsed: false,
             scopeLocked: false,
             borderColor: 'rgba(16,185,129,0.35)',
@@ -576,6 +666,24 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
     // demand without losing their current work — clicking a row, "New",
     // or pressing Esc dismisses it back to whatever they were doing.
     const [manualDashboardOpen, setManualDashboardOpen] = useState(false);
+    // Close-recovery launcher: when the parent spawns this tab after a
+    // close (openLauncherOnMount=true), the dashboard shows on every
+    // render UNTIL the user explicitly dismisses it. We compute it from
+    // prop+dismiss-flag instead of seeding a useState — eliminates any
+    // race with autosave-restore effects, prop-arrival timing, or React
+    // bailing on a useState init.
+    const [launcherDismissed, setLauncherDismissed] = useState(false);
+    const launcherShouldShow = !!openLauncherOnMount && !launcherDismissed;
+    // Sticky "this tab has been worked in" flag. Flips true the moment
+    // the canvas has any content (item, stroke, line, or connection) and
+    // STAYS true even after the user deletes everything back to zero.
+    // Without this, the auto-show-when-empty path at L1488 would re-open
+    // the dashboard every time the user clears their work — interpreting
+    // "I just emptied the canvas to start over" as "I want to pick a
+    // different canvas," which it isn't. Resets when the loaded file
+    // changes (open / new tab) so a fresh tab starts in the empty state
+    // that auto-shows the launcher again.
+    const [hasInteracted, setHasInteracted] = useState(false);
     const [threadItemId, setThreadItemId] = useState<string | null>(null);
     const [commentsItemId, setCommentsItemId] = useState<string | null>(null);
     // Register the comments opener so ItemBadges can call it from outside
@@ -662,7 +770,16 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
                 color: defaultTextColorFor(bgColor),
                 border: true,
                 borderColor: 'rgba(16,185,129,0.4)',
-                fillColor: 'rgba(18,18,26,0.85)',
+                // Theme-aware fill so the card visually sits on the
+                // current canvas instead of clashing. Dark canvas keeps
+                // the original deep slate; light canvas gets a soft
+                // near-white tint that contrasts both the background AND
+                // the dark text color picked above. Without this, a chat
+                // card landed on a light canvas as an out-of-place dark
+                // block with light text on light bg (unreadable).
+                fillColor: isDarkBackground(bgColor)
+                    ? 'rgba(18,18,26,0.85)'
+                    : 'rgba(240,240,245,0.92)',
                 heading: false,
             };
             dispatch({ type: 'ADD_ITEM', item: node });
@@ -783,7 +900,7 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
                 if (sinkRef.current.kind === 'card') {
                     setTranscription({ status: 'error', message: err.message || 'Transcription failed' });
                 } else {
-                    window.alert(`Voice error: ${err.message || 'Transcription failed'}`);
+                    window.alert(`${tLocale('canvas.voice_error')}: ${err.message || tLocale('canvas.transcription_failed')}`);
                 }
                 setVoiceStatus('idle');
                 sinkRef.current = { kind: 'center' };
@@ -793,7 +910,7 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
             setVoiceStatus('idle');
             sinkRef.current = { kind: 'center' };
             if (sink.kind === 'card') setTranscription(null);
-            window.alert('Microphone access denied. Please allow microphone access in system settings.');
+            window.alert(tLocale('canvas.mic_denied'));
         }
         return ok;
     };
@@ -878,7 +995,8 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
         setIsDragOver(false);
     }, []);
     const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
-        if (!e.dataTransfer?.files?.length) return;
+        const dt = e.dataTransfer;
+        if (!dt || (!dt.files?.length && !dt.items?.length)) return;
         e.preventDefault();
         e.stopPropagation();
         setIsDragOver(false);
@@ -889,16 +1007,59 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
         const screen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
         const world = screenToWorld(screen, state.view);
 
-        const files = Array.from(e.dataTransfer.files);
-        const zStart = state.order.length;
-        for (let i = 0; i < files.length; i++) {
-            const item = await fileToItem(files[i], { x: world.x, y: world.y, zIndexStart: zStart, viewZoom: stateRef.current.view.zoom }, i);
-            if (item) {
-                commit({ type: 'ADD_ITEM', item });
-                kickAutoTag(item, files[i], dispatch);
+        // Snapshot dropped entries SYNCHRONOUSLY — `dataTransfer.items` and
+        // any webkitGetAsEntry() call become invalid once the drop handler
+        // returns control to the browser. File / DirectoryEntry objects
+        // themselves remain usable across awaits, so collect them first
+        // then process async below.
+        type Drop = { kind: 'file'; file: File } | { kind: 'dir'; entry: FileSystemDirectoryEntry };
+        const drops: Drop[] = [];
+        if (dt.items?.length) {
+            for (let i = 0; i < dt.items.length; i++) {
+                const it = dt.items[i];
+                if (it.kind !== 'file') continue;
+                const entry = it.webkitGetAsEntry?.();
+                if (entry?.isDirectory) {
+                    drops.push({ kind: 'dir', entry: entry as FileSystemDirectoryEntry });
+                } else {
+                    const f = it.getAsFile();
+                    if (f) drops.push({ kind: 'file', file: f });
+                }
             }
         }
-    }, [state.view, state.order.length, commit]);
+        // Legacy fallback if items is empty (synthetic drag events etc).
+        if (drops.length === 0 && dt.files?.length) {
+            for (const f of Array.from(dt.files)) drops.push({ kind: 'file', file: f });
+        }
+
+        const zStart = state.order.length;
+        for (let i = 0; i < drops.length; i++) {
+            const d = drops[i];
+            if (d.kind === 'dir') {
+                // Packing a large folder takes time (read + zip every file).
+                // Surface a toast so the user knows the canvas didn't lock up.
+                setToast({ text: `Packing folder ${d.entry.name}…`, id: Date.now() });
+                const res = await folderToItem(d.entry, {
+                    x: world.x, y: world.y, zIndexStart: zStart, viewZoom: stateRef.current.view.zoom,
+                }, i);
+                if (res?.item) {
+                    commit({ type: 'ADD_ITEM', item: res.item });
+                    const total = res.item.folderTotalSize ?? 0;
+                    const mb = (total / 1024 / 1024).toFixed(1);
+                    setToast({
+                        text: `Embedded ${res.item.folderEntryCount} files (${mb} MB)${res.item.folderSkipped ? `, ${res.item.folderSkipped.length} skipped` : ''}`,
+                        id: Date.now(),
+                    });
+                }
+            } else {
+                const item = await fileToItem(d.file, { x: world.x, y: world.y, zIndexStart: zStart, viewZoom: stateRef.current.view.zoom }, i);
+                if (item) {
+                    commit({ type: 'ADD_ITEM', item });
+                    kickAutoTag(item, d.file, dispatch);
+                }
+            }
+        }
+    }, [state.view, state.order.length, commit, dispatch]);
 
     // Ctrl+V / Cmd+V paste into the canvas. Handles the three common cases:
     //   - Files from file explorer (pasted after copy) → route through
@@ -1122,11 +1283,17 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
             } else if (k === 'n') {
                 e.preventDefault();
                 file.newFile();
+            } else if (k === 'w' && !e.shiftKey) {
+                // Ctrl+W closes the current canvas tab. Defers to the parent
+                // (KlypixCanvas) which handles the dirty-confirm + last-tab
+                // → fresh-Untitled fallback.
+                e.preventDefault();
+                onCloseCanvas?.();
             }
         };
         window.addEventListener('keydown', handler);
         return () => window.removeEventListener('keydown', handler);
-    }, [file]);
+    }, [file, onCloseCanvas]);
 
     // Space-held hand-pan wins over the tool's native cursor.
     const cursor =
@@ -1162,6 +1329,24 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
         && Object.keys(state.lines).length === 0
         && Object.keys(state.strokes).length === 0
         && Object.keys(state.connections).length === 0;
+
+    // Flip hasInteracted the first time the canvas becomes non-empty in
+    // this tab session. Once set it never auto-clears — that's the whole
+    // point: "user has touched this tab" should outlive a delete-everything
+    // gesture. The flag clears on state.filePath changes (file open / new
+    // tab) below.
+    useEffect(() => {
+        if (!isEmpty && !hasInteracted) setHasInteracted(true);
+    }, [isEmpty, hasInteracted]);
+
+    // Reset interaction flag when the loaded file changes. Loading a new
+    // file should put that tab back into "no history yet" state so the
+    // auto-launcher CAN show again if that file is empty too. Same for
+    // explicit "new canvas" — handled by tab swap which resets the whole
+    // component tree, so this effect is just the file-load path.
+    useEffect(() => {
+        setHasInteracted(false);
+    }, [state.filePath]);
 
     // Item count displayed in the bottom-right indicator. Excludes empty
     // text items — these are ghosts from T-tool clicks the user didn't
@@ -1346,12 +1531,35 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
                 document.body, so without it inactive tabs (e.g. canvas mode
                 hidden while user is in chat) would punch the dashboard onto
                 document.body over the chat UI. */}
-            {tabActive && (manualDashboardOpen || (isEmpty && !state.filePath)) && (
+            {tabActive && (manualDashboardOpen || launcherShouldShow || (isEmpty && !state.filePath && !hasInteracted)) && (
                 <CanvasDashboard
-                    onOpenRecent={(p) => { setManualDashboardOpen(false); return file.openByPath(p); }}
-                    onOpenFile={() => { setManualDashboardOpen(false); return file.open(); }}
-                    onNewCanvas={() => { setManualDashboardOpen(false); file.newFile(); }}
-                    onDismiss={manualDashboardOpen ? () => setManualDashboardOpen(false) : undefined}
+                    onOpenRecent={(p) => {
+                        setManualDashboardOpen(false);
+                        setLauncherDismissed(true);
+                        onLauncherDismissed?.();
+                        return file.openByPath(p);
+                    }}
+                    onOpenFile={() => {
+                        setManualDashboardOpen(false);
+                        setLauncherDismissed(true);
+                        onLauncherDismissed?.();
+                        return file.open();
+                    }}
+                    onNewCanvas={() => {
+                        setManualDashboardOpen(false);
+                        setLauncherDismissed(true);
+                        onLauncherDismissed?.();
+                        file.newFile();
+                    }}
+                    onDismiss={
+                        (manualDashboardOpen || launcherShouldShow)
+                            ? () => {
+                                setManualDashboardOpen(false);
+                                setLauncherDismissed(true);
+                                onLauncherDismissed?.();
+                            }
+                            : undefined
+                    }
                 />
             )}
             {isEmpty && state.filePath && (() => {
@@ -1364,9 +1572,9 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
                 return (
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                         <div className="text-center">
-                            <div className="text-sm font-medium tracking-wide" style={{ color: primary }}>click anywhere to start typing</div>
+                            <div className="text-sm font-medium tracking-wide" style={{ color: primary }}>{tLocale('canvas.empty_click')}</div>
                             <div className="text-[11px] tracking-[0.18em] uppercase mt-2" style={{ color: secondary }}>
-                                T V B L P C · drop files · / for agent · ctrl+0 fit
+                                {tLocale('canvas.empty_shortcuts')}
                             </div>
                         </div>
                     </div>
@@ -1914,7 +2122,7 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
                                 try {
                                     saveTemplate(name, items, connections);
                                 } catch (err: any) {
-                                    window.alert('Save failed: ' + (err?.message || String(err)));
+                                    window.alert(tLocale('canvas.save_failed') + ': ' + (err?.message || String(err)));
                                 }
                                 setInlinePrompt(null);
                             },
@@ -2183,32 +2391,37 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
                 center FAB (see below) so dictation has its own space and
                 doesn't get lost in the file-ops cluster. */}
             <div data-canvas-ui="1" className="absolute top-3 left-3 z-20 no-drag flex items-center gap-1 px-1 py-1 rounded-full bg-black/60 border border-white/10">
-                <FileOpButton label="Home (Recent + Shared)" onClick={() => setManualDashboardOpen(true)}><HomeIcon size={13} /></FileOpButton>
+                <FileOpButton label={tLocale('canvas_top.home')} onClick={() => setManualDashboardOpen(true)}><HomeIcon size={13} /></FileOpButton>
                 <span className="w-px h-4 bg-white/10 mx-0.5" />
-                <FileOpButton label="New (Ctrl+N)" onClick={file.newFile}><FilePlus2 size={13} /></FileOpButton>
-                <FileOpButton label="Open (Ctrl+O)" onClick={file.open}><FolderOpen size={13} /></FileOpButton>
-                <FileOpButton label="Save (Ctrl+S)" onClick={file.save}><Save size={13} /></FileOpButton>
-                <FileOpButton label={state.filePath ? 'Share canvas' : 'Save first, then share'} onClick={() => setShareOpen(true)}><Share2 size={13} /></FileOpButton>
+                <FileOpButton label={tLocale('canvas_top.new_short')} onClick={file.newFile}><FilePlus2 size={13} /></FileOpButton>
+                <FileOpButton label={tLocale('canvas_top.open_short')} onClick={file.open}><FolderOpen size={13} /></FileOpButton>
+                <FileOpButton label={tLocale('canvas_top.save_short')} onClick={file.save}><Save size={13} /></FileOpButton>
+                <FileOpButton label={tLocale('canvas_top.save_as_short')} onClick={file.saveAs}><SaveAll size={13} /></FileOpButton>
+                <FileOpButton label={tLocale('canvas_top.close_canvas')} onClick={() => onCloseCanvas?.()}><CloseIcon size={13} /></FileOpButton>
+                <FileOpButton label={state.filePath ? tLocale('canvas_top.share_canvas') : tLocale('canvas_top.save_first_share')} onClick={() => setShareOpen(true)}><Share2 size={13} /></FileOpButton>
                 <span className="w-px h-4 bg-white/10 mx-0.5" />
-                <FileOpButton label="Search (Ctrl+F)" onClick={() => setSearchOpen(true)}><SearchIcon size={13} /></FileOpButton>
-                <FileOpButton label="Outline" onClick={() => setOutlineOpen(v => !v)}><List size={13} /></FileOpButton>
-                <FileOpButton label="Layers" onClick={() => setLayersOpen(v => !v)}><Layers size={13} /></FileOpButton>
-                <FileOpButton label="Present" onClick={() => setPresenting(true)}><Play size={13} /></FileOpButton>
-                <FileOpButton label="Version history" onClick={() => setVersionsOpen(v => !v)}><HistoryIcon size={13} /></FileOpButton>
-                <FileOpButton label="Templates" onClick={() => setTemplatesOpen(v => !v)}><StampIcon size={13} /></FileOpButton>
-                <FileOpButton label={state.statusFilterHidden.length > 0 ? `Smart collections — ${state.statusFilterHidden.length} status${state.statusFilterHidden.length === 1 ? '' : 'es'} hidden` : 'Smart collections'} onClick={() => setCollectionsOpen(v => !v)} indicator={state.statusFilterHidden.length > 0}><FilterIcon size={13} /></FileOpButton>
-                <FileOpButton label="Link to canvas" onClick={insertCanvasLink}><LinkPlusIcon size={13} /></FileOpButton>
+                <FileOpButton label={tLocale('canvas_top.search_short')} onClick={() => setSearchOpen(true)}><SearchIcon size={13} /></FileOpButton>
+                <FileOpButton label={tLocale('canvas_top.outline')} onClick={() => setOutlineOpen(v => !v)}><List size={13} /></FileOpButton>
+                <FileOpButton label={tLocale('canvas_top.layers')} onClick={() => setLayersOpen(v => !v)}><Layers size={13} /></FileOpButton>
+                <FileOpButton label={tLocale('canvas_top.present')} onClick={() => setPresenting(true)}><Play size={13} /></FileOpButton>
+                <FileOpButton label={tLocale('canvas_top.history')} onClick={() => setVersionsOpen(v => !v)}><HistoryIcon size={13} /></FileOpButton>
+                <FileOpButton label={tLocale('canvas_top.templates')} onClick={() => setTemplatesOpen(v => !v)}><StampIcon size={13} /></FileOpButton>
+                <FileOpButton label={state.statusFilterHidden.length > 0 ? `${tLocale('canvas_top.smart_collections')} — ${state.statusFilterHidden.length}` : tLocale('canvas_top.smart_collections')} onClick={() => setCollectionsOpen(v => !v)} indicator={state.statusFilterHidden.length > 0}><FilterIcon size={13} /></FileOpButton>
+                <FileOpButton label={tLocale('canvas_top.link_to_canvas')} onClick={insertCanvasLink}><LinkPlusIcon size={13} /></FileOpButton>
                 <span className="w-px h-4 bg-white/10 mx-0.5" />
                 <CanvasSettingsPopover />
             </div>
 
-            {/* File title + tool/zoom/item indicator — bottom right */}
+            {/* File title + tool/zoom/item indicator — bottom right. Title
+                'Untitled' is the canonical state value (kept in English so
+                .klypix files don't change shape across locales); we only
+                translate it at display time. Same for the tool name. */}
             <div data-canvas-ui="1" className="absolute bottom-3 right-3 z-20 no-drag flex items-center gap-2 px-2.5 py-1 rounded-full bg-black/60 border border-white/10 text-[10px] text-white/50 font-medium tracking-wider uppercase">
                 <span className={state.isDirty ? 'text-amber-300' : 'text-white/70'}>
-                    {state.isDirty ? '• ' : ''}{state.title}
+                    {state.isDirty ? '• ' : ''}{state.title === 'Untitled' ? tLocale('status.untitled') : state.title}
                 </span>
                 <span className="text-white/20">·</span>
-                <span className="text-emerald-300">{state.tool}</span>
+                <span className="text-emerald-300">{translateTool(state.tool)}</span>
                 <span className="text-white/20">·</span>
                 <ZoomControl
                     zoom={state.view.zoom}
@@ -2239,7 +2452,9 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
                     }}
                 />
                 <span className="text-white/20">·</span>
-                <span>{displayedItemCount} {displayedItemCount === 1 ? 'item' : 'items'}</span>
+                <span>{displayedItemCount === 1
+                    ? tLocale('canvas.item_count_one')
+                    : tLocale('canvas.items_count').replace('{n}', String(displayedItemCount))}</span>
             </div>
 
             {/* Voice FAB — bottom-center. Centered normally; slides to
@@ -2271,14 +2486,14 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
                         }
                     }}
                     title={
-                        voiceStatus === 'recording' ? 'Stop & transcribe' :
+                        voiceStatus === 'recording' ? tLocale('chat.stop_recording') :
                         voiceStatus === 'transcribing' ? 'Transcribing…' :
                         'Voice (Ctrl+M)'
                     }
                     disabled={voiceStatus === 'transcribing'}
-                    className={`w-10 h-10 flex items-center justify-center rounded-full border transition-colors cursor-pointer shadow-[0_6px_20px_rgba(0,0,0,0.4)] ${
+                    className={`relative w-10 h-10 flex items-center justify-center rounded-full border transition-colors cursor-pointer shadow-[0_6px_20px_rgba(0,0,0,0.4)] group ${
                         voiceStatus === 'recording'
-                            ? 'bg-red-500/90 border-red-400/70 text-white'
+                            ? 'bg-red-500/90 border-red-400/70 text-white hover:bg-red-500'
                             : voiceStatus === 'transcribing'
                             ? 'bg-emerald-500/80 border-emerald-400/70 text-white cursor-wait'
                             : 'bg-[#12121a]/90 border-white/15 text-white/75 hover:text-white hover:bg-[#1a1a22]/95'
@@ -2287,6 +2502,16 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
                     {voiceStatus === 'recording' ? <AudioBars level={voiceLevel} />
                         : voiceStatus === 'transcribing' ? <Loader2 size={16} className="animate-spin" />
                         : <Mic size={16} />}
+                    {/* Stop badge — small filled square at the top-right of the
+                        round FAB while recording, so the "click to stop"
+                        affordance is unambiguous even though the icon area
+                        is occupied by the waveform. Ringed in the page bg
+                        so it pops off the round button's red rim. */}
+                    {voiceStatus === 'recording' && (
+                        <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-red-600 ring-2 ring-[#12121a] flex items-center justify-center shadow-sm group-hover:bg-red-500 transition-colors pointer-events-none">
+                            <StopIcon size={6} className="text-white fill-white" />
+                        </span>
+                    )}
                 </button>
             </div>
 
@@ -2337,7 +2562,7 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
                                     (window as any).electron?.copyToClipboard?.({ text: doneText, html: doneText });
                                     dismissTranscriptionCard();
                                 }}
-                                title="Copy"
+                                title={tLocale('canvas.copy')}
                                 disabled={!canAct}
                                 className="p-1.5 rounded-md text-white/40 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all disabled:opacity-30 disabled:hover:text-white/40 disabled:hover:bg-transparent"
                             >
@@ -2380,7 +2605,7 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
                                     commit({ type: 'ADD_ITEM', item });
                                     dismissTranscriptionCard();
                                 }}
-                                title="Pin to canvas"
+                                title={tLocale('canvas.pin_to_canvas')}
                                 disabled={!canAct}
                                 className="p-1.5 rounded-md text-white/40 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all disabled:opacity-30 disabled:hover:text-white/40 disabled:hover:bg-transparent"
                             >
@@ -2388,7 +2613,7 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
                             </button>
                             <button
                                 onClick={dismissTranscriptionCard}
-                                title="Dismiss"
+                                title={tLocale('canvas.dismiss')}
                                 className="p-1.5 rounded-md text-white/30 hover:text-white/70 hover:bg-white/5 transition-all"
                             >
                                 ×
@@ -2404,23 +2629,28 @@ function CanvasSurface({ tabActive = true, onMetaChange, pendingOpenPath }: Canv
 
 // Waveform inside the voice FAB while recording. Driven by the actual
 // mic amplitude (0..1) from the AudioContext analyser — matches the
-// chat-side mic's feel. Per-bar scale factors shape the middle bars
-// taller so it reads as a waveform rather than a flat bar chart.
+// chat-side mic's feel.
+//
+// 9-bar bell-curve envelope anchored via `items-center` so bars grow
+// symmetrically UP and DOWN from a horizontal midline as the user
+// speaks. Previous version used `items-end` which bottom-anchored the
+// wave — readable but visually heavy on the bottom of the round FAB.
 function AudioBars({ level }: { level: number }) {
-    const scales = [0.6, 1, 0.7, 0.9, 0.5];
-    // Below this level, treat as silence and render uniform short bars
-    // so the rest state is a clean flat row instead of a residual wave.
+    const scales = [0.3, 0.55, 0.75, 0.9, 1.0, 0.9, 0.75, 0.55, 0.3];
+    // Below this level, treat as silence and render a flat dim baseline
+    // so the rest state is clearly idle (matches the chat mic feel).
     const REST_THRESHOLD = 0.08;
     const isResting = level < REST_THRESHOLD;
+    const speakLevel = isResting ? 0 : (level - REST_THRESHOLD) / (1 - REST_THRESHOLD);
     return (
-        <div className="flex items-end gap-[2px] h-4">
+        <div className="flex items-center gap-[1.5px] h-5">
             {scales.map((scale, i) => (
                 <span
                     key={i}
-                    className="w-[2px] bg-white rounded-full"
+                    className="w-[2px] bg-white rounded-full transition-all duration-75"
                     style={{
-                        height: isResting ? '3px' : `${Math.max(3, level * scale * 16)}px`,
-                        opacity: isResting ? 0.5 : 0.5 + level * 0.5,
+                        height: isResting ? '3px' : `${Math.max(3, speakLevel * scale * 20)}px`,
+                        opacity: isResting ? 0.4 : 0.7 + speakLevel * 0.3,
                     }}
                 />
             ))}
@@ -2453,8 +2683,8 @@ function AgentToast({ text, keyVal, onDismiss, onPin }: AgentToastProps) {
             <div className="bg-[#1a1a2a]/95 backdrop-blur-xl border border-emerald-500/30 rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] px-4 py-3 flex items-start gap-3">
                 <div className="flex-1 text-[13px] text-white/90 leading-relaxed whitespace-pre-wrap">{text}</div>
                 <div className="flex items-center gap-1 shrink-0">
-                    <button onClick={onPin} title="Pin to canvas" className="p-1.5 rounded-md text-white/40 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all"><Pin size={14} /></button>
-                    <button onClick={onDismiss} title="Dismiss" className="p-1.5 rounded-md text-white/30 hover:text-white/70 hover:bg-white/5 transition-all">×</button>
+                    <button onClick={onPin} title={tLocale('canvas.pin_to_canvas')} className="p-1.5 rounded-md text-white/40 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all"><Pin size={14} /></button>
+                    <button onClick={onDismiss} title={tLocale('canvas.dismiss')} className="p-1.5 rounded-md text-white/30 hover:text-white/70 hover:bg-white/5 transition-all">×</button>
                 </div>
             </div>
         </div>
@@ -2494,7 +2724,7 @@ function ZoomControl({ zoom, onZoomTo, onFit }: ZoomControlProps) {
         <span className="flex items-center gap-1">
             <button
                 onClick={onFit}
-                title="Fit all (Ctrl+0)"
+                title={tLocale('canvas.fit_all')}
                 className="w-5 h-5 flex items-center justify-center rounded text-white/50 hover:text-white hover:bg-white/10 transition-colors"
             >
                 <FitIcon size={10} />
@@ -2522,7 +2752,7 @@ function ZoomControl({ zoom, onZoomTo, onFit }: ZoomControlProps) {
             ) : (
                 <button
                     onClick={() => { setDraft(String(currentPct)); setEditing(true); }}
-                    title="Click to set zoom (2–400%)"
+                    title={tLocale('canvas.set_zoom')}
                     className="px-1 rounded hover:bg-white/10 hover:text-white transition-colors cursor-text"
                 >
                     {currentPct}%
@@ -2530,7 +2760,7 @@ function ZoomControl({ zoom, onZoomTo, onFit }: ZoomControlProps) {
             )}
             <button
                 onClick={() => onZoomTo(1)}
-                title="Reset zoom (100%)"
+                title={tLocale('canvas.reset_zoom')}
                 className="px-1 h-5 flex items-center justify-center rounded text-white/50 hover:text-white hover:bg-white/10 transition-colors text-[9px] tracking-normal"
             >
                 1:1

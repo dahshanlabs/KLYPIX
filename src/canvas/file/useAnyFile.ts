@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useCanvasStore, type CanvasState } from '../state/canvasStore';
+import { t } from '../../i18n/strings';
 import { serialize, deserialize, titleFromPath, type CanvasDocumentV3 } from './anyFormat';
 import {
     serializeV4,
@@ -255,7 +256,15 @@ function getApi(): CanvasApi | null {
 // side effects that would otherwise fire once per inactive tab (the OS-launched
 // file-opened listener; autosave restoration). Autosave-to-disk still runs per
 // tab since each tab has its own filePath and shouldn't stall while hidden.
-export function useAnyFile(tabActive = true) {
+//
+// skipAutosaveCheck: when true, suppress the window.confirm "restore previous
+// session?" prompt on mount. Used by close-spawned tabs — the user just made
+// an explicit close decision, so popping a native modal asking about a stale
+// autosave is wrong (and on Electron always-on-top windows the native dialog
+// can render off-screen, freezing the JS thread waiting for input). The
+// autosave snapshot is still preserved on disk; the user can recover it via
+// the launcher's Recent list.
+export function useAnyFile(tabActive = true, skipAutosaveCheck = false) {
     const { state, dispatch } = useCanvasStore();
     const stateRef = useRef(state);
     stateRef.current = state;
@@ -263,7 +272,7 @@ export function useAnyFile(tabActive = true) {
     const newFile = useCallback(() => {
         const s = stateRef.current;
         if (s.isDirty) {
-            const ok = window.confirm('Discard unsaved changes and start a new canvas?');
+            const ok = window.confirm(t('canvas.discard.new'));
             if (!ok) return false;
         }
         // Release only this tab's asset refs; other tabs keep their own.
@@ -368,7 +377,7 @@ export function useAnyFile(tabActive = true) {
         if (!api?.open) return { ok: false, error: 'canvas IPC unavailable' };
         const s = stateRef.current;
         if (s.isDirty) {
-            const ok = window.confirm('Discard unsaved changes and open another canvas?');
+            const ok = window.confirm(t('canvas.discard.open_another'));
             if (!ok) return { ok: false, cancelled: true };
         }
         const res = await api.open();
@@ -394,7 +403,7 @@ export function useAnyFile(tabActive = true) {
         if (!api?.onFileOpened) return;
         const off = api.onFileOpened((path) => {
             if (stateRef.current.isDirty) {
-                const ok = window.confirm('Open the requested canvas? Unsaved changes will be lost.');
+                const ok = window.confirm(t('canvas.discard.open_requested'));
                 if (!ok) return;
             }
             openByPath(path);
@@ -471,6 +480,15 @@ export function useAnyFile(tabActive = true) {
             setRestoreSettled(false);
             return;
         }
+        // Skip the restore prompt on close-spawned tabs. The user just
+        // deliberately closed something; ambushing them with a native
+        // confirm dialog is wrong, and on always-on-top Electron windows
+        // that dialog can render invisibly behind the overlay and block
+        // the JS thread (which is why the chrome appears to vanish).
+        if (skipAutosaveCheck) {
+            setRestoreSettled(true);
+            return;
+        }
         const api = getApi();
         if (!api?.checkAutosave || !api?.openByPath) {
             setRestoreSettled(true);
@@ -484,7 +502,7 @@ export function useAnyFile(tabActive = true) {
                 return;
             }
             if (stateRef.current.order.length === 0) {
-                const ok = window.confirm(`Unsaved canvas found from a previous session. Restore?`);
+                const ok = window.confirm(t('canvas.discard.restore_session'));
                 if (ok) {
                     // Await openByPath so the drain doesn't run mid-load and
                     // get its items wiped by the subsequent RESTORE action.
@@ -499,7 +517,7 @@ export function useAnyFile(tabActive = true) {
         });
         return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [tabActive]);
+    }, [tabActive, skipAutosaveCheck]);
 
     return { newFile, save: doSave, saveAs, open, openByPath, restoreSettled };
 }

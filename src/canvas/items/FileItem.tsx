@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { File as FileIcon, FileText, FileSpreadsheet, FileImage, FileCode, FileVideo, FileAudio, FileArchive, ExternalLink } from 'lucide-react';
+import { File as FileIcon, FileText, FileSpreadsheet, FileImage, FileCode, FileVideo, FileAudio, FileArchive, ExternalLink, FolderOpen as FolderOpenIcon, Folder as FolderIcon } from 'lucide-react';
+import JSZip from 'jszip';
 import type { FileItem as FileItemType } from './types';
 import { getAsset, bytesToBase64 } from '../file/assetRegistry';
 import { ResizeHandle } from '../interaction/ResizeHandle';
@@ -112,7 +113,7 @@ function CardFooter({ item, Icon, subtitle, canvasFilePath }: CardFooterProps) {
             background: '#0f0f18',
             borderTop: '1px solid rgba(255,255,255,0.05)',
             color: '#e8e8ed',
-            fontFamily: 'Outfit, system-ui, sans-serif',
+            fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
         }}>
             <div style={{ color: '#10b981', flexShrink: 0 }}>
                 <Icon size={14} />
@@ -238,12 +239,12 @@ function FileCardBody({ item, selected }: Props) {
     // Dot mode: card reduced to an extension pill so it stays
     // recognizable at any zoom without the layout blowing up.
     if (useDotMode) {
-        const label = (item.extension || 'file').toUpperCase();
+        const label = item.isFolder ? 'FOLDER' : (item.extension || 'file').toUpperCase();
         return (
             <div data-canvas-item={item.id} style={style} className="no-drag">
                 <div style={{
                     color: '#10b981',
-                    fontFamily: 'Outfit, system-ui, sans-serif',
+                    fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
                     fontWeight: 600,
                     fontSize: Math.max(8, Math.min(item.w, item.h) * 0.28),
                     letterSpacing: '0.05em',
@@ -252,6 +253,26 @@ function FileCardBody({ item, selected }: Props) {
                 }}>
                     {label}
                 </div>
+            </div>
+        );
+    }
+
+    // Folder card — tree of embedded files with per-leaf extract. The bytes
+    // live inside the .klypix as a zipped asset, so moving the original
+    // folder elsewhere doesn't break anything: the canvas is the source of
+    // truth.
+    if (item.isFolder && item.folderManifest) {
+        // Folder cards have their own internal layout; override the row
+        // flex defaults from the shared style so the tree fills top-down.
+        const folderStyle: React.CSSProperties = {
+            ...style,
+            flexDirection: 'column',
+            alignItems: 'stretch',
+            padding: 0,
+        };
+        return (
+            <div data-canvas-item={item.id} style={folderStyle} className="no-drag">
+                <FolderCardBody item={item} />
             </div>
         );
     }
@@ -284,7 +305,7 @@ function FileCardBody({ item, selected }: Props) {
                         fontSize: 12,
                         lineHeight: 1.5,
                         color: 'rgba(255,255,255,0.82)',
-                        fontFamily: 'Outfit, system-ui, sans-serif',
+                        fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
                         background: '#0a0a0f',
                     }}
                     className="docx-preview"
@@ -342,7 +363,7 @@ function FileCardBody({ item, selected }: Props) {
             >
                 <Icon size={20} />
             </div>
-            <div style={{ flex: 1, minWidth: 0, color: '#e8e8ed', fontFamily: 'Outfit, system-ui, sans-serif' }}>
+            <div style={{ flex: 1, minWidth: 0, color: '#e8e8ed', fontFamily: 'Thmanyah Sans, system-ui, sans-serif' }}>
                 <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {item.fileName}
                 </div>
@@ -370,6 +391,172 @@ function FileCardBody({ item, selected }: Props) {
                 </button>
             )}
         </div>
+    );
+}
+
+/**
+ * Extract a single file from a folder asset and open it via the OS default
+ * app. Reuses the existing `canvas:open-asset-bytes` IPC (which writes to a
+ * sanitized temp path then `shell.openPath`s it) — no main-process change
+ * needed. The ZIP stays cached in the folder asset; we only spend CPU on
+ * the one entry the user asked for.
+ */
+async function openFolderLeaf(item: FileItemType, relPath: string): Promise<void> {
+    const api: any = (window as any).electron?.canvas;
+    if (!api?.openAssetBytes) return;
+    const asset = item.assetId ? getAsset(item.assetId) : null;
+    if (!asset) return;
+    try {
+        const zip = await JSZip.loadAsync(asset.bytes);
+        const entry = zip.file(relPath);
+        if (!entry) {
+            console.warn('[folder card] entry not found:', relPath);
+            return;
+        }
+        const bytes = await entry.async('uint8array');
+        // The basename — main-process sanitizes path separators anyway, but
+        // strip them here so the temp filename matches what the user expects.
+        const leafName = relPath.split('/').pop() || 'file';
+        await api.openAssetBytes({ fileName: leafName, base64: bytesToBase64(bytes) });
+    } catch (err) {
+        console.warn('[folder card] extract failed:', err);
+    }
+}
+
+function formatFolderBytes(n: number): string {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+function FolderCardBody({ item }: { item: FileItemType }) {
+    const manifest = item.folderManifest || [];
+    const skipped = item.folderSkipped || [];
+    const [busyPath, setBusyPath] = useState<string | null>(null);
+    const totalRaw = item.folderTotalSize ?? 0;
+    const zipSize = item.fileSize;
+
+    const openOne = async (relPath: string) => {
+        if (busyPath) return;
+        setBusyPath(relPath);
+        try {
+            await openFolderLeaf(item, relPath);
+        } finally {
+            setBusyPath(null);
+        }
+    };
+
+    return (
+        <>
+            <div style={{
+                padding: '10px 12px 8px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                borderBottom: '1px solid rgba(255,255,255,0.05)',
+                background: '#0f0f18',
+                flexShrink: 0,
+            }}>
+                <div style={{ color: '#10b981', flexShrink: 0 }}>
+                    <FolderOpenIcon size={16} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0, color: '#e8e8ed', fontFamily: 'Thmanyah Sans, system-ui, sans-serif' }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {item.fileName}
+                    </div>
+                    <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.05em', textTransform: 'uppercase', marginTop: 2 }}>
+                        FOLDER · {manifest.length} files · {formatFolderBytes(totalRaw)}
+                        {zipSize !== totalRaw && (
+                            <span style={{ color: 'rgba(16,185,129,0.6)' }}> · zip {formatFolderBytes(zipSize)}</span>
+                        )}
+                    </div>
+                </div>
+            </div>
+            <div
+                onWheel={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+                style={{
+                    flex: 1,
+                    overflowY: 'auto',
+                    overflowX: 'hidden',
+                    fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+                    fontSize: 11,
+                    color: 'rgba(255,255,255,0.8)',
+                }}
+            >
+                {manifest.length === 0 && (
+                    <div style={{ padding: '12px', fontSize: 11, color: 'rgba(255,255,255,0.4)', fontStyle: 'italic' }}>
+                        empty folder
+                    </div>
+                )}
+                {manifest.map((entry) => {
+                    const depth = (entry.path.match(/\//g) || []).length;
+                    const leaf = entry.path.split('/').pop() || entry.path;
+                    const isBusy = busyPath === entry.path;
+                    return (
+                        <div
+                            key={entry.path}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                padding: '3px 8px',
+                                paddingLeft: 8 + depth * 12,
+                                borderBottom: '1px solid rgba(255,255,255,0.03)',
+                                cursor: 'pointer',
+                                background: isBusy ? 'rgba(16,185,129,0.08)' : undefined,
+                            }}
+                            onClick={() => openOne(entry.path)}
+                            title={entry.path}
+                            className="hover:!bg-white/[0.04]"
+                        >
+                            <span style={{ color: '#10b981', flexShrink: 0, display: 'inline-flex' }}>
+                                <FileIcon size={11} />
+                            </span>
+                            <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {leaf}
+                            </span>
+                            <span style={{ flexShrink: 0, fontSize: 9, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.04em' }}>
+                                {formatFolderBytes(entry.size)}
+                            </span>
+                            <button
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onClick={(e) => { e.stopPropagation(); openOne(entry.path); }}
+                                title="Extract & open"
+                                style={{
+                                    flexShrink: 0,
+                                    padding: 3,
+                                    borderRadius: 4,
+                                    background: 'rgba(255,255,255,0.04)',
+                                    color: isBusy ? '#10b981' : 'rgba(255,255,255,0.5)',
+                                    cursor: 'pointer',
+                                }}
+                                className="hover:!bg-emerald-500/20 hover:!text-emerald-300"
+                            >
+                                <ExternalLink size={10} />
+                            </button>
+                        </div>
+                    );
+                })}
+                {skipped.length > 0 && (
+                    <div style={{
+                        padding: '6px 10px',
+                        marginTop: 4,
+                        fontSize: 10,
+                        color: 'rgba(251,191,36,0.7)',
+                        background: 'rgba(251,191,36,0.05)',
+                        borderTop: '1px solid rgba(251,191,36,0.15)',
+                    }}>
+                        <div style={{ fontWeight: 600, marginBottom: 2 }}>{skipped.length} skipped:</div>
+                        {skipped.slice(0, 6).map((s, i) => (
+                            <div key={i} style={{ opacity: 0.8 }}>· {s.path} ({s.reason})</div>
+                        ))}
+                        {skipped.length > 6 && <div style={{ opacity: 0.5 }}>… +{skipped.length - 6} more</div>}
+                    </div>
+                )}
+            </div>
+        </>
     );
 }
 

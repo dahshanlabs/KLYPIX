@@ -40,6 +40,14 @@ export interface BaseItem {
     // the field on BaseItem so TypeScript doesn't complain when text
     // / image / container items get opacity via applyToSelection.
     opacity?: number;
+    // Rotation in degrees, clockwise around the item's center. Applied
+    // as a CSS transform at render time. Optional — undefined / 0 means
+    // axis-aligned (unchanged). Only honored by item types whose render
+    // path explicitly applies it (box, image, text). Containers and
+    // drawings ignore the field. Hit-testing and resize handles in v1
+    // still use the un-rotated axis-aligned bounds (item.x/y/w/h) —
+    // visual rotation only. Shift-drag the rotate handle snaps to 15°.
+    rotation?: number;
     // Frozen geometry at the moment this item was placed inside its
     // container parent. Acts as the fixed baseline for vector-style
     // group scaling: when the container resizes, every child's current
@@ -108,7 +116,7 @@ export interface TextItem extends BaseItem {
     lineStyle?: 'solid' | 'dashed' | 'dotted';
     // Optional font family — selected from the Text panel's curated list
     // (Inter, Space Grotesk, Newsreader, JetBrains Mono, Caveat, Bricolage
-    // Grotesque). Undefined → inherit the canvas default (Outfit).
+    // Grotesque). Undefined → inherit the canvas default (Virgil).
     fontFamily?: string;
     // Optional text decoration — 'underline' toggles the U button in the
     // Text panel. Undefined / 'none' renders with no decoration.
@@ -219,6 +227,17 @@ export interface FileItem extends BaseItem {
     };
     previewHtml?: string;      // for DOCX: sanitized HTML snippet from mammoth (capped)
     previewWordCount?: number; // for DOCX: approximate word count of the source
+    // Folder embed (dropped directory). When true, `assetId` points at a ZIP
+    // asset containing the folder's contents under their original relative
+    // paths, and the fields below describe what's inside without forcing the
+    // card to unzip until the user actually requests an extract.
+    isFolder?: boolean;
+    folderManifest?: Array<{ path: string; size: number; mime: string }>;
+    folderEntryCount?: number;
+    folderTotalSize?: number;
+    // Entries skipped during ingest (per-file size cap or folder-total cap).
+    // Shown in the card so the user knows what's missing.
+    folderSkipped?: Array<{ path: string; reason: string }>;
 }
 
 // Sub-canvas / grouping frame. Items with parentId === container.id live inside.

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FilePlus2, FolderOpen, Clock, X as XIcon, Users } from 'lucide-react';
 import { useRecentCanvases } from '../../hooks/useRecentCanvases';
+import { t, useLocale } from '../../i18n/strings';
 import { useSharedCanvases, type SharedCanvas } from '../../hooks/useSharedCanvases';
 import { removeRecentCanvas } from './recentCanvasesStore';
 import type { RecentCanvas } from './recentCanvasesStore';
@@ -40,6 +41,7 @@ interface Props {
  *     less surprising than a state mutation for "I just want to start typing."
  */
 export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onNewCanvas, onDismiss }) => {
+    useLocale();
     const recents = useRecentCanvases();
     const { canvases: shared, loading: sharedLoading, leave: leaveShared } = useSharedCanvases();
     const [dismissed, setDismissed] = useState(false);
@@ -114,11 +116,18 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
             className="fixed inset-0 flex items-center justify-center"
             style={{
                 zIndex: 9998,
-                // Manual Home-button open gets a dimmed clickable backdrop so
-                // recipient can click outside the modal to close. Empty-canvas
-                // auto-show stays click-through so it doesn't feel modal.
+                // Manual / launcher open: a SUBTLE backdrop — canvas chrome
+                // (toolbar, file-ops cluster, grid) stays visible behind the
+                // card, just lightly dimmed + blurred so it's clearly inert.
+                // Backdrop captures pointer events so clicking the chrome
+                // dismisses the launcher (and then the second click lands
+                // on the chrome button normally). Empty-canvas auto-show
+                // stays fully click-through (no backdrop) so it doesn't
+                // feel modal at all.
                 pointerEvents: onDismiss ? 'auto' : 'none',
-                background: onDismiss ? 'rgba(0, 0, 0, 0.45)' : 'transparent',
+                background: onDismiss ? 'rgba(0, 0, 0, 0.18)' : 'transparent',
+                backdropFilter: onDismiss ? 'blur(2px)' : undefined,
+                WebkitBackdropFilter: onDismiss ? 'blur(2px)' : undefined,
             }}
             onPointerDown={onDismiss
                 ? (e) => { if (e.target === e.currentTarget) { e.stopPropagation(); onDismiss(); } }
@@ -142,17 +151,19 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                     backdropFilter: 'blur(20px)',
                     display: 'flex',
                     flexDirection: 'column',
-                    fontFamily: 'Outfit, system-ui, sans-serif',
+                    fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
                     color: '#e8e8ed',
                 }}
             >
                 <div style={{ marginBottom: 18, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.01em' }}>Your canvases</div>
+                        <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-0.01em' }}>{t('canvas.your_canvases')}</div>
                         <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginTop: 2 }}>
                             {recents.length === 0
-                                ? 'No canvases yet. Create one or open an existing .klypix file.'
-                                : `${recents.length} canvas${recents.length === 1 ? '' : 'es'} you have worked on.`}
+                                ? t('canvas.empty')
+                                : recents.length === 1
+                                    ? t('canvas.worked_on_count_one')
+                                    : t('canvas.worked_on_count').replace('{n}', String(recents.length))}
                         </div>
                     </div>
                     {onDismiss && (
@@ -160,8 +171,8 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                             type="button"
                             onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); onDismiss(); }}
                             onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDismiss(); }}
-                            title="Close (Esc)"
-                            aria-label="Close dashboard"
+                            title={t('canvas.close_esc')}
+                            aria-label={t('canvas.close_dashboard')}
                             style={{
                                 padding: 8,
                                 borderRadius: 8,
@@ -199,7 +210,7 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                         onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(16, 185, 129, 0.15)')}
                     >
                         <FilePlus2 size={15} />
-                        New canvas
+                        {t('canvas.new')}
                     </button>
                     <button
                         onClick={() => onOpenFile()}
@@ -218,7 +229,7 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                         onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
                     >
                         <FolderOpen size={15} />
-                        Open file...
+                        {t('canvas.open_file')}
                     </button>
                 </div>
 
@@ -235,7 +246,7 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                                 textTransform: 'uppercase', letterSpacing: '0.08em',
                                 marginBottom: 8, paddingLeft: 4,
                             }}>
-                                Recent
+                                {t('canvas.recent')}
                             </div>
                             {recents.map(entry => (
                                 <RecentRow
@@ -258,11 +269,11 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                                 display: 'flex', alignItems: 'center', gap: 6,
                             }}>
                                 <Users size={10} />
-                                Shared with you
+                                {t('canvas.shared_with_you')}
                             </div>
                             {sharedLoading && (
                                 <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', padding: '8px 12px' }}>
-                                    Loading…
+                                    {t('canvas.loading')}
                                 </div>
                             )}
                             {!sharedLoading && shared.map(entry => (
@@ -272,11 +283,9 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                                     opening={openingPath === entry.blob_id}
                                     onOpen={() => handleOpenShared(entry)}
                                     onLeave={() => {
-                                        const title = entry.canvas_blobs?.title_hint || 'this canvas';
+                                        const title = entry.canvas_blobs?.title_hint || t('canvas.this_canvas');
                                         const ok = window.confirm(
-                                            `Remove "${title}" from your shared list?\n\n` +
-                                            `You won't be able to open it again unless the owner re-invites you. ` +
-                                            `Your local downloaded copy (if any) is not affected.`
+                                            `${t('canvas.leave_shared_q')} "${title}"\n\n${t('canvas.leave_shared_warn')}`
                                         );
                                         if (ok) leaveShared(entry.blob_id);
                                     }}
@@ -364,7 +373,7 @@ function SharedRow({ entry, opening, onOpen, onLeave }: SharedRowProps) {
             <button
                 onPointerDown={(e) => { e.stopPropagation(); }}
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); onLeave(); }}
-                title="Remove from shared list (unlink yourself — owner is not notified)"
+                title={t('canvas.remove_shared')}
                 aria-label="Leave shared canvas"
                 style={{
                     padding: 4, borderRadius: 5,
@@ -396,6 +405,13 @@ interface RecentRowProps {
 
 function RecentRow({ entry, opening, onOpen, onRemove }: RecentRowProps) {
     const fileName = entry.filePath.split(/[\\/]/).pop() || entry.filePath;
+    // "Untitled" / "Untitled canvas" is the SENTINEL value canvases get
+    // when the user hasn't named them. We don't want to mutate the saved
+    // title in the .klypix file (that would change the file's identity
+    // across locales), so localize at display time only. User-chosen
+    // titles render verbatim.
+    const isUntitledSentinel = entry.title === 'Untitled' || entry.title === 'Untitled canvas';
+    const displayTitle = isUntitledSentinel ? t('canvas.untitled_canvas') : entry.title;
     return (
         <div
             // onPointerDown fires BEFORE any canvas pen tool can call
@@ -422,11 +438,11 @@ function RecentRow({ entry, opening, onOpen, onRemove }: RecentRowProps) {
                 flexShrink: 0,
                 fontSize: 10, fontWeight: 600, letterSpacing: '0.04em',
             }}>
-                {entry.title.slice(0, 2).toUpperCase()}
+                {displayTitle.slice(0, 2).toUpperCase()}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 500, color: '#e8e8ed', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {entry.title}
+                    {displayTitle}
                 </div>
                 <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
                     <Clock size={9} />
@@ -440,7 +456,7 @@ function RecentRow({ entry, opening, onOpen, onRemove }: RecentRowProps) {
             <button
                 onPointerDown={(e) => { e.stopPropagation(); }}
                 onClick={(e) => { e.stopPropagation(); onRemove(); }}
-                title="Remove from recent (file on disk is untouched)"
+                title={t('canvas.remove_recent')}
                 style={{
                     padding: 4, borderRadius: 5,
                     background: 'transparent',
@@ -464,10 +480,18 @@ function formatRelativeTime(ms: number): string {
     const day = 24 * hour;
     const week = 7 * day;
 
-    if (diff < minute) return 'just now';
-    if (diff < hour) return `${Math.floor(diff / minute)}m ago`;
-    if (diff < day) return `${Math.floor(diff / hour)}h ago`;
-    if (diff < week) return `${Math.floor(diff / day)}d ago`;
-    if (diff < 4 * week) return `${Math.floor(diff / week)}w ago`;
+    const fill = (key: 'time.minutes_ago' | 'time.hours_ago' | 'time.days_ago' | 'time.weeks_ago', n: number) =>
+        t(key).replace('{n}', String(n));
+
+    if (diff < minute) return t('time.just_now');
+    if (diff < hour) return fill('time.minutes_ago', Math.floor(diff / minute));
+    if (diff < day) return fill('time.hours_ago', Math.floor(diff / hour));
+    if (diff < week) return fill('time.days_ago', Math.floor(diff / day));
+    if (diff < 4 * week) return fill('time.weeks_ago', Math.floor(diff / week));
+    // Beyond 4 weeks: fall through to the user's locale-formatted date.
+    // This naturally renders Arabic numerals + month names in Arabic mode
+    // (Intl uses navigator/electron locale, not our app-level toggle —
+    // close enough for now; if drift is reported, pipe the active locale
+    // in explicitly via toLocaleDateString(locale)).
     return new Date(ms).toLocaleDateString();
 }
