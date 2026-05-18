@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { File as FileIcon, FileText, FileSpreadsheet, FileImage, FileCode, FileVideo, FileAudio, FileArchive, ExternalLink, FolderOpen as FolderOpenIcon, Folder as FolderIcon, Eye as EyeIcon, EyeOff as EyeOffIcon, Loader2, ChevronDown, ArrowDownAZ, ArrowUpAZ, Hash } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import JSZip from 'jszip';
+import { previewPdfFromBytes, previewDocxFromBytes, previewSpreadsheetFromBytes } from '../file/dropHandler';
 import type { FileItem as FileItemType } from './types';
 import { getAsset, bytesToBase64 } from '../file/assetRegistry';
 import { ResizeHandle } from '../interaction/ResizeHandle';
@@ -1048,6 +1049,9 @@ function countFiles(node: FolderNode): number {
 type LeafPreviewKind =
     | { kind: 'image'; dataUrl: string; w: number; h: number }
     | { kind: 'text'; text: string; truncated: boolean }
+    | { kind: 'pdf'; dataUrl: string; pages: number }
+    | { kind: 'docx'; html: string; wordCount: number }
+    | { kind: 'xlsx'; sheetName: string; sheetCount: number; headers: string[]; rows: string[][]; totalRows: number }
     | { kind: 'unsupported' }
     | { kind: 'too_large' };
 
@@ -1066,6 +1070,9 @@ function cachePreview(key: string, value: LeafPreviewKind): void {
 
 const PREVIEW_IMAGE_MAX_BYTES = 8 * 1024 * 1024;   // 8MB — bigger than this, skip
 const PREVIEW_TEXT_MAX_BYTES = 64 * 1024;          // 64KB cap, truncate beyond
+const PREVIEW_PDF_MAX_BYTES = 20 * 1024 * 1024;    // 20MB — rendering large PDFs is expensive
+const PREVIEW_DOCX_MAX_BYTES = 5 * 1024 * 1024;    // 5MB — mammoth is slow on big docs
+const PREVIEW_XLSX_MAX_BYTES = 5 * 1024 * 1024;
 const TEXT_EXTS = new Set([
     'txt', 'md', 'markdown', 'log', 'csv', 'tsv',
     'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx',
@@ -1088,12 +1095,47 @@ async function buildLeafPreview(folderBytes: Uint8Array, relPath: string, size: 
     const ext = extFromPath(relPath);
     const isImage = IMAGE_EXTS.has(ext);
     const isText = TEXT_EXTS.has(ext);
-    if (!isImage && !isText) return { kind: 'unsupported' };
+    const isPdf = ext === 'pdf';
+    const isDocx = ext === 'docx';
+    const isSpreadsheet = ext === 'xlsx' || ext === 'xls' || ext === 'csv';
+
+    if (!isImage && !isText && !isPdf && !isDocx && !isSpreadsheet) return { kind: 'unsupported' };
     if (isImage && size > PREVIEW_IMAGE_MAX_BYTES) return { kind: 'too_large' };
+    if (isPdf && size > PREVIEW_PDF_MAX_BYTES) return { kind: 'too_large' };
+    if (isDocx && size > PREVIEW_DOCX_MAX_BYTES) return { kind: 'too_large' };
+    if (isSpreadsheet && size > PREVIEW_XLSX_MAX_BYTES) return { kind: 'too_large' };
 
     const zip = await JSZip.loadAsync(folderBytes);
     const entry = zip.file(relPath);
     if (!entry) return { kind: 'unsupported' };
+
+    if (isPdf) {
+        const bytes = await entry.async('uint8array');
+        const result = await previewPdfFromBytes(bytes);
+        if (!result) return { kind: 'unsupported' };
+        return { kind: 'pdf', dataUrl: result.dataUrl, pages: result.pages };
+    }
+
+    if (isDocx) {
+        const bytes = await entry.async('uint8array');
+        const result = await previewDocxFromBytes(bytes);
+        if (!result) return { kind: 'unsupported' };
+        return { kind: 'docx', html: result.html, wordCount: result.wordCount };
+    }
+
+    if (isSpreadsheet) {
+        const bytes = await entry.async('uint8array');
+        const result = await previewSpreadsheetFromBytes(bytes);
+        if (!result) return { kind: 'unsupported' };
+        return {
+            kind: 'xlsx',
+            sheetName: result.sheetName,
+            sheetCount: result.sheetCount,
+            headers: result.headers,
+            rows: result.rows,
+            totalRows: result.totalRows,
+        };
+    }
 
     if (isImage) {
         const bytes = await entry.async('uint8array');
@@ -1242,6 +1284,80 @@ function FolderLeafPreview({ assetId, entry, anchorRect }: {
                             <div style={{ marginTop: 6, color: 'rgba(251,191,36,0.7)' }}>… truncated at 64KB</div>
                         )}
                     </pre>
+                )}
+                {preview && preview !== 'loading' && preview.kind === 'pdf' && (
+                    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'stretch' }}>
+                        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0a0a0f' }}>
+                            <img src={preview.dataUrl} alt={entry.path} style={{ maxWidth: '100%', maxHeight: POPUP_H_MAX - 56, objectFit: 'contain', display: 'block' }} draggable={false} />
+                        </div>
+                        <div style={{ padding: '4px 10px', fontSize: 9, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.04em', textTransform: 'uppercase', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                            {preview.pages} {preview.pages === 1 ? 'page' : 'pages'}
+                        </div>
+                    </div>
+                )}
+                {preview && preview !== 'loading' && preview.kind === 'docx' && (
+                    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+                        <div
+                            style={{
+                                flex: 1,
+                                overflow: 'auto',
+                                padding: '8px 12px',
+                                fontSize: 11,
+                                lineHeight: 1.5,
+                                color: 'rgba(255,255,255,0.82)',
+                                textAlign: 'left',
+                                direction: 'ltr',
+                                maxHeight: POPUP_H_MAX - 56,
+                            }}
+                            className="docx-preview"
+                            dangerouslySetInnerHTML={{ __html: preview.html }}
+                        />
+                        <div style={{ padding: '4px 10px', fontSize: 9, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.04em', textTransform: 'uppercase', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                            {preview.wordCount.toLocaleString()} words
+                        </div>
+                    </div>
+                )}
+                {preview && preview !== 'loading' && preview.kind === 'xlsx' && (
+                    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+                        <div
+                            style={{
+                                flex: 1,
+                                overflow: 'auto',
+                                padding: '6px 8px',
+                                fontSize: 10,
+                                color: 'rgba(255,255,255,0.78)',
+                                fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+                                maxHeight: POPUP_H_MAX - 56,
+                                direction: 'ltr',
+                            }}
+                        >
+                            <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                                <thead>
+                                    <tr>
+                                        {preview.headers.slice(0, 5).map((h, i) => (
+                                            <th key={i} style={{ textAlign: 'left', padding: '3px 5px', borderBottom: '1px solid rgba(255,255,255,0.1)', color: '#10b981', fontWeight: 500, fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                                {h || '—'}
+                                            </th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {preview.rows.slice(0, 8).map((r, ri) => (
+                                        <tr key={ri}>
+                                            {r.slice(0, 5).map((c, ci) => (
+                                                <td key={ci} style={{ padding: '2px 5px', borderBottom: '1px solid rgba(255,255,255,0.04)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 60 }}>
+                                                    {c}
+                                                </td>
+                                            ))}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div style={{ padding: '4px 10px', fontSize: 9, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.04em', textTransform: 'uppercase', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                            {preview.sheetName} · {preview.totalRows} rows{preview.sheetCount > 1 ? ` · ${preview.sheetCount} sheets` : ''}
+                        </div>
+                    </div>
                 )}
                 {preview && preview !== 'loading' && preview.kind === 'unsupported' && (
                     <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', textAlign: 'center', padding: 12 }}>

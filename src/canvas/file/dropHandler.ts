@@ -388,6 +388,23 @@ function sanitizeDocxHtml(html: string): string {
         .replace(/(href|src)\s*=\s*'\s*javascript:[^']*'/gi, "$1='#'");
 }
 
+// ── Byte-only entry points (re-exported for the folder hover preview) ──
+// The renderers above take a File for the "no prefetched bytes" path; the
+// folder card always has bytes (extracted from the in-memory folder zip),
+// so these thin wrappers skip the File-allocation noise.
+
+export function previewPdfFromBytes(bytes: Uint8Array): Promise<{ dataUrl: string; pages: number } | null> {
+    return renderPdfFirstPage(new File([], '_'), bytes);
+}
+
+export function previewDocxFromBytes(bytes: Uint8Array): Promise<{ html: string; wordCount: number } | null> {
+    return renderDocxPreview(new File([], '_'), bytes);
+}
+
+export function previewSpreadsheetFromBytes(bytes: Uint8Array): Promise<FileItem['previewSheet']> {
+    return renderSpreadsheetPreview(new File([], '_'), bytes);
+}
+
 /**
  * Parse the first sheet of an XLSX/CSV and return header + first ~10 rows.
  */
