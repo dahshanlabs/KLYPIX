@@ -231,7 +231,13 @@ const INITIAL_STATE: CanvasState = {
     fillColor: '#10b981',
     strokeEnabled: true,
     textDefaults: {
-        fontFamily: undefined,
+        // Thmanyah Sans is the canvas's body-text default (and matches the
+        // chrome). It handles English + Arabic in a single typeface, so
+        // mixed-script text renders consistently. Existing TextItems in
+        // saved canvases keep their stored fontFamily (Virgil for legacy
+        // items); only newly-created text picks up this default. Users
+        // can still choose Virgil — or anything else — from the Text panel.
+        fontFamily: 'Thmanyah Sans',
         color: undefined,
         fontSize: undefined,
         bold: false,

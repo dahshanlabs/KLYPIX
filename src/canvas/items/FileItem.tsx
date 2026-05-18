@@ -200,6 +200,7 @@ function FileCardViewImpl(props: Props) {
 }
 
 function FileCardBody({ item, selected }: Props) {
+    useLocale();
     const { state } = useCanvasStore();
     const canvasFilePath = state.filePath || null;
     const Icon = pickIcon(item.extension);
@@ -344,7 +345,12 @@ function FileCardBody({ item, selected }: Props) {
                         </tbody>
                     </table>
                 </div>
-                <CardFooter item={item} Icon={Icon} subtitle={`${ps.sheetName} · ${ps.totalRows} rows${ps.sheetCount > 1 ? ` · ${ps.sheetCount} sheets` : ''}`} canvasFilePath={canvasFilePath} />
+                <CardFooter
+                    item={item}
+                    Icon={Icon}
+                    subtitle={`${ps.sheetName} · ${ps.totalRows === 1 ? t('canvas.meta_row_one') : t('canvas.meta_rows').replace('{n}', String(ps.totalRows))}${ps.sheetCount > 1 ? ` · ${t('canvas.meta_sheets').replace('{n}', String(ps.sheetCount))}` : ''}`}
+                    canvasFilePath={canvasFilePath}
+                />
             </div>
         );
     }
@@ -580,9 +586,12 @@ function FolderCardBody({ item }: { item: FileItemType }) {
                         {item.fileName}
                     </div>
                     <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.05em', textTransform: 'uppercase', marginTop: 2 }}>
-                        FOLDER · {manifest.length} files · {formatFolderBytes(totalRaw)}
+                        {t('canvas.meta_folder')} · {manifest.length === 1
+                            ? t('canvas.meta_file_count_one')
+                            : t('canvas.meta_files_count').replace('{n}', String(manifest.length))
+                        } · {formatFolderBytes(totalRaw)}
                         {zipSize !== totalRaw && (
-                            <span style={{ color: 'rgba(16,185,129,0.6)' }}> · zip {formatFolderBytes(zipSize)}</span>
+                            <span style={{ color: 'rgba(16,185,129,0.6)' }}> · {t('canvas.meta_zip')} {formatFolderBytes(zipSize)}</span>
                         )}
                     </div>
                 </div>
@@ -1291,7 +1300,9 @@ function FolderLeafPreview({ assetId, entry, anchorRect }: {
                             <img src={preview.dataUrl} alt={entry.path} style={{ maxWidth: '100%', maxHeight: POPUP_H_MAX - 56, objectFit: 'contain', display: 'block' }} draggable={false} />
                         </div>
                         <div style={{ padding: '4px 10px', fontSize: 9, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.04em', textTransform: 'uppercase', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                            {preview.pages} {preview.pages === 1 ? 'page' : 'pages'}
+                            {preview.pages === 1
+                                ? t('canvas.meta_page_one')
+                                : t('canvas.meta_pages').replace('{n}', String(preview.pages))}
                         </div>
                     </div>
                 )}
@@ -1313,7 +1324,7 @@ function FolderLeafPreview({ assetId, entry, anchorRect }: {
                             dangerouslySetInnerHTML={{ __html: preview.html }}
                         />
                         <div style={{ padding: '4px 10px', fontSize: 9, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.04em', textTransform: 'uppercase', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                            {preview.wordCount.toLocaleString()} words
+                            {t('canvas.meta_words').replace('{n}', preview.wordCount.toLocaleString())}
                         </div>
                     </div>
                 )}
@@ -1355,7 +1366,10 @@ function FolderLeafPreview({ assetId, entry, anchorRect }: {
                             </table>
                         </div>
                         <div style={{ padding: '4px 10px', fontSize: 9, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.04em', textTransform: 'uppercase', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                            {preview.sheetName} · {preview.totalRows} rows{preview.sheetCount > 1 ? ` · ${preview.sheetCount} sheets` : ''}
+                            {preview.sheetName} · {preview.totalRows === 1
+                                ? t('canvas.meta_row_one')
+                                : t('canvas.meta_rows').replace('{n}', String(preview.totalRows))}
+                            {preview.sheetCount > 1 ? ` · ${t('canvas.meta_sheets').replace('{n}', String(preview.sheetCount))}` : ''}
                         </div>
                     </div>
                 )}

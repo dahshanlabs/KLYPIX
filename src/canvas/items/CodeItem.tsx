@@ -3,6 +3,7 @@ import { Play, Copy, Check, Pencil, ExternalLink } from 'lucide-react';
 import type { CodeItem as CodeItemType, CodeLanguage } from './types';
 import { ResizeHandle } from '../interaction/ResizeHandle';
 import { useCanvasStore } from '../state/canvasStore';
+import { t, useLocale } from '../../i18n/strings';
 
 interface Props {
     item: CodeItemType;
@@ -26,6 +27,7 @@ export const CodeItemView = React.memo(CodeItemViewImpl, (prev, next) => {
 });
 
 function CodeItemViewImpl({ item, selected, editing }: Props) {
+    useLocale();
     const { dispatch } = useCanvasStore();
     const [copied, setCopied] = React.useState(false);
     const [running, setRunning] = React.useState(false);
@@ -128,7 +130,7 @@ function CodeItemViewImpl({ item, selected, editing }: Props) {
                     }}
                 >
                     <span style={{ fontSize: 9.5, color: '#10b981', letterSpacing: '0.07em', textTransform: 'uppercase' }}>
-                        {item.language}
+                        {item.language === 'text' ? t('canvas.meta_text') : item.language}
                     </span>
                     {item.fileName && (
                         <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

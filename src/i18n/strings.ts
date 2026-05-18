@@ -402,6 +402,23 @@ const strings: Strings = {
     'canvas.folder_sort_type': { en: 'Type', ar: 'النوع' },
     'canvas.folder_sort_ascending': { en: 'Ascending', ar: 'تصاعدي' },
     'canvas.folder_sort_descending': { en: 'Descending', ar: 'تنازلي' },
+    // Card metadata footers — short uppercase labels rendered under the
+    // primary title. Each `meta_*` value is a complete localized fragment
+    // (not a template) because the calling site already composes the full
+    // line; this lets translators reorder phrases naturally for RTL.
+    'canvas.meta_folder': { en: 'Folder', ar: 'مجلد' },
+    'canvas.meta_files_count': { en: '{n} files', ar: '{n} ملفات' },
+    'canvas.meta_file_count_one': { en: '1 file', ar: 'ملف واحد' },
+    'canvas.meta_zip': { en: 'zip', ar: 'مضغوط' },
+    'canvas.meta_audio': { en: 'Audio', ar: 'صوت' },
+    'canvas.meta_canvas_link': { en: 'Canvas', ar: 'لوحة' },
+    'canvas.meta_pages': { en: '{n} pages', ar: '{n} صفحات' },
+    'canvas.meta_page_one': { en: '1 page', ar: 'صفحة واحدة' },
+    'canvas.meta_words': { en: '{n} words', ar: '{n} كلمة' },
+    'canvas.meta_rows': { en: '{n} rows', ar: '{n} صفوف' },
+    'canvas.meta_row_one': { en: '1 row', ar: 'صف واحد' },
+    'canvas.meta_sheets': { en: '{n} sheets', ar: '{n} أوراق' },
+    'canvas.meta_text': { en: 'Text', ar: 'نص' },
     // Layers panel
     'canvas.layer_content': { en: 'content', ar: 'المحتوى' },
     'canvas.layer_agent': { en: 'agent', ar: 'الوكيل' },

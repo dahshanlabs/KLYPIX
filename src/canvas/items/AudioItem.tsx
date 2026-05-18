@@ -4,6 +4,7 @@ import type { AudioItem as AudioItemType } from './types';
 import { ResizeHandle } from '../interaction/ResizeHandle';
 import { getAsset } from '../file/assetRegistry';
 import { useCanvasStore } from '../state/canvasStore';
+import { t as tr, useLocale } from '../../i18n/strings';
 
 interface Props {
     item: AudioItemType;
@@ -24,6 +25,7 @@ function formatTime(s: number): string {
 }
 
 function AudioItemViewImpl({ item, selected }: Props) {
+    useLocale();
     const { dispatch } = useCanvasStore();
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const [playing, setPlaying] = useState(false);
@@ -136,7 +138,7 @@ function AudioItemViewImpl({ item, selected }: Props) {
                             {item.fileName}
                         </div>
                         <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.06em', textTransform: 'uppercase', marginTop: 2 }}>
-                            Audio · {item.extension.toUpperCase()}
+                            {tr('canvas.meta_audio')} · {item.extension.toUpperCase()}
                         </div>
                     </div>
                     {item.originalPath && (

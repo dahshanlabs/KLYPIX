@@ -2,6 +2,7 @@ import React from 'react';
 import { Layers as CanvasIcon, ExternalLink } from 'lucide-react';
 import type { CanvasLinkItem as CanvasLinkItemType } from './types';
 import { ResizeHandle } from '../interaction/ResizeHandle';
+import { t, useLocale } from '../../i18n/strings';
 
 interface Props {
     item: CanvasLinkItemType;
@@ -22,6 +23,7 @@ export const CanvasLinkItemView = React.memo(CanvasLinkItemViewImpl, (prev, next
 });
 
 function CanvasLinkItemViewImpl({ item, selected }: Props) {
+    useLocale();
     const fileName = item.filePath.split(/[\\/]/).pop() || item.filePath;
     const style: React.CSSProperties = {
         position: 'absolute',
@@ -72,7 +74,7 @@ function CanvasLinkItemViewImpl({ item, selected }: Props) {
                             {item.title || fileName}
                         </div>
                         <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.06em', textTransform: 'uppercase', marginTop: 2 }}>
-                            Canvas · .klypix
+                            {t('canvas.meta_canvas_link')} · .klypix
                         </div>
                     </div>
                     <button
