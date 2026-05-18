@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { File as FileIcon, FileText, FileSpreadsheet, FileImage, FileCode, FileVideo, FileAudio, FileArchive, ExternalLink, FolderOpen as FolderOpenIcon, Folder as FolderIcon } from 'lucide-react';
+import { File as FileIcon, FileText, FileSpreadsheet, FileImage, FileCode, FileVideo, FileAudio, FileArchive, ExternalLink, FolderOpen as FolderOpenIcon, Folder as FolderIcon, Eye as EyeIcon, EyeOff as EyeOffIcon, Loader2 } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import JSZip from 'jszip';
 import type { FileItem as FileItemType } from './types';
 import { getAsset, bytesToBase64 } from '../file/assetRegistry';
@@ -488,6 +489,11 @@ function FolderCardBody({ item }: { item: FileItemType }) {
     const manifest = item.folderManifest || [];
     const skipped = item.folderSkipped || [];
     const [busyPath, setBusyPath] = useState<string | null>(null);
+    // Preview-on-hover: off by default to keep the card silent. Toggling
+    // the eye icon flips it on; hovering a leaf row then pops a preview.
+    const [previewEnabled, setPreviewEnabled] = useState(false);
+    const [preview, setPreview] = useState<{ rect: DOMRect; entry: { path: string; size: number; mime: string } } | null>(null);
+    const previewLeaveTimerRef = useRef<number | null>(null);
     const totalRaw = item.folderTotalSize ?? 0;
     const zipSize = item.fileSize;
 
@@ -499,6 +505,20 @@ function FolderCardBody({ item }: { item: FileItemType }) {
         } finally {
             setBusyPath(null);
         }
+    };
+
+    const onLeafHover = (rect: DOMRect, entry: { path: string; size: number; mime: string }) => {
+        if (previewLeaveTimerRef.current) {
+            window.clearTimeout(previewLeaveTimerRef.current);
+            previewLeaveTimerRef.current = null;
+        }
+        setPreview({ rect, entry });
+    };
+    const onLeafLeave = () => {
+        // Small delay so cursor traveling between rows doesn't flicker
+        // the popup off + on.
+        if (previewLeaveTimerRef.current) window.clearTimeout(previewLeaveTimerRef.current);
+        previewLeaveTimerRef.current = window.setTimeout(() => setPreview(null), 80);
     };
 
     return (
@@ -526,6 +546,23 @@ function FolderCardBody({ item }: { item: FileItemType }) {
                         )}
                     </div>
                 </div>
+                <button
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => { e.stopPropagation(); setPreviewEnabled(v => !v); if (previewEnabled) setPreview(null); }}
+                    title={previewEnabled ? t('canvas.folder_preview_off') : t('canvas.folder_preview_on')}
+                    style={{
+                        flexShrink: 0,
+                        padding: 6,
+                        borderRadius: 6,
+                        background: previewEnabled ? 'rgba(16,185,129,0.25)' : 'rgba(255,255,255,0.04)',
+                        color: previewEnabled ? '#10b981' : 'rgba(255,255,255,0.5)',
+                        cursor: 'pointer',
+                        display: 'flex', alignItems: 'center',
+                    }}
+                    className="hover:!bg-white/10"
+                >
+                    {previewEnabled ? <EyeIcon size={12} /> : <EyeOffIcon size={12} />}
+                </button>
                 <button
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => { e.stopPropagation(); openFolderAsZip(item); }}
@@ -570,9 +607,13 @@ function FolderCardBody({ item }: { item: FileItemType }) {
                     <FolderLeafRow
                         key={entry.path}
                         itemId={item.id}
+                        folderAssetId={item.assetId}
                         entry={entry}
                         isBusy={busyPath === entry.path}
+                        previewEnabled={previewEnabled}
                         onOpen={() => openOne(entry.path)}
+                        onPreview={onLeafHover}
+                        onPreviewLeave={onLeafLeave}
                     />
                 ))}
                 {skipped.length > 0 && (
@@ -592,6 +633,13 @@ function FolderCardBody({ item }: { item: FileItemType }) {
                     </div>
                 )}
             </div>
+            {previewEnabled && preview && item.assetId && (
+                <FolderLeafPreview
+                    assetId={item.assetId}
+                    entry={preview.entry}
+                    anchorRect={preview.rect}
+                />
+            )}
         </>
     );
 }
@@ -599,23 +647,59 @@ function FolderCardBody({ item }: { item: FileItemType }) {
 /** A row inside the folder card's tree. Subscribes to its OWN leaf sync
  *  state (keyed by item.id + relPath) so a save event on leaf A doesn't
  *  re-render every other row in a 200-file folder. */
-function FolderLeafRow({ itemId, entry, isBusy, onOpen }: {
+function FolderLeafRow({ itemId, folderAssetId, entry, isBusy, previewEnabled, onOpen, onPreview, onPreviewLeave }: {
     itemId: string;
+    folderAssetId: string | undefined;
     entry: { path: string; size: number; mime: string };
     isBusy: boolean;
+    previewEnabled: boolean;
     onOpen: () => void;
+    onPreview: (rect: DOMRect, entry: { path: string; size: number; mime: string }) => void;
+    onPreviewLeave: () => void;
 }) {
     const depth = (entry.path.match(/\//g) || []).length;
     const leaf = entry.path.split('/').pop() || entry.path;
     const sync = useEmbedSync(itemId, entry.path);
+    const rowRef = useRef<HTMLDivElement | null>(null);
     // 'busy' (parent's click-in-flight) and 'syncing' (Office app saving)
     // are visually distinct. busy wins because it's tied to the user's
     // active gesture; syncing is a background state.
     const showSyncing = !isBusy && sync.status === 'syncing';
     const showSynced = !isBusy && sync.status === 'synced';
     const showError = sync.status === 'error';
+
+    // Drag-out: holding the row and dragging onto empty canvas promotes
+    // the leaf to a standalone item. Payload includes folderAssetId so
+    // the canvas drop handler can extract bytes from the right folder zip
+    // (one canvas can have multiple folder cards with overlapping leaf
+    // names). Stop propagation so the canvas's pan-on-drag doesn't kick in.
+    const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
+        if (!folderAssetId) return;
+        e.stopPropagation();
+        const payload = {
+            folderAssetId,
+            relPath: entry.path,
+            fileName: leaf,
+            size: entry.size,
+            mime: entry.mime,
+        };
+        try {
+            e.dataTransfer.setData('application/x-klypix-folder-leaf', JSON.stringify(payload));
+            e.dataTransfer.effectAllowed = 'copy';
+        } catch { /* dataTransfer can throw in some Electron edge cases */ }
+    };
+
     return (
         <div
+            ref={rowRef}
+            draggable={!!folderAssetId}
+            onDragStart={handleDragStart}
+            onMouseEnter={() => {
+                if (!previewEnabled) return;
+                const rect = rowRef.current?.getBoundingClientRect();
+                if (rect) onPreview(rect, entry);
+            }}
+            onMouseLeave={onPreviewLeave}
             style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -665,6 +749,227 @@ function FolderLeafRow({ itemId, entry, isBusy, onOpen }: {
                 <ExternalLink size={10} />
             </button>
         </div>
+    );
+}
+
+// ── Folder leaf preview cache ────────────────────────────────────────
+// Module-level Map keyed by `${assetId}::${relPath}`. Generated previews
+// stay until the cap (32) is hit, then oldest entries are evicted. Bytes
+// are NOT cached — only the rendered representation (data URL for images,
+// truncated text for code). Re-hovering a leaf the user already previewed
+// is instant; first hover after dropping the folder pays the JSZip extract.
+
+type LeafPreviewKind =
+    | { kind: 'image'; dataUrl: string; w: number; h: number }
+    | { kind: 'text'; text: string; truncated: boolean }
+    | { kind: 'unsupported' }
+    | { kind: 'too_large' };
+
+const PREVIEW_CACHE_CAP = 32;
+const previewCache = new Map<string, LeafPreviewKind>();
+
+function cachePreview(key: string, value: LeafPreviewKind): void {
+    previewCache.delete(key); // ensure insertion order = LRU
+    previewCache.set(key, value);
+    while (previewCache.size > PREVIEW_CACHE_CAP) {
+        const oldest = previewCache.keys().next().value;
+        if (oldest === undefined) break;
+        previewCache.delete(oldest);
+    }
+}
+
+const PREVIEW_IMAGE_MAX_BYTES = 8 * 1024 * 1024;   // 8MB — bigger than this, skip
+const PREVIEW_TEXT_MAX_BYTES = 64 * 1024;          // 64KB cap, truncate beyond
+const TEXT_EXTS = new Set([
+    'txt', 'md', 'markdown', 'log', 'csv', 'tsv',
+    'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx',
+    'py', 'pyw', 'rb', 'php', 'pl', 'sh', 'bash', 'zsh',
+    'go', 'rs', 'java', 'c', 'cpp', 'cc', 'cxx', 'h', 'hpp', 'cs', 'swift', 'kt',
+    'json', 'yml', 'yaml', 'toml', 'ini', 'env', 'cfg',
+    'html', 'htm', 'css', 'scss', 'less', 'sass',
+    'sql', 'r', 'lua', 'dart', 'vue', 'svelte',
+    'gitignore', 'editorconfig',
+]);
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico']);
+
+function extFromPath(p: string): string {
+    const dot = p.lastIndexOf('.');
+    if (dot < 0) return '';
+    return p.slice(dot + 1).toLowerCase();
+}
+
+async function buildLeafPreview(folderBytes: Uint8Array, relPath: string, size: number): Promise<LeafPreviewKind> {
+    const ext = extFromPath(relPath);
+    const isImage = IMAGE_EXTS.has(ext);
+    const isText = TEXT_EXTS.has(ext);
+    if (!isImage && !isText) return { kind: 'unsupported' };
+    if (isImage && size > PREVIEW_IMAGE_MAX_BYTES) return { kind: 'too_large' };
+
+    const zip = await JSZip.loadAsync(folderBytes);
+    const entry = zip.file(relPath);
+    if (!entry) return { kind: 'unsupported' };
+
+    if (isImage) {
+        const bytes = await entry.async('uint8array');
+        const mime = ext === 'svg' ? 'image/svg+xml'
+            : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+            : ext === 'webp' ? 'image/webp'
+            : ext === 'gif' ? 'image/gif'
+            : ext === 'bmp' ? 'image/bmp'
+            : ext === 'ico' ? 'image/x-icon'
+            : 'image/png';
+        // Use a data URL rather than blob URL — avoids the "revoke
+        // before the popup unmounts" cleanup dance and keeps the cache
+        // entries serializable.
+        const base64 = bytesToBase64(bytes);
+        const dataUrl = `data:${mime};base64,${base64}`;
+        // Probe natural dimensions for the popup's aspect ratio.
+        const dim = await new Promise<{ w: number; h: number }>((resolve) => {
+            const img = new Image();
+            img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+            img.onerror = () => resolve({ w: 0, h: 0 });
+            img.src = dataUrl;
+        });
+        return { kind: 'image', dataUrl, w: dim.w, h: dim.h };
+    }
+
+    // Text: read up to cap, decode UTF-8, mark truncated.
+    const bytes = await entry.async('uint8array');
+    const truncated = bytes.byteLength > PREVIEW_TEXT_MAX_BYTES;
+    const slice = truncated ? bytes.slice(0, PREVIEW_TEXT_MAX_BYTES) : bytes;
+    let text: string;
+    try {
+        text = new TextDecoder('utf-8', { fatal: false }).decode(slice);
+    } catch {
+        return { kind: 'unsupported' };
+    }
+    return { kind: 'text', text, truncated };
+}
+
+// ── Folder leaf preview popup ────────────────────────────────────────
+function FolderLeafPreview({ assetId, entry, anchorRect }: {
+    assetId: string;
+    entry: { path: string; size: number; mime: string };
+    anchorRect: DOMRect;
+}) {
+    useLocale();
+    const key = `${assetId}::${entry.path}`;
+    const [preview, setPreview] = useState<LeafPreviewKind | 'loading' | null>(() => previewCache.get(key) ?? 'loading');
+
+    useEffect(() => {
+        const cached = previewCache.get(key);
+        if (cached) { setPreview(cached); return; }
+        setPreview('loading');
+        let cancelled = false;
+        const asset = getAsset(assetId);
+        if (!asset) { setPreview({ kind: 'unsupported' }); return; }
+        buildLeafPreview(asset.bytes, entry.path, entry.size).then(result => {
+            if (cancelled) return;
+            cachePreview(key, result);
+            setPreview(result);
+        }).catch(() => {
+            if (cancelled) return;
+            setPreview({ kind: 'unsupported' });
+        });
+        return () => { cancelled = true; };
+    }, [key, assetId, entry.path, entry.size]);
+
+    // Compute popup position: right of the row by default; flip left if
+    // it would clip the viewport. Fixed positioning escapes the folder
+    // card's overflow:hidden via portal.
+    const POPUP_W = 320;
+    const POPUP_H_MAX = 280;
+    const GAP = 8;
+    let left = anchorRect.right + GAP;
+    if (left + POPUP_W > window.innerWidth - 8) {
+        left = Math.max(8, anchorRect.left - POPUP_W - GAP);
+    }
+    let top = anchorRect.top;
+    if (top + POPUP_H_MAX > window.innerHeight - 8) {
+        top = Math.max(8, window.innerHeight - POPUP_H_MAX - 8);
+    }
+
+    return createPortal(
+        <div
+            style={{
+                position: 'fixed',
+                left, top,
+                width: POPUP_W,
+                maxHeight: POPUP_H_MAX,
+                zIndex: 9999,
+                background: 'rgba(15,15,24,0.96)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: 10,
+                boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
+                backdropFilter: 'blur(12px)',
+                pointerEvents: 'none',  // never block the underlying row's hover
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+                fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
+                color: '#e8e8ed',
+            }}
+        >
+            <div style={{
+                padding: '6px 10px',
+                fontSize: 11,
+                color: 'rgba(255,255,255,0.5)',
+                borderBottom: '1px solid rgba(255,255,255,0.06)',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+            }}>
+                {entry.path}
+            </div>
+            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 80 }}>
+                {preview === 'loading' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
+                        <Loader2 size={12} className="animate-spin" />
+                        {t('canvas.folder_preview_loading')}
+                    </div>
+                )}
+                {preview && preview !== 'loading' && preview.kind === 'image' && (
+                    <img
+                        src={preview.dataUrl}
+                        alt={entry.path}
+                        style={{ maxWidth: '100%', maxHeight: POPUP_H_MAX - 30, objectFit: 'contain', display: 'block' }}
+                        draggable={false}
+                    />
+                )}
+                {preview && preview !== 'loading' && preview.kind === 'text' && (
+                    <pre style={{
+                        margin: 0,
+                        padding: '8px 10px',
+                        fontSize: 10,
+                        lineHeight: 1.45,
+                        fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+                        color: 'rgba(255,255,255,0.82)',
+                        whiteSpace: 'pre',
+                        overflow: 'auto',
+                        maxHeight: POPUP_H_MAX - 30,
+                        width: '100%',
+                        textAlign: 'left',
+                        direction: 'ltr',
+                    }}>
+                        {preview.text}
+                        {preview.truncated && (
+                            <div style={{ marginTop: 6, color: 'rgba(251,191,36,0.7)' }}>… truncated at 64KB</div>
+                        )}
+                    </pre>
+                )}
+                {preview && preview !== 'loading' && preview.kind === 'unsupported' && (
+                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', textAlign: 'center', padding: 12 }}>
+                        {t('canvas.folder_preview_unavailable')}
+                    </div>
+                )}
+                {preview && preview !== 'loading' && preview.kind === 'too_large' && (
+                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', textAlign: 'center', padding: 12 }}>
+                        {t('canvas.folder_preview_too_large')}
+                    </div>
+                )}
+            </div>
+        </div>,
+        document.body,
     );
 }
 

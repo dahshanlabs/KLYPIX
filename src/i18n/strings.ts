@@ -391,6 +391,11 @@ const strings: Strings = {
     'canvas.folder_skipped_label': { en: 'skipped:', ar: 'تم التخطي:' },
     'canvas.folder_skipped_more': { en: '… +{n} more', ar: '… +{n} أكثر' },
     'canvas.recently_closed': { en: 'Recently closed', ar: 'المُغلقة مؤخرًا' },
+    'canvas.folder_preview_on': { en: 'Turn on hover preview', ar: 'تفعيل المعاينة عند التمرير' },
+    'canvas.folder_preview_off': { en: 'Turn off hover preview', ar: 'إيقاف المعاينة عند التمرير' },
+    'canvas.folder_preview_loading': { en: 'Loading preview…', ar: 'جارٍ تحميل المعاينة…' },
+    'canvas.folder_preview_unavailable': { en: 'No preview available for this file type', ar: 'لا توجد معاينة متاحة لهذا النوع' },
+    'canvas.folder_preview_too_large': { en: 'File too large to preview', ar: 'الملف كبير جدًا للمعاينة' },
     // Layers panel
     'canvas.layer_content': { en: 'content', ar: 'المحتوى' },
     'canvas.layer_agent': { en: 'agent', ar: 'الوكيل' },

@@ -29,7 +29,8 @@ import { fileToItem } from './file/dropHandler';
 import { folderToItem } from './file/folderToZip';
 import { registerCloseSnapshot, captureCloseSnapshot } from './dashboard/closeSnapshotRegistry';
 import { pushClosedCanvas } from './dashboard/recentlyClosedStore';
-import { base64ToBytes } from './file/assetRegistry';
+import { base64ToBytes, getAsset } from './file/assetRegistry';
+import JSZip from 'jszip';
 import { ocrImageAsset } from './file/ocrImage';
 import { suggestTags } from './file/autoTag';
 import { screenToWorld, worldToScreen, fitToViewport, itemsBounds } from './CanvasEngine';
@@ -1038,14 +1039,20 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
 
     // --- File drop: dropped files become canvas items at the cursor position ---
     const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-        // Only handle file drags; ignore intra-app drags (item reorder etc).
-        if (!e.dataTransfer?.types?.includes('Files')) return;
+        // Accept OS file drags AND our custom folder-leaf drag (intra-app).
+        const types = e.dataTransfer?.types;
+        const isFile = types?.includes('Files');
+        const isLeaf = types?.includes('application/x-klypix-folder-leaf');
+        if (!isFile && !isLeaf) return;
         e.preventDefault();
         e.stopPropagation();
         setIsDragOver(true);
     }, []);
     const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-        if (!e.dataTransfer?.types?.includes('Files')) return;
+        const types = e.dataTransfer?.types;
+        const isFile = types?.includes('Files');
+        const isLeaf = types?.includes('application/x-klypix-folder-leaf');
+        if (!isFile && !isLeaf) return;
         e.preventDefault();
         e.stopPropagation();
         e.dataTransfer.dropEffect = 'copy';
@@ -1057,16 +1064,66 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     }, []);
     const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
         const dt = e.dataTransfer;
-        if (!dt || (!dt.files?.length && !dt.items?.length)) return;
-        e.preventDefault();
-        e.stopPropagation();
-        setIsDragOver(false);
+        if (!dt) return;
 
         // Compute drop position in world coords from the event's client coords.
         const target = e.currentTarget as HTMLDivElement;
         const rect = target.getBoundingClientRect();
         const screen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
         const world = screenToWorld(screen, state.view);
+
+        // Intra-canvas drag: a folder card leaf being promoted to a standalone
+        // canvas item. The payload (set in FolderLeafRow's dragstart) carries
+        // the source folder asset id + relPath inside the zip. We extract the
+        // bytes via JSZip in the renderer, register a NEW asset, and add an
+        // appropriate item type (image / code / file) to the canvas.
+        const leafPayloadRaw = dt.getData('application/x-klypix-folder-leaf');
+        if (leafPayloadRaw) {
+            e.preventDefault();
+            e.stopPropagation();
+            setIsDragOver(false);
+            try {
+                const payload = JSON.parse(leafPayloadRaw) as {
+                    folderAssetId: string;
+                    relPath: string;
+                    fileName: string;
+                    size: number;
+                    mime: string;
+                };
+                const folderAsset = getAsset(payload.folderAssetId);
+                if (folderAsset) {
+                    const zip = await JSZip.loadAsync(folderAsset.bytes);
+                    const entry = zip.file(payload.relPath);
+                    if (entry) {
+                        const bytes = await entry.async('uint8array');
+                        // Synthesize a File so fileToItem's existing pipeline
+                        // handles type detection, preview generation (PDF/XLSX/
+                        // DOCX), and asset registration. This automatically
+                        // picks the right item type (ImageItem / CodeItem /
+                        // VideoItem / FileItem) based on extension.
+                        const blob = new Blob([bytes as any], { type: payload.mime || 'application/octet-stream' });
+                        const file = new File([blob], payload.fileName, { type: payload.mime || 'application/octet-stream' });
+                        const item = await fileToItem(file, {
+                            x: world.x, y: world.y,
+                            zIndexStart: state.order.length,
+                            viewZoom: stateRef.current.view.zoom,
+                        });
+                        if (item) {
+                            commit({ type: 'ADD_ITEM', item });
+                            kickAutoTag(item, file, dispatch);
+                        }
+                    }
+                }
+            } catch (err) {
+                console.warn('[canvas] leaf-drop promotion failed:', err);
+            }
+            return;
+        }
+
+        if (!dt.files?.length && !dt.items?.length) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(false);
 
         // Snapshot dropped entries SYNCHRONOUSLY — `dataTransfer.items` and
         // any webkitGetAsEntry() call become invalid once the drop handler
