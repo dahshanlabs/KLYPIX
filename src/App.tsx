@@ -2881,10 +2881,12 @@ function AppMain() {
                                 chat.setMessages(prev => [...prev, { role: 'user' as const, content: action.label, attachedFile: { name: `📄 Generating ${fmt.toUpperCase()}...`, content: '' } }]);
                                 docGen.generate(action.prompt || action.label, fmt as any, fileContent || undefined, useScreen ? screenshot.lastScreenshot64 : undefined);
                             } else {
-                                // Default: chat — pass actionType='onscreen' to skip docGen/agent intent classification
-                                if (action.type === 'extract_table') {
-                                    agent.startScreenAction({ label: action.label, icon: '📊', action: 'extract_table', outputFormat: 'xlsx', prompt: action.prompt || 'Extract the table to Excel' });
-                                }
+                                // Default: chat — pass actionType='onscreen' to skip docGen/agent intent classification.
+                                // (A previous extract_table fast-path lived here but was dead code:
+                                // ContextAction.type was narrowed to 'chat'|'document'|'clipboard' so
+                                // the discriminator never matched. If table-extraction needs a fast
+                                // path again, it should key off action.label or a new agentHint field
+                                // on ContextAction — not a literal that can't appear in the union.)
                                 submit(undefined, prompt, false, action.label, 'onscreen');
                             }
                         }}
@@ -3139,10 +3141,14 @@ function AppMain() {
                     <div className="px-4 py-3 flex flex-wrap gap-2 no-drag animate-in fade-in duration-300">
                         {(() => {
                             const chips: Array<{ label: string; action: () => void; icon?: string }> = [];
-                            // Clipboard-derived
+                            // Clipboard-derived. ClipboardInfo's discriminator uses
+                            // 'urls' / 'plain' (not 'url' / 'text') and the raw text
+                            // lives in .text (not .content). Earlier versions of this
+                            // file used the wrong literals + field, so neither chip
+                            // ever appeared — restore the intent against the real shape.
                             const clipInfo = agent.clipboardInfo;
-                            if (clipInfo?.type === 'url') chips.push({ label: 'Analyze this link', icon: '🔗', action: () => submit(undefined, `Analyze this URL: ${clipInfo.content}`, false, 'Analyze link') });
-                            else if (clipInfo?.type === 'text' && clipInfo.content?.length > 10) chips.push({ label: 'Rewrite this', icon: '✏️', action: () => submit(undefined, `Rewrite this text: ${clipInfo.content}`, false, 'Rewrite') });
+                            if (clipInfo?.type === 'urls') chips.push({ label: 'Analyze this link', icon: '🔗', action: () => submit(undefined, `Analyze this URL: ${clipInfo.text}`, false, 'Analyze link') });
+                            else if (clipInfo?.type === 'plain' && clipInfo.text.length > 10) chips.push({ label: 'Rewrite this', icon: '✏️', action: () => submit(undefined, `Rewrite this text: ${clipInfo.text}`, false, 'Rewrite') });
                             // Persona-derived
                             const persona = getPersona();
                             if (persona && persona !== 'Helpful User' && (persona.toLowerCase().includes('document') || persona.toLowerCase().includes('file') || persona.toLowerCase().includes('pharma'))) {
@@ -3270,24 +3276,24 @@ function AppMain() {
                                         })}
                                     </div>
                                 )}
-                                {/* Agent streaming text — always visible once agent starts, robot stays stable */}
-                                {(claudeAgent.state !== 'idle' && claudeAgent.state !== 'routing') && (
-                                    <div className="flex items-start gap-3 px-1">
-                                        <div className="flex-shrink-0 mt-1">
-                                            <AgentRobot isWorking={claudeAgent.state === 'running' || claudeAgent.state === 'waiting_permission' || claudeAgent.state === 'waiting_user_answer'} />
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <div className="text-[10px] text-purple-400/60 font-medium mb-1">{t('chat.klypix_agent')}</div>
-                                            {claudeAgent.streamingText ? (
-                                                <div className="markdown-content text-[15px] leading-relaxed text-white/90">
-                                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{claudeAgent.streamingText}</ReactMarkdown>
-                                                </div>
-                                            ) : (
-                                                <div className="text-xs text-gray-500 italic">{t('chat.working')}</div>
-                                            )}
-                                        </div>
+                                {/* Agent streaming text — always visible once agent starts, robot stays stable.
+                                    The outer `claudeAgent.state !== 'idle' && !== 'routing'` guard at the
+                                    parent JSX block already narrows here; no inner check needed. */}
+                                <div className="flex items-start gap-3 px-1">
+                                    <div className="flex-shrink-0 mt-1">
+                                        <AgentRobot isWorking={claudeAgent.state === 'running' || claudeAgent.state === 'waiting_permission' || claudeAgent.state === 'waiting_user_answer'} />
                                     </div>
-                                )}
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-[10px] text-purple-400/60 font-medium mb-1">{t('chat.klypix_agent')}</div>
+                                        {claudeAgent.streamingText ? (
+                                            <div className="markdown-content text-[15px] leading-relaxed text-white/90">
+                                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{claudeAgent.streamingText}</ReactMarkdown>
+                                            </div>
+                                        ) : (
+                                            <div className="text-xs text-gray-500 italic">{t('chat.working')}</div>
+                                        )}
+                                    </div>
+                                </div>
                                 {claudeAgent.permissionRequest && (
                                     <PermissionTabs
                                         request={claudeAgent.permissionRequest}

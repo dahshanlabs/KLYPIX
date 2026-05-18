@@ -21,6 +21,10 @@ interface UseSuggestionsOptions {
     setBlacklistedIds: React.Dispatch<React.SetStateAction<Map<string, number>>>;
     setFailedAccessNames: React.Dispatch<React.SetStateAction<string[]>>;
     isAgentMode?: boolean;
+    /** Optional stack of recent screenshot base64s — the suggestion engine
+     *  uses this to keep multi-shot context when the user toggles through
+     *  several captures. Read at fetch time (not on every render). */
+    screenshotStack?: string[];
 }
 
 export function useSuggestions(opts: UseSuggestionsOptions) {

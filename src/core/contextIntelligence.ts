@@ -50,6 +50,10 @@ export interface ContextAction {
   prompt: string;
   type: 'chat' | 'document' | 'clipboard';
   documentFormat?: 'docx' | 'xlsx' | 'pptx' | 'pdf';
+  /** Optional override icon (emoji) for the action chip in WhatISee.
+   *  When set, wins over the type-based default. Per-action customization
+   *  for AI-suggested actions that want a topical glyph (📊, 🔗, etc.). */
+  icon?: string;
 }
 
 interface WindowContext {

@@ -54,8 +54,11 @@ interface SessionContextValue {
     setLastSourceMode: (mode: SourceMode) => void;
     setCanvasDoc: (doc: CanvasDocStub | null) => void;
     clear: () => void;
-    // Get a formatted summary for prompt injection
-    getContextSummary: () => string;
+    // Get a formatted summary for prompt injection. Optional currentMode
+    // lets the caller bias the summary toward the active surface (chat,
+    // full/partial screenshot, deep-file) — the implementation reads it to
+    // pick which slice of session state is most relevant.
+    getContextSummary: (currentMode?: 'chat' | 'full-screenshot' | 'partial-screenshot' | 'deep-file') => string;
 }
 
 const INITIAL_DATA: SessionContextData = {
