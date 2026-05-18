@@ -417,17 +417,24 @@ async function openFolderAsZip(item: FileItemType): Promise<void> {
 }
 
 /**
- * Extract a single file from a folder asset and open it via the OS default
- * app. Reuses the existing `canvas:open-asset-bytes` IPC (which writes to a
- * sanitized temp path then `shell.openPath`s it) — no main-process change
- * needed. The ZIP stays cached in the folder asset; we only spend CPU on
- * the one entry the user asked for.
+ * Open a single file from inside a folder asset.
+ *
+ * Two paths, picked by whether the canvas is saved:
+ *  1. Canvas IS saved (canvasFilePath set + embedOpenAndWatchLeaf available):
+ *     ROUND-TRIP — extract to a per-leaf watched working file, launch in
+ *     the OS default app, re-pack into the folder zip inside the .klypix
+ *     on every save. The .klypix stays authoritative; edits flow back
+ *     automatically.
+ *  2. Canvas NOT saved (or embed IPC unavailable): READ-ONLY — extract to
+ *     a temp file via canvas:open-asset-bytes and launch. Edits go to the
+ *     temp file and are lost when the canvas is saved/closed (consistent
+ *     with the single-file read-only fallback).
  */
-async function openFolderLeaf(item: FileItemType, relPath: string): Promise<void> {
+async function openFolderLeaf(item: FileItemType, relPath: string, canvasFilePath: string | null): Promise<void> {
     const api: any = (window as any).electron?.canvas;
-    if (!api?.openAssetBytes) return;
+    if (!api) return;
     const asset = item.assetId ? getAsset(item.assetId) : null;
-    if (!asset) return;
+    if (!asset || !item.assetId) return;
     try {
         const zip = await JSZip.loadAsync(asset.bytes);
         const entry = zip.file(relPath);
@@ -436,10 +443,32 @@ async function openFolderLeaf(item: FileItemType, relPath: string): Promise<void
             return;
         }
         const bytes = await entry.async('uint8array');
-        // The basename — main-process sanitizes path separators anyway, but
-        // strip them here so the temp filename matches what the user expects.
-        const leafName = relPath.split('/').pop() || 'file';
-        await api.openAssetBytes({ fileName: leafName, base64: bytesToBase64(bytes) });
+        const base64 = bytesToBase64(bytes);
+
+        // Round-trip embed: only if the canvas is saved (we need a target
+        // file to repack into) AND the IPC is wired.
+        if (canvasFilePath && api.embedOpenAndWatchLeaf) {
+            setEmbedSync(item.id, { status: 'syncing' }, relPath);
+            const res = await api.embedOpenAndWatchLeaf({
+                canvasFilePath,
+                itemId: item.id,
+                folderAssetPath: `assets/${item.assetId}`,
+                relPath,
+                base64,
+            });
+            if (res?.ok) {
+                setEmbedSync(item.id, { status: 'synced', workingPath: res.workingPath }, relPath);
+                return;
+            }
+            setEmbedSync(item.id, { status: 'error', error: res?.error }, relPath);
+            // Fall through to read-only on embed failure.
+        }
+
+        // Read-only fallback.
+        if (api.openAssetBytes) {
+            const leafName = relPath.split('/').pop() || 'file';
+            await api.openAssetBytes({ fileName: leafName, base64 });
+        }
     } catch (err) {
         console.warn('[folder card] extract failed:', err);
     }
@@ -454,6 +483,8 @@ function formatFolderBytes(n: number): string {
 
 function FolderCardBody({ item }: { item: FileItemType }) {
     useLocale();
+    const { state } = useCanvasStore();
+    const canvasFilePath = state.filePath || null;
     const manifest = item.folderManifest || [];
     const skipped = item.folderSkipped || [];
     const [busyPath, setBusyPath] = useState<string | null>(null);
@@ -464,7 +495,7 @@ function FolderCardBody({ item }: { item: FileItemType }) {
         if (busyPath) return;
         setBusyPath(relPath);
         try {
-            await openFolderLeaf(item, relPath);
+            await openFolderLeaf(item, relPath, canvasFilePath);
         } finally {
             setBusyPath(null);
         }
@@ -535,55 +566,15 @@ function FolderCardBody({ item }: { item: FileItemType }) {
                         {t('canvas.folder_empty')}
                     </div>
                 )}
-                {manifest.map((entry) => {
-                    const depth = (entry.path.match(/\//g) || []).length;
-                    const leaf = entry.path.split('/').pop() || entry.path;
-                    const isBusy = busyPath === entry.path;
-                    return (
-                        <div
-                            key={entry.path}
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 6,
-                                padding: '3px 8px',
-                                paddingLeft: 8 + depth * 12,
-                                borderBottom: '1px solid rgba(255,255,255,0.03)',
-                                cursor: 'pointer',
-                                background: isBusy ? 'rgba(16,185,129,0.08)' : undefined,
-                            }}
-                            onClick={() => openOne(entry.path)}
-                            title={entry.path}
-                            className="hover:!bg-white/[0.04]"
-                        >
-                            <span style={{ color: '#10b981', flexShrink: 0, display: 'inline-flex' }}>
-                                <FileIcon size={11} />
-                            </span>
-                            <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                {leaf}
-                            </span>
-                            <span style={{ flexShrink: 0, fontSize: 9, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.04em' }}>
-                                {formatFolderBytes(entry.size)}
-                            </span>
-                            <button
-                                onPointerDown={(e) => e.stopPropagation()}
-                                onClick={(e) => { e.stopPropagation(); openOne(entry.path); }}
-                                title={t('canvas.folder_extract_open')}
-                                style={{
-                                    flexShrink: 0,
-                                    padding: 3,
-                                    borderRadius: 4,
-                                    background: 'rgba(255,255,255,0.04)',
-                                    color: isBusy ? '#10b981' : 'rgba(255,255,255,0.5)',
-                                    cursor: 'pointer',
-                                }}
-                                className="hover:!bg-emerald-500/20 hover:!text-emerald-300"
-                            >
-                                <ExternalLink size={10} />
-                            </button>
-                        </div>
-                    );
-                })}
+                {manifest.map((entry) => (
+                    <FolderLeafRow
+                        key={entry.path}
+                        itemId={item.id}
+                        entry={entry}
+                        isBusy={busyPath === entry.path}
+                        onOpen={() => openOne(entry.path)}
+                    />
+                ))}
                 {skipped.length > 0 && (
                     <div style={{
                         padding: '6px 10px',
@@ -602,6 +593,78 @@ function FolderCardBody({ item }: { item: FileItemType }) {
                 )}
             </div>
         </>
+    );
+}
+
+/** A row inside the folder card's tree. Subscribes to its OWN leaf sync
+ *  state (keyed by item.id + relPath) so a save event on leaf A doesn't
+ *  re-render every other row in a 200-file folder. */
+function FolderLeafRow({ itemId, entry, isBusy, onOpen }: {
+    itemId: string;
+    entry: { path: string; size: number; mime: string };
+    isBusy: boolean;
+    onOpen: () => void;
+}) {
+    const depth = (entry.path.match(/\//g) || []).length;
+    const leaf = entry.path.split('/').pop() || entry.path;
+    const sync = useEmbedSync(itemId, entry.path);
+    // 'busy' (parent's click-in-flight) and 'syncing' (Office app saving)
+    // are visually distinct. busy wins because it's tied to the user's
+    // active gesture; syncing is a background state.
+    const showSyncing = !isBusy && sync.status === 'syncing';
+    const showSynced = !isBusy && sync.status === 'synced';
+    const showError = sync.status === 'error';
+    return (
+        <div
+            style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '3px 8px',
+                paddingLeft: 8 + depth * 12,
+                borderBottom: '1px solid rgba(255,255,255,0.03)',
+                cursor: 'pointer',
+                background: isBusy ? 'rgba(16,185,129,0.08)' : showSyncing ? 'rgba(251,191,36,0.06)' : undefined,
+            }}
+            onClick={onOpen}
+            title={showError ? `${entry.path} — ${sync.error || 'sync error'}` : entry.path}
+            className="hover:!bg-white/[0.04]"
+        >
+            <span style={{ color: '#10b981', flexShrink: 0, display: 'inline-flex' }}>
+                <FileIcon size={11} />
+            </span>
+            <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {leaf}
+            </span>
+            {showSyncing && (
+                <span style={{ flexShrink: 0, width: 5, height: 5, borderRadius: 99, background: '#fbbf24', boxShadow: '0 0 4px #fbbf24', animation: 'klypix-pulse 1s ease-in-out infinite' }} title="syncing…" />
+            )}
+            {showSynced && (
+                <span style={{ flexShrink: 0, width: 5, height: 5, borderRadius: 99, background: '#10b981' }} title="synced — edits saved into canvas" />
+            )}
+            {showError && (
+                <span style={{ flexShrink: 0, width: 5, height: 5, borderRadius: 99, background: '#ef4444' }} title={sync.error || 'sync error'} />
+            )}
+            <span style={{ flexShrink: 0, fontSize: 9, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.04em' }}>
+                {formatFolderBytes(entry.size)}
+            </span>
+            <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); onOpen(); }}
+                title={showSynced ? 'Open in app (edits sync back into canvas)' : 'Extract & open'}
+                style={{
+                    flexShrink: 0,
+                    padding: 3,
+                    borderRadius: 4,
+                    background: 'rgba(255,255,255,0.04)',
+                    color: isBusy ? '#10b981' : 'rgba(255,255,255,0.5)',
+                    cursor: 'pointer',
+                }}
+                className="hover:!bg-emerald-500/20 hover:!text-emerald-300"
+            >
+                <ExternalLink size={10} />
+            </button>
+        </div>
     );
 }
 

@@ -32,7 +32,7 @@ import { FallbackExecutor } from './sandbox/fallbackExecutor';
 import { generateXLSX, generateDOCX, generatePPTX, generatePDF } from './generators/index';
 import { saveAnyFile, loadAnyFile, listAnyVersions, loadAnyVersion, readAssetBytes, evictZipCache } from './canvas/anyFileHandler';
 import { saveKlypixFile, loadKlypixFile, detectKlypixFormat } from './canvas/klypixFileHandler';
-import { openAndWatch as embedOpenAndWatch, stopWatching as embedStopWatching, cleanupCanvas as embedCleanupCanvas, setEmbedEventSink } from './canvas/embedWatcher';
+import { openAndWatch as embedOpenAndWatch, openAndWatchLeaf as embedOpenAndWatchLeaf, stopWatching as embedStopWatching, cleanupCanvas as embedCleanupCanvas, setEmbedEventSink } from './canvas/embedWatcher';
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 const execAsync = promisify(exec);
 // ── Deep Link Protocol (for OAuth callbacks) ─────────────────────────────────
@@ -1711,6 +1711,16 @@ ipcMain.handle('canvas:embed:open-and-watch', async (_evt: any, args: {
     base64: string;
 }) => {
     return embedOpenAndWatch(args);
+});
+
+ipcMain.handle('canvas:embed:open-and-watch-leaf', async (_evt: any, args: {
+    canvasFilePath: string;
+    itemId: string;
+    folderAssetPath: string;
+    relPath: string;
+    base64: string;
+}) => {
+    return embedOpenAndWatchLeaf(args);
 });
 
 ipcMain.handle('canvas:embed:stop-watching', async (_evt: any, args: { workingPath: string }) => {

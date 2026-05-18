@@ -20,23 +20,32 @@ export interface EmbedSyncState {
     workingPath?: string;
 }
 
-type Listener = (itemId: string, state: EmbedSyncState) => void;
+type Listener = (itemId: string, state: EmbedSyncState, relPath?: string) => void;
 
 const states = new Map<string, EmbedSyncState>();
 const listeners = new Set<Listener>();
 
-/** Get current state for an item, or 'idle' if no embed activity yet. */
-export function getEmbedSync(itemId: string): EmbedSyncState {
-    return states.get(itemId) || { status: 'idle', at: 0 };
+/** Compose the lookup key. When relPath is set, the state is for one leaf
+ *  inside a folder card; otherwise it's the item's single-asset slot. */
+function keyFor(itemId: string, relPath?: string): string {
+    return relPath ? `${itemId}::${relPath}` : itemId;
 }
 
-/** Update an item's sync state. Notifies all subscribers synchronously. */
-export function setEmbedSync(itemId: string, partial: Partial<EmbedSyncState> & { status: EmbedSyncStatus }): void {
-    const prev = states.get(itemId) || { status: 'idle' as const, at: 0 };
+/** Get current state for an item (or one of its folder leaves), or 'idle'
+ *  if no embed activity yet for that key. */
+export function getEmbedSync(itemId: string, relPath?: string): EmbedSyncState {
+    return states.get(keyFor(itemId, relPath)) || { status: 'idle', at: 0 };
+}
+
+/** Update an item's sync state. When relPath is set the state is per-leaf;
+ *  otherwise it's the item-level slot. Notifies all subscribers synchronously. */
+export function setEmbedSync(itemId: string, partial: Partial<EmbedSyncState> & { status: EmbedSyncStatus }, relPath?: string): void {
+    const k = keyFor(itemId, relPath);
+    const prev = states.get(k) || { status: 'idle' as const, at: 0 };
     const next: EmbedSyncState = { ...prev, ...partial, at: Date.now() };
-    states.set(itemId, next);
+    states.set(k, next);
     for (const l of listeners) {
-        try { l(itemId, next); } catch { /* never let a bad listener stop the broadcast */ }
+        try { l(itemId, next, relPath); } catch { /* never let a bad listener stop the broadcast */ }
     }
 }
 
@@ -65,7 +74,7 @@ function wireMainEvents(): void {
             if (a?.onEmbedSyncState) {
                 clearInterval(id);
                 a.onEmbedSyncState((evt: any) => {
-                    setEmbedSync(evt.itemId, { status: evt.kind, error: evt.error });
+                    setEmbedSync(evt.itemId, { status: evt.kind, error: evt.error }, evt.relPath);
                 });
             } else if (attempts > 20) {
                 clearInterval(id);  // ~10s, give up silently
@@ -74,7 +83,7 @@ function wireMainEvents(): void {
         return;
     }
     api.onEmbedSyncState((evt: any) => {
-        setEmbedSync(evt.itemId, { status: evt.kind, error: evt.error });
+        setEmbedSync(evt.itemId, { status: evt.kind, error: evt.error }, evt.relPath);
     });
 }
 

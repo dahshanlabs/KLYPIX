@@ -52,11 +52,23 @@ contextBridge.exposeInMainWorld('electron', {
             fileName: string;
             base64: string;
         }) => ipcRenderer.invoke('canvas:embed:open-and-watch', args),
+        // Folder-leaf variant: working file lives under
+        // working/<canvasHash>/<itemId>/<relPath> and re-pack is a ZIP-of-ZIPs
+        // (replace entry inside folder zip, regenerate folder zip, replace
+        // in canvas zip). Same emit events but tagged with relPath so the
+        // FolderCard tree row knows which leaf is syncing.
+        embedOpenAndWatchLeaf: (args: {
+            canvasFilePath: string;
+            itemId: string;
+            folderAssetPath: string;
+            relPath: string;
+            base64: string;
+        }) => ipcRenderer.invoke('canvas:embed:open-and-watch-leaf', args),
         embedStopWatching: (workingPath: string) => ipcRenderer.invoke('canvas:embed:stop-watching', { workingPath }),
         embedCleanupCanvas: (canvasFilePath: string, deleteWorkingDir = false) =>
             ipcRenderer.invoke('canvas:embed:cleanup-canvas', { canvasFilePath, deleteWorkingDir }),
         readRawBytes: (filePath: string) => ipcRenderer.invoke('canvas:read-raw-bytes', { filePath }),
-        onEmbedSyncState: (cb: (evt: { itemId: string; canvasFilePath: string; kind: 'syncing' | 'synced' | 'error'; error?: string }) => void) => {
+        onEmbedSyncState: (cb: (evt: { itemId: string; canvasFilePath: string; kind: 'syncing' | 'synced' | 'error'; error?: string; relPath?: string }) => void) => {
             const l = (_: any, evt: any) => cb(evt);
             ipcRenderer.on('canvas:embed:sync-state', l);
             return () => ipcRenderer.removeListener('canvas:embed:sync-state', l);

@@ -44,11 +44,24 @@ function safeFileName(name: string): string {
 
 // ── State: active watchers indexed by working-file path ───────────────
 
+/**
+ * What kind of asset this watcher is pointed at:
+ *  - 'asset' = a flat .klypix asset (the original single-file embed path).
+ *    Save → replace `<assetPath>` in the canvas zip with the working bytes.
+ *  - 'leaf'  = one file inside a folder asset (folder asset is itself a zip
+ *    stored at <folderAssetPath>). Save → read folder zip, replace the
+ *    `<relPath>` entry, regenerate folder zip, replace `<folderAssetPath>`
+ *    in the canvas zip. The repack is a ZIP-of-ZIPs operation but stays
+ *    cheap because JSZip caches non-modified entries' compressed bytes.
+ */
+type WatchTarget =
+    | { kind: 'asset'; assetPath: string }
+    | { kind: 'leaf'; folderAssetPath: string; relPath: string };
+
 interface ActiveWatch {
     canvasFilePath: string;
     itemId: string;
-    /** Asset path INSIDE the .klypix zip (e.g. "assets/<assetId>"). */
-    assetPath: string;
+    target: WatchTarget;
     workingPath: string;
     watcher: fs.FSWatcher;
     /** Pending debounced re-pack timer. */
@@ -71,6 +84,10 @@ export interface EmbedEvent {
     canvasFilePath: string;
     kind: 'syncing' | 'synced' | 'error';
     error?: string;
+    /** Set when this event is for a leaf inside a folder asset — lets the
+     *  renderer show per-leaf sync badges instead of a single badge for
+     *  the whole folder card. Absent for the single-file embed path. */
+    relPath?: string;
 }
 
 export function setEmbedEventSink(sink: (evt: EmbedEvent) => void): void {
@@ -138,7 +155,7 @@ export async function openAndWatch(args: OpenAndWatchArgs): Promise<OpenAndWatch
         const entry: ActiveWatch = {
             canvasFilePath: args.canvasFilePath,
             itemId: args.itemId,
-            assetPath: args.assetPath,
+            target: { kind: 'asset', assetPath: args.assetPath },
             workingPath,
             watcher,
             debounceTimer: null,
@@ -153,6 +170,88 @@ export async function openAndWatch(args: OpenAndWatchArgs): Promise<OpenAndWatch
         const launchErr = await shell.openPath(workingPath);
         if (launchErr) {
             console.warn('[embed] shell.openPath failed:', launchErr, '— file is extracted but not launched');
+        }
+
+        return { ok: true, workingPath };
+    } catch (err: any) {
+        return { ok: false, error: err?.message || String(err) };
+    }
+}
+
+// ── Open + watch (folder-leaf variant) ────────────────────────────────
+
+export interface OpenAndWatchLeafArgs {
+    canvasFilePath: string;
+    /** Folder card item id — leaves of the same folder share the same itemId. */
+    itemId: string;
+    /** Asset path of the FOLDER zip inside the .klypix (e.g. "assets/<folderAssetId>"). */
+    folderAssetPath: string;
+    /** Path of the leaf INSIDE the folder zip (e.g. "subdir/file.docx"). */
+    relPath: string;
+    /** Raw bytes of just this leaf — caller extracts from the in-memory folder
+     *  zip on the renderer side and ships them across as base64. Saves us from
+     *  decompressing the whole folder zip again in the main process. */
+    base64: string;
+}
+
+/**
+ * Folder-leaf round-trip. Same lifecycle as openAndWatch but the watched
+ * path lives under a per-leaf sub-path of the item's working dir, and the
+ * re-pack is a ZIP-of-ZIPs (replace the leaf entry inside the folder zip,
+ * then replace the folder zip inside the canvas zip).
+ *
+ * Working layout for a folder card with items "a.txt" and "sub/b.docx":
+ *   working/<canvasHash>/<itemId>/a.txt
+ *   working/<canvasHash>/<itemId>/sub/b.docx
+ *
+ * That mirrors the original folder structure so apps that follow path-based
+ * heuristics (e.g. Word looking for sibling templates) behave naturally.
+ */
+export async function openAndWatchLeaf(args: OpenAndWatchLeafArgs): Promise<OpenAndWatchResult> {
+    if (!args.canvasFilePath) {
+        return { ok: false, error: 'cannot embed-edit without a saved canvas (Save the canvas first)' };
+    }
+    if (!args.relPath || args.relPath.includes('..')) {
+        return { ok: false, error: 'invalid leaf path' };
+    }
+    try {
+        // Preserve the folder's internal directory structure inside the
+        // per-item working dir. Sanitize each segment so a malicious zip
+        // entry can't escape via path traversal.
+        const itemDir = workingDirFor(args.canvasFilePath, args.itemId);
+        const segments = args.relPath.split('/').map(safeFileName);
+        const workingPath = path.join(itemDir, ...segments);
+        const parentDir = path.dirname(workingPath);
+        await fs.promises.mkdir(parentDir, { recursive: true });
+
+        await fs.promises.writeFile(workingPath, Buffer.from(args.base64, 'base64'));
+
+        const existing = active.get(workingPath);
+        if (existing) {
+            existing.watcher.close();
+            if (existing.debounceTimer) clearTimeout(existing.debounceTimer);
+            active.delete(workingPath);
+        }
+
+        const watcher = fs.watch(workingPath, { persistent: false }, () => {
+            handleChangeEvent(workingPath);
+        });
+
+        const entry: ActiveWatch = {
+            canvasFilePath: args.canvasFilePath,
+            itemId: args.itemId,
+            target: { kind: 'leaf', folderAssetPath: args.folderAssetPath, relPath: args.relPath },
+            workingPath,
+            watcher,
+            debounceTimer: null,
+            repackInFlight: false,
+            repackQueued: false,
+        };
+        active.set(workingPath, entry);
+
+        const launchErr = await shell.openPath(workingPath);
+        if (launchErr) {
+            console.warn('[embed-leaf] shell.openPath failed:', launchErr);
         }
 
         return { ok: true, workingPath };
@@ -189,6 +288,11 @@ async function repackEntry(entry: ActiveWatch, attempt = 0): Promise<void> {
     }
     entry.repackInFlight = true;
 
+    // For leaf entries we tag every event with the relPath so the renderer
+    // can update the matching tree row's badge.
+    const leafRelPath = entry.target.kind === 'leaf' ? entry.target.relPath : undefined;
+    const tag = { itemId: entry.itemId, canvasFilePath: entry.canvasFilePath, relPath: leafRelPath };
+
     try {
         // Confirm the working file still exists. Word's atomic-save briefly
         // deletes the file mid-rename; an early read here would fail. If
@@ -196,28 +300,46 @@ async function repackEntry(entry: ActiveWatch, attempt = 0): Promise<void> {
         if (!fs.existsSync(entry.workingPath)) {
             await new Promise(r => setTimeout(r, 200));
             if (!fs.existsSync(entry.workingPath)) {
-                emit({ itemId: entry.itemId, canvasFilePath: entry.canvasFilePath, kind: 'error', error: 'working file disappeared' });
+                emit({ ...tag, kind: 'error', error: 'working file disappeared' });
                 return;
             }
         }
 
-        emit({ itemId: entry.itemId, canvasFilePath: entry.canvasFilePath, kind: 'syncing' });
+        emit({ ...tag, kind: 'syncing' });
 
         // Read the modified bytes.
         const newBytes = await fs.promises.readFile(entry.workingPath);
 
-        // Open the canvas zip, replace the asset entry, write back atomically.
-        // We don't touch any other entry — the rest of the zip flows through
-        // jszip's cached compressed bytes unchanged (same trick anyFileHandler
-        // uses for v3 saves).
+        // Open the canvas zip and apply the appropriate update.
+        // Single asset: replace `<assetPath>` directly.
+        // Folder leaf:  load the inner folder zip, replace `<relPath>` in it,
+        //               regenerate the folder zip bytes, then replace the
+        //               folder zip entry in the canvas zip.
+        // In both cases JSZip caches the compressed bytes of untouched
+        // entries, so the canvas zip body flows through with one modified
+        // entry — same trick anyFileHandler uses for v3 saves.
         const canvasBytes = await fs.promises.readFile(entry.canvasFilePath);
         const zip = await JSZip.loadAsync(canvasBytes);
 
-        // Sanity check: the asset path we're updating must already exist in the
-        // zip. If it doesn't, the canvas was probably reset/migrated under us;
-        // adding a fresh entry is still the right move (the renderer's asset
-        // registry has the canonical state).
-        zip.file(entry.assetPath, newBytes);
+        if (entry.target.kind === 'asset') {
+            zip.file(entry.target.assetPath, newBytes);
+        } else {
+            // Load the existing folder zip from the canvas zip.
+            const folderEntry = zip.file(entry.target.folderAssetPath);
+            if (!folderEntry) {
+                emit({ ...tag, kind: 'error', error: `folder asset ${entry.target.folderAssetPath} not found in canvas` });
+                return;
+            }
+            const folderBytes = await folderEntry.async('nodebuffer');
+            const folderZip = await JSZip.loadAsync(folderBytes);
+            folderZip.file(entry.target.relPath, newBytes);
+            const newFolderBytes = await folderZip.generateAsync({
+                type: 'nodebuffer',
+                compression: 'DEFLATE',
+                compressionOptions: { level: 6 },
+            });
+            zip.file(entry.target.folderAssetPath, newFolderBytes);
+        }
 
         const buf = await zip.generateAsync({
             type: 'nodebuffer',
@@ -230,7 +352,7 @@ async function repackEntry(entry: ActiveWatch, attempt = 0): Promise<void> {
         await fs.promises.writeFile(tmpPath, buf);
         await fs.promises.rename(tmpPath, entry.canvasFilePath);
 
-        emit({ itemId: entry.itemId, canvasFilePath: entry.canvasFilePath, kind: 'synced' });
+        emit({ ...tag, kind: 'synced' });
     } catch (err: any) {
         const msg = err?.message || String(err);
         // EBUSY / EPERM = file locked (antivirus scanning, Word holding it,
@@ -245,7 +367,7 @@ async function repackEntry(entry: ActiveWatch, attempt = 0): Promise<void> {
             return repackEntry(entry, attempt + 1);
         }
         console.error('[embed] re-pack failed:', err);
-        emit({ itemId: entry.itemId, canvasFilePath: entry.canvasFilePath, kind: 'error', error: msg });
+        emit({ ...tag, kind: 'error', error: msg });
     } finally {
         entry.repackInFlight = false;
         // If a change fired during this re-pack, run another pass with the latest bytes.
