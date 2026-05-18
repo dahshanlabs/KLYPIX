@@ -57,6 +57,10 @@ import { setOpenCanvasLinkHandler } from './items/CanvasLinkItem';
 import { CanvasDashboard } from './dashboard/CanvasDashboard';
 import { ShareModal } from './cloud/ShareModal';
 import { Share2 } from 'lucide-react';
+import { useCanvasCollab } from './collab/useCanvasCollab';
+import { CollabPresenceChips } from './collab/CollabPresenceChips';
+import { getCloudShare } from './cloud/cloudShareStore';
+import { useAuth } from '../components/AuthProvider';
 import {
     suppressContainerResizeScaling,
     getContainerRenderMode,
@@ -720,6 +724,18 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     const [layersOpen, setLayersOpen] = useState(false);
     const [presenting, setPresenting] = useState(false);
     const [versionsOpen, setVersionsOpen] = useState(false);
+    // Phase 1 live collab — presence only. Channel is keyed by the canvas's
+    // cloud blob id (set when the user shares); collab is silent on
+    // never-shared canvases. The auth user provides displayName + a stable
+    // userId for color hashing.
+    const cloudShare = state.filePath ? getCloudShare(state.filePath) : undefined;
+    const auth = useAuth();
+    const collab = useCanvasCollab({
+        blobId: cloudShare?.blobId ?? null,
+        userId: auth.user?.id ?? null,
+        displayName: auth.user?.displayName ?? null,
+        active: tabActive,
+    });
     const [templatesOpen, setTemplatesOpen] = useState(false);
     const [collectionsOpen, setCollectionsOpen] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
@@ -2533,6 +2549,13 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 <FileOpButton label={tLocale('canvas_top.save_as_short')} onClick={file.saveAs}><SaveAll size={13} /></FileOpButton>
                 <FileOpButton label={tLocale('canvas_top.close_canvas')} onClick={() => onCloseCanvas?.()}><CloseIcon size={13} /></FileOpButton>
                 <FileOpButton label={state.filePath ? tLocale('canvas_top.share_canvas') : tLocale('canvas_top.save_first_share')} onClick={() => setShareOpen(true)}><Share2 size={13} /></FileOpButton>
+                {/* Live collab presence — renders nothing when no peers. */}
+                {collab.peers.length > 0 && (
+                    <>
+                        <span className="w-px h-4 bg-white/10 mx-0.5" />
+                        <CollabPresenceChips peers={collab.peers} connected={collab.connected} />
+                    </>
+                )}
                 <span className="w-px h-4 bg-white/10 mx-0.5" />
                 <FileOpButton label={tLocale('canvas_top.search_short')} onClick={() => setSearchOpen(true)}><SearchIcon size={13} /></FileOpButton>
                 <FileOpButton label={tLocale('canvas_top.outline')} onClick={() => setOutlineOpen(v => !v)}><List size={13} /></FileOpButton>

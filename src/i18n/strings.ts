@@ -419,6 +419,10 @@ const strings: Strings = {
     'canvas.meta_row_one': { en: '1 row', ar: 'صف واحد' },
     'canvas.meta_sheets': { en: '{n} sheets', ar: '{n} أوراق' },
     'canvas.meta_text': { en: 'Text', ar: 'نص' },
+    // Live collaboration
+    'canvas.collab_n_here': { en: '{n} people here', ar: '{n} أشخاص هنا' },
+    'canvas.collab_more_count': { en: '+{n} more', ar: '+{n} آخرون' },
+    'canvas.collab_disconnected': { en: 'Reconnecting…', ar: 'إعادة الاتصال…' },
     // Layers panel
     'canvas.layer_content': { en: 'content', ar: 'المحتوى' },
     'canvas.layer_agent': { en: 'agent', ar: 'الوكيل' },
