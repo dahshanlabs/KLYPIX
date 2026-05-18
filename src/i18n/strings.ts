@@ -396,6 +396,12 @@ const strings: Strings = {
     'canvas.folder_preview_loading': { en: 'Loading preview…', ar: 'جارٍ تحميل المعاينة…' },
     'canvas.folder_preview_unavailable': { en: 'No preview available for this file type', ar: 'لا توجد معاينة متاحة لهذا النوع' },
     'canvas.folder_preview_too_large': { en: 'File too large to preview', ar: 'الملف كبير جدًا للمعاينة' },
+    'canvas.folder_sort_by': { en: 'Sort by…', ar: 'ترتيب حسب…' },
+    'canvas.folder_sort_name': { en: 'Name', ar: 'الاسم' },
+    'canvas.folder_sort_size': { en: 'Size', ar: 'الحجم' },
+    'canvas.folder_sort_type': { en: 'Type', ar: 'النوع' },
+    'canvas.folder_sort_ascending': { en: 'Ascending', ar: 'تصاعدي' },
+    'canvas.folder_sort_descending': { en: 'Descending', ar: 'تنازلي' },
     // Layers panel
     'canvas.layer_content': { en: 'content', ar: 'المحتوى' },
     'canvas.layer_agent': { en: 'agent', ar: 'الوكيل' },

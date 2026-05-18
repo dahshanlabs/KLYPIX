@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { File as FileIcon, FileText, FileSpreadsheet, FileImage, FileCode, FileVideo, FileAudio, FileArchive, ExternalLink, FolderOpen as FolderOpenIcon, Folder as FolderIcon, Eye as EyeIcon, EyeOff as EyeOffIcon, Loader2 } from 'lucide-react';
+import { File as FileIcon, FileText, FileSpreadsheet, FileImage, FileCode, FileVideo, FileAudio, FileArchive, ExternalLink, FolderOpen as FolderOpenIcon, Folder as FolderIcon, Eye as EyeIcon, EyeOff as EyeOffIcon, Loader2, ChevronDown, ArrowDownAZ, ArrowUpAZ, Hash } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import JSZip from 'jszip';
 import type { FileItem as FileItemType } from './types';
@@ -494,8 +494,47 @@ function FolderCardBody({ item }: { item: FileItemType }) {
     const [previewEnabled, setPreviewEnabled] = useState(false);
     const [preview, setPreview] = useState<{ rect: DOMRect; entry: { path: string; size: number; mime: string } } | null>(null);
     const previewLeaveTimerRef = useRef<number | null>(null);
+    // Per-card collapse state + sort. Both are ephemeral — not persisted
+    // into the .klypix. A user reopening a saved canvas sees everything
+    // expanded with default sort, which is the right "freshly opened, here
+    // is everything" experience.
+    const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+    const [sortKey, setSortKey] = useState<SortKey>('name');
+    const [sortDir, setSortDir] = useState<SortDir>('asc');
+    const [sortMenuOpen, setSortMenuOpen] = useState(false);
     const totalRaw = item.folderTotalSize ?? 0;
     const zipSize = item.fileSize;
+
+    // Build + sort + flatten the tree. Cheap for typical folder sizes; if a
+    // huge folder shows up we'd memo this on (manifest, collapsed, sortKey,
+    // sortDir).
+    const tree = buildFolderTree(manifest);
+    const sortedTree = sortNodes(tree, sortKey, sortDir);
+    const rows = flattenTree(sortedTree, collapsed);
+
+    const toggleDir = (path: string) => {
+        setCollapsed(prev => {
+            const next = new Set(prev);
+            if (next.has(path)) next.delete(path); else next.add(path);
+            return next;
+        });
+    };
+
+    // Close sort menu on outside click or Esc.
+    useEffect(() => {
+        if (!sortMenuOpen) return;
+        const onDown = () => setSortMenuOpen(false);
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSortMenuOpen(false); };
+        const t = setTimeout(() => {
+            window.addEventListener('pointerdown', onDown);
+            window.addEventListener('keydown', onKey);
+        }, 0);
+        return () => {
+            clearTimeout(t);
+            window.removeEventListener('pointerdown', onDown);
+            window.removeEventListener('keydown', onKey);
+        };
+    }, [sortMenuOpen]);
 
     const openOne = async (relPath: string) => {
         if (busyPath) return;
@@ -545,6 +584,85 @@ function FolderCardBody({ item }: { item: FileItemType }) {
                             <span style={{ color: 'rgba(16,185,129,0.6)' }}> · zip {formatFolderBytes(zipSize)}</span>
                         )}
                     </div>
+                </div>
+                <div style={{ position: 'relative', flexShrink: 0 }}>
+                    <button
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.stopPropagation(); setSortMenuOpen(v => !v); }}
+                        title={t('canvas.folder_sort_by')}
+                        style={{
+                            padding: 6,
+                            borderRadius: 6,
+                            background: sortMenuOpen ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)',
+                            color: 'rgba(255,255,255,0.6)',
+                            cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: 3,
+                            fontSize: 9,
+                            fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
+                        }}
+                        className="hover:!bg-white/10"
+                    >
+                        {sortDir === 'asc' ? <ArrowDownAZ size={11} /> : <ArrowUpAZ size={11} />}
+                    </button>
+                    {sortMenuOpen && (
+                        <div
+                            onPointerDown={(e) => e.stopPropagation()}
+                            style={{
+                                position: 'absolute',
+                                top: 'calc(100% + 4px)',
+                                right: 0,
+                                zIndex: 50,
+                                background: 'rgba(15,15,24,0.96)',
+                                border: '1px solid rgba(255,255,255,0.1)',
+                                borderRadius: 8,
+                                boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                                backdropFilter: 'blur(8px)',
+                                padding: 4,
+                                minWidth: 130,
+                                fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
+                            }}
+                        >
+                            {(['name', 'size', 'type'] as SortKey[]).map(k => (
+                                <button
+                                    key={k}
+                                    onClick={() => { setSortKey(k); setSortMenuOpen(false); }}
+                                    style={{
+                                        display: 'flex', alignItems: 'center', gap: 6,
+                                        width: '100%',
+                                        padding: '6px 10px',
+                                        borderRadius: 5,
+                                        fontSize: 11,
+                                        color: sortKey === k ? '#10b981' : 'rgba(255,255,255,0.7)',
+                                        background: sortKey === k ? 'rgba(16,185,129,0.10)' : 'transparent',
+                                        cursor: 'pointer',
+                                        textAlign: 'left',
+                                    }}
+                                    className="hover:!bg-white/[0.06]"
+                                >
+                                    {k === 'name' ? <ArrowDownAZ size={10} /> : k === 'size' ? <Hash size={10} /> : <FileIcon size={10} />}
+                                    {t(k === 'name' ? 'canvas.folder_sort_name' : k === 'size' ? 'canvas.folder_sort_size' : 'canvas.folder_sort_type')}
+                                </button>
+                            ))}
+                            <div style={{ height: 1, background: 'rgba(255,255,255,0.08)', margin: '4px 0' }} />
+                            <button
+                                onClick={() => { setSortDir(d => d === 'asc' ? 'desc' : 'asc'); }}
+                                style={{
+                                    display: 'flex', alignItems: 'center', gap: 6,
+                                    width: '100%',
+                                    padding: '6px 10px',
+                                    borderRadius: 5,
+                                    fontSize: 11,
+                                    color: 'rgba(255,255,255,0.7)',
+                                    cursor: 'pointer',
+                                    textAlign: 'left',
+                                }}
+                                className="hover:!bg-white/[0.06]"
+                            >
+                                {sortDir === 'asc' ? <ArrowUpAZ size={10} /> : <ArrowDownAZ size={10} />}
+                                {t(sortDir === 'asc' ? 'canvas.folder_sort_descending' : 'canvas.folder_sort_ascending')}
+                            </button>
+                        </div>
+                    )}
                 </div>
                 <button
                     onPointerDown={(e) => e.stopPropagation()}
@@ -603,18 +721,31 @@ function FolderCardBody({ item }: { item: FileItemType }) {
                         {t('canvas.folder_empty')}
                     </div>
                 )}
-                {manifest.map((entry) => (
-                    <FolderLeafRow
-                        key={entry.path}
-                        itemId={item.id}
-                        folderAssetId={item.assetId}
-                        entry={entry}
-                        isBusy={busyPath === entry.path}
-                        previewEnabled={previewEnabled}
-                        onOpen={() => openOne(entry.path)}
-                        onPreview={onLeafHover}
-                        onPreviewLeave={onLeafLeave}
-                    />
+                {rows.map((row, i) => (
+                    row.kind === 'dir' ? (
+                        <FolderDirRow
+                            key={`d:${row.path}`}
+                            path={row.path}
+                            name={row.name}
+                            depth={row.depth}
+                            childCount={row.childCount}
+                            isCollapsed={collapsed.has(row.path)}
+                            onToggle={() => toggleDir(row.path)}
+                        />
+                    ) : (
+                        <FolderLeafRow
+                            key={`f:${row.entry.path}:${i}`}
+                            itemId={item.id}
+                            folderAssetId={item.assetId}
+                            entry={row.entry}
+                            depth={row.depth}
+                            isBusy={busyPath === row.entry.path}
+                            previewEnabled={previewEnabled}
+                            onOpen={() => openOne(row.entry.path)}
+                            onPreview={onLeafHover}
+                            onPreviewLeave={onLeafLeave}
+                        />
+                    )
                 ))}
                 {skipped.length > 0 && (
                     <div style={{
@@ -644,20 +775,69 @@ function FolderCardBody({ item }: { item: FileItemType }) {
     );
 }
 
+/** A directory row in the folder tree. Click anywhere on the row (or the
+ *  chevron) to toggle collapse. Empty directories are still listed — they
+ *  carry meaning in source archives. */
+function FolderDirRow({ path, name, depth, childCount, isCollapsed, onToggle }: {
+    path: string;
+    name: string;
+    depth: number;
+    childCount: number;
+    isCollapsed: boolean;
+    onToggle: () => void;
+}) {
+    return (
+        <div
+            onClick={onToggle}
+            title={path}
+            style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '3px 8px',
+                paddingLeft: 8 + depth * 12,
+                borderBottom: '1px solid rgba(255,255,255,0.03)',
+                cursor: 'pointer',
+                userSelect: 'none',
+            }}
+            className="hover:!bg-white/[0.04]"
+        >
+            <span style={{
+                color: 'rgba(255,255,255,0.5)',
+                flexShrink: 0,
+                display: 'inline-flex',
+                transition: 'transform 0.12s',
+                transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+            }}>
+                <ChevronDown size={11} />
+            </span>
+            <span style={{ color: '#fbbf24', flexShrink: 0, display: 'inline-flex' }}>
+                {isCollapsed ? <FolderIcon size={11} /> : <FolderOpenIcon size={11} />}
+            </span>
+            <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: 500, color: '#e8e8ed' }}>
+                {name}
+            </span>
+            <span style={{ flexShrink: 0, fontSize: 9, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.04em' }}>
+                {childCount}
+            </span>
+        </div>
+    );
+}
+
 /** A row inside the folder card's tree. Subscribes to its OWN leaf sync
  *  state (keyed by item.id + relPath) so a save event on leaf A doesn't
  *  re-render every other row in a 200-file folder. */
-function FolderLeafRow({ itemId, folderAssetId, entry, isBusy, previewEnabled, onOpen, onPreview, onPreviewLeave }: {
+function FolderLeafRow({ itemId, folderAssetId, entry, depth, isBusy, previewEnabled, onOpen, onPreview, onPreviewLeave }: {
     itemId: string;
     folderAssetId: string | undefined;
     entry: { path: string; size: number; mime: string };
+    depth: number;
     isBusy: boolean;
     previewEnabled: boolean;
     onOpen: () => void;
     onPreview: (rect: DOMRect, entry: { path: string; size: number; mime: string }) => void;
     onPreviewLeave: () => void;
 }) {
-    const depth = (entry.path.match(/\//g) || []).length;
     const leaf = entry.path.split('/').pop() || entry.path;
     const sync = useEmbedSync(itemId, entry.path);
     const rowRef = useRef<HTMLDivElement | null>(null);
@@ -750,6 +930,112 @@ function FolderLeafRow({ itemId, folderAssetId, entry, isBusy, previewEnabled, o
             </button>
         </div>
     );
+}
+
+// ── Folder tree (build + flatten) ─────────────────────────────────────
+// The manifest is a flat list of {path, size, mime}. To render with
+// collapsible directories we build a small tree and re-flatten it on each
+// render, honoring the user's collapse set + sort choice. Cheap enough to
+// do per render for typical folder sizes (~hundreds of files); could be
+// memoized if a 10k-file folder shows up in the wild.
+
+type ManifestEntry = { path: string; size: number; mime: string };
+
+type FolderNode =
+    | { kind: 'dir'; path: string; name: string; children: FolderNode[] }
+    | { kind: 'file'; entry: ManifestEntry; name: string; path: string };
+
+type SortKey = 'name' | 'size' | 'type';
+type SortDir = 'asc' | 'desc';
+
+function buildFolderTree(manifest: ManifestEntry[]): FolderNode[] {
+    const root: FolderNode[] = [];
+    const dirIndex = new Map<string, FolderNode & { kind: 'dir' }>();
+    for (const entry of manifest) {
+        const segments = entry.path.split('/');
+        let parentList = root;
+        let parentPath = '';
+        for (let i = 0; i < segments.length - 1; i++) {
+            const seg = segments[i];
+            const fullPath = parentPath ? `${parentPath}/${seg}` : seg;
+            let dir = dirIndex.get(fullPath);
+            if (!dir) {
+                dir = { kind: 'dir', path: fullPath, name: seg, children: [] };
+                dirIndex.set(fullPath, dir);
+                parentList.push(dir);
+            }
+            parentList = dir.children;
+            parentPath = fullPath;
+        }
+        const fileName = segments[segments.length - 1];
+        parentList.push({ kind: 'file', entry, name: fileName, path: entry.path });
+    }
+    return root;
+}
+
+function extOf(name: string): string {
+    const dot = name.lastIndexOf('.');
+    return dot < 0 ? '' : name.slice(dot + 1).toLowerCase();
+}
+
+function sortNodes(nodes: FolderNode[], key: SortKey, dir: SortDir): FolderNode[] {
+    // Directories always before files at each level — matches Explorer's
+    // convention and stays useful when sort is "by size" (otherwise dirs
+    // with no size would sink to the bottom and feel arbitrary).
+    const dirs = nodes.filter(n => n.kind === 'dir');
+    const files = nodes.filter(n => n.kind === 'file');
+    const sign = dir === 'asc' ? 1 : -1;
+    const cmp = (a: FolderNode, b: FolderNode): number => {
+        if (key === 'name') {
+            return sign * a.name.localeCompare(b.name);
+        }
+        if (key === 'size') {
+            const sa = a.kind === 'file' ? a.entry.size : 0;
+            const sb = b.kind === 'file' ? b.entry.size : 0;
+            return sign * (sa - sb);
+        }
+        // type — compare by extension; ties fall back to name
+        const ea = a.kind === 'file' ? extOf(a.name) : '';
+        const eb = b.kind === 'file' ? extOf(b.name) : '';
+        const byExt = ea.localeCompare(eb);
+        return sign * (byExt !== 0 ? byExt : a.name.localeCompare(b.name));
+    };
+    dirs.sort(cmp);
+    files.sort(cmp);
+    // Recurse into directories so descendants are also sorted consistently.
+    for (const d of dirs) {
+        if (d.kind === 'dir') d.children = sortNodes(d.children, key, dir);
+    }
+    return [...dirs, ...files];
+}
+
+type FlatRow =
+    | { kind: 'dir'; path: string; name: string; depth: number; childCount: number }
+    | { kind: 'file'; entry: ManifestEntry; depth: number };
+
+function flattenTree(nodes: FolderNode[], collapsed: Set<string>, depth = 0, out: FlatRow[] = []): FlatRow[] {
+    for (const n of nodes) {
+        if (n.kind === 'dir') {
+            // Count only direct file children + recursive descendants for
+            // the badge; keeping it inclusive matches what users expect
+            // ("3 items" should mean 3 things inside, not 3 immediate kids).
+            const total = countFiles(n);
+            out.push({ kind: 'dir', path: n.path, name: n.name, depth, childCount: total });
+            if (!collapsed.has(n.path)) {
+                flattenTree(n.children, collapsed, depth + 1, out);
+            }
+        } else {
+            out.push({ kind: 'file', entry: n.entry, depth });
+        }
+    }
+    return out;
+}
+
+function countFiles(node: FolderNode): number {
+    if (node.kind === 'file') return 1;
+    let n = 0;
+    for (const c of node.children) n += countFiles(c);
+    return n;
 }
 
 // ── Folder leaf preview cache ────────────────────────────────────────
