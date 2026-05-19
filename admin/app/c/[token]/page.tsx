@@ -28,6 +28,7 @@ import {
 } from '@/lib/canvasShare';
 import { parseKlypix, revokeAssetUrls, KlypixParseError, type ParsedCanvas } from '@/lib/parseKlypix';
 import { CanvasViewer } from '@/components/CanvasViewer';
+import { useViewerCollab } from '@/lib/useViewerCollab';
 
 type ViewState =
     | { status: 'loading' }
@@ -41,6 +42,10 @@ export default function SharedCanvasPage() {
     const params = useParams<{ token: string }>();
     const token = params?.token ?? '';
     const [view, setView] = useState<ViewState>({ status: 'loading' });
+    // Join the canvas's live presence channel once we know its blob id.
+    // Anonymous identity, sessionStorage-scoped — closing the tab leaves.
+    const blobIdForCollab = view.status === 'viewing' ? view.blobId : null;
+    const collab = useViewerCollab(blobIdForCollab);
 
     useEffect(() => {
         if (!token) {
@@ -126,6 +131,15 @@ export default function SharedCanvasPage() {
                 <CanvasViewer
                     canvas={view.canvas}
                     onDownload={() => downloadAsKlypixFile(view.bytes, filename)}
+                />
+                {/* Live presence overlay — shows desktop / web users
+                    currently viewing this same canvas. Plus this tab's
+                    own identity so the user knows what name they're
+                    appearing as on the other side. */}
+                <ViewerPresenceStrip
+                    peers={collab.peers}
+                    selfName={collab.selfName}
+                    connected={collab.connected}
                 />
             </div>
         );
@@ -262,6 +276,57 @@ function Footer() {
             >
                 klypix.com &rarr;
             </a>
+        </div>
+    );
+}
+
+// ── Presence overlay ────────────────────────────────────────────────
+// Top-right corner: shows other viewers + this tab's own identity. Always
+// renders so the user can see what name they're appearing as to others,
+// even when nobody else has joined yet.
+function ViewerPresenceStrip({ peers, selfName, connected }: {
+    peers: Array<{ userId: string; deviceId: string; displayName: string; color: string }>;
+    selfName: string;
+    connected: boolean;
+}) {
+    const initials = (s: string) => s.split(/\s+/).map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
+    return (
+        <div
+            className="fixed top-3 right-3 z-50 flex items-center gap-2 px-2.5 py-1.5 rounded-full bg-black/65 border border-white/10 backdrop-blur-md text-[11px] text-white/80"
+            title={connected ? `You're appearing as: ${selfName}` : 'Reconnecting…'}
+        >
+            {/* Self chip */}
+            <div className="flex items-center gap-1.5">
+                <div
+                    className="flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-semibold text-white border border-black/40"
+                    style={{ background: '#64748b', opacity: connected ? 1 : 0.45 }}
+                >
+                    {initials(selfName) || '?'}
+                </div>
+                <span className="text-white/60">you · {selfName}</span>
+            </div>
+            {peers.length > 0 && (
+                <>
+                    <span className="w-px h-3 bg-white/15" />
+                    <div className="flex items-center -space-x-1.5">
+                        {peers.slice(0, 4).map(p => (
+                            <div
+                                key={`${p.userId}::${p.deviceId}`}
+                                className="flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-semibold text-white border border-black/40"
+                                style={{ background: p.color }}
+                                title={p.displayName}
+                            >
+                                {initials(p.displayName) || '?'}
+                            </div>
+                        ))}
+                        {peers.length > 4 && (
+                            <div className="flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-bold bg-white/10 text-white/70 border border-black/40">
+                                +{peers.length - 4}
+                            </div>
+                        )}
+                    </div>
+                </>
+            )}
         </div>
     );
 }

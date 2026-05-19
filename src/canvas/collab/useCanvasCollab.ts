@@ -113,6 +113,28 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
     const [connected, setConnected] = useState(false);
     const channelRef = useRef<RealtimeChannel | null>(null);
 
+    // Dev-only ghost peer for UI verification on a single machine. Set
+    // localStorage['klypix:devCollabGhost'] = '1' (or a comma-separated
+    // list of display names) in the renderer console to inject one or
+    // more synthetic peers into the chip strip. Ignored in normal use —
+    // no real channel traffic, no telemetry.
+    const ghostPeers: CollabPeer[] = (() => {
+        try {
+            const raw = localStorage.getItem('klypix:devCollabGhost');
+            if (!raw) return [];
+            const names = raw === '1' ? ['Ghost Peer'] : raw.split(',').map(s => s.trim()).filter(Boolean);
+            return names.map((name, i) => ({
+                userId: `ghost_${i}`,
+                deviceId: `ghost_${i}_dev`,
+                displayName: name,
+                color: colorForUser(`ghost_${i}`),
+                lastSeen: Date.now(),
+            }));
+        } catch {
+            return [];
+        }
+    })();
+
     useEffect(() => {
         // Collab requires: a shared canvas (blob id) + a signed-in user.
         if (!blobId || !userId) {
@@ -196,5 +218,13 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         };
     }, [blobId, userId, displayName, active]);
 
-    return { peers, connected };
+    return {
+        // Ghost peers are visual-only; show them alongside whatever's
+        // actually on the channel. When ghost-only (no real channel),
+        // we report connected=true so the UI shows them at full opacity
+        // — accurate for testing the rendered look, since "connected"
+        // dimming would otherwise make every ghost chip half-faded.
+        peers: ghostPeers.length > 0 ? [...peers, ...ghostPeers] : peers,
+        connected: connected || ghostPeers.length > 0,
+    };
 }
