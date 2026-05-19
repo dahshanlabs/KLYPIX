@@ -146,6 +146,22 @@ function saveLamport(blobId: string, n: number): void {
 
 const DRAIN_INTERVAL_MS = 50; // 20Hz, well under Realtime's 30/s
 
+// Phase 10: outbound coalesce window. Actions enqueued within this many
+// ms are flushed together, and same-id UPDATEs collapse to the latest.
+// Keeps a 60Hz drag burst from blowing the 30/s broadcast rate limit.
+const FLUSH_WINDOW_MS = 50;
+
+// Action types whose outbound entries can be "replaced by newer for the
+// same target id" instead of all being sent. The receiver's reducer only
+// cares about the final value; intermediate states are visual noise.
+const COALESCE_KEYS: Partial<Record<CanvasAction['type'], (a: CanvasAction) => string>> = {
+    UPDATE_ITEM: (a) => `UPDATE_ITEM:${(a as { type: 'UPDATE_ITEM'; id: string }).id}`,
+    UPDATE_LINE: (a) => `UPDATE_LINE:${(a as { type: 'UPDATE_LINE'; id: string }).id}`,
+    UPDATE_STROKE: (a) => `UPDATE_STROKE:${(a as { type: 'UPDATE_STROKE'; id: string }).id}`,
+    UPDATE_CONNECTION: (a) => `UPDATE_CONNECTION:${(a as { type: 'UPDATE_CONNECTION'; id: string }).id}`,
+    REORDER_ITEMS: () => 'REORDER_ITEMS',  // last reorder wins
+};
+
 /**
  * Connects the canvas store's action stream to a Supabase Realtime
  * channel. Sends syncable actions outbound; applies inbound ops via the
@@ -311,32 +327,93 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
                 for (const id of action.ids) recent.set(id, { at: now, type: 'delete' });
             }
             const tick = bumpLamport();
-            const payload: OpPayload = {
-                device_id: deviceId,
-                lamport: tick,
-                action,
-            };
             // If not connected, skip the send attempt entirely — go straight
-            // to the queue so the drain-on-reconnect path is the only flush.
+            // to the persistent queue so the drain-on-reconnect path is the
+            // only flush. No coalescing here because the queue is the
+            // authoritative log; receivers will apply each entry in order.
             if (!connectedRef.current) {
                 enqueue({ lamport: tick, action, queuedAt: Date.now() });
                 return;
             }
-            channel.send({
-                type: 'broadcast',
-                event: 'op',
-                payload,
-            }).catch((err: unknown) => {
-                // Send failed despite "connected" — likely a transient
-                // hiccup. Queue so the next drain picks it up.
-                console.warn('[opSync] send failed; queuing for retry:', err);
-                enqueue({ lamport: tick, action, queuedAt: Date.now() });
-            });
+            // Phase 10: buffer the op for coalesced flush. Drag bursts that
+            // fire 60Hz UPDATE_ITEM per frame collapse to ~20Hz of "latest
+            // value per item" — receivers see smooth motion without us
+            // exceeding the broadcast rate limit.
+            pushToOutboundBuffer({ lamport: tick, action, queuedAt: Date.now() });
         });
+
+        // Outbound flush buffer + coalesce machinery. Lives inside the
+        // effect so it's torn down with the channel.
+        const outboundBuffer: QueuedOp[] = [];
+        const outboundIndex = new Map<string, number>();  // coalesce key → index in outboundBuffer
+        let flushTimer: number | null = null;
+
+        const pushToOutboundBuffer = (q: QueuedOp): void => {
+            const coalesceFn = COALESCE_KEYS[q.action.type as CanvasAction['type']];
+            if (coalesceFn) {
+                const key = coalesceFn(q.action);
+                const prevIdx = outboundIndex.get(key);
+                if (prevIdx != null && prevIdx < outboundBuffer.length) {
+                    // Replace the older entry in-place — keeps overall
+                    // ordering stable so unrelated ops between them
+                    // (e.g. ADD then UPDATE) preserve their sequence.
+                    outboundBuffer[prevIdx] = q;
+                } else {
+                    outboundIndex.set(key, outboundBuffer.length);
+                    outboundBuffer.push(q);
+                }
+            } else {
+                outboundBuffer.push(q);
+            }
+            if (flushTimer == null) {
+                flushTimer = window.setTimeout(() => { flushTimer = null; void flushBuffer(); }, FLUSH_WINDOW_MS);
+            }
+        };
+
+        const flushBuffer = async (): Promise<void> => {
+            if (outboundBuffer.length === 0) return;
+            // Snapshot and clear so subsequent enqueues build the next batch.
+            const batch = outboundBuffer.slice();
+            outboundBuffer.length = 0;
+            outboundIndex.clear();
+            if (!connectedRef.current) {
+                // Lost connection while buffering — push everything to the
+                // persistent queue and let the reconnect drain handle it.
+                for (const q of batch) enqueue(q);
+                return;
+            }
+            // Send in order. A single send failure pushes the rest to the
+            // persistent queue so order is preserved across reconnects.
+            for (let i = 0; i < batch.length; i++) {
+                const q = batch[i];
+                const payload: OpPayload = {
+                    device_id: deviceId,
+                    lamport: q.lamport,
+                    action: q.action,
+                };
+                try {
+                    await channel.send({ type: 'broadcast', event: 'op', payload });
+                } catch (err) {
+                    console.warn('[opSync] flush send failed; queuing rest:', err);
+                    for (let j = i; j < batch.length; j++) enqueue(batch[j]);
+                    return;
+                }
+            }
+        };
 
         return () => {
             unsubscribe();
             channelRef.current = null;
+            // Best-effort flush of any pending outbound buffer to the
+            // persistent queue so unmount during a drag doesn't drop
+            // mid-flight UPDATE_ITEMs.
+            if (flushTimer != null) {
+                window.clearTimeout(flushTimer);
+                flushTimer = null;
+            }
+            for (const q of outboundBuffer) enqueue(q);
+            outboundBuffer.length = 0;
+            outboundIndex.clear();
             try { supabase.removeChannel(channel); } catch { /* ignored */ }
         };
     }, [blobId, active, dispatch, subscribeActions]);
