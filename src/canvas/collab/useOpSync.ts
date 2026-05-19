@@ -84,26 +84,128 @@ export interface UseOpSyncArgs {
     active: boolean;
 }
 
+// ── Offline op queue (Phase 6) ─────────────────────────────────────
+// Per-blob persisted queue of ops the local user dispatched while the
+// channel was down. Survives reload (localStorage) so a crash + reload
+// doesn't lose work. Drained one-at-a-time at ~20Hz on reconnect to
+// stay under Supabase Realtime's 30/s cap.
+
+interface QueuedOp { lamport: number; action: CanvasAction; queuedAt: number }
+
+function opQueueKey(blobId: string): string { return `klypix:opqueue:${blobId}`; }
+function lamportKey(blobId: string): string { return `klypix:lamport:${blobId}`; }
+
+function loadQueue(blobId: string): QueuedOp[] {
+    try {
+        const raw = localStorage.getItem(opQueueKey(blobId));
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+}
+function saveQueue(blobId: string, q: QueuedOp[]): void {
+    try {
+        if (q.length === 0) localStorage.removeItem(opQueueKey(blobId));
+        else localStorage.setItem(opQueueKey(blobId), JSON.stringify(q));
+    } catch (err) {
+        // Quota exceeded — drop oldest half. Better to lose some history
+        // than fail the next dispatch's queue write.
+        console.warn('[opSync] queue write failed; trimming', err);
+        try {
+            const half = q.slice(Math.floor(q.length / 2));
+            localStorage.setItem(opQueueKey(blobId), JSON.stringify(half));
+        } catch { /* give up */ }
+    }
+}
+function loadLamport(blobId: string): number {
+    try {
+        const raw = localStorage.getItem(lamportKey(blobId));
+        const n = raw ? parseInt(raw, 10) : 0;
+        return Number.isFinite(n) ? n : 0;
+    } catch { return 0; }
+}
+function saveLamport(blobId: string, n: number): void {
+    try { localStorage.setItem(lamportKey(blobId), String(n)); } catch { /* no-op */ }
+}
+
+const DRAIN_INTERVAL_MS = 50; // 20Hz, well under Realtime's 30/s
+
 /**
  * Connects the canvas store's action stream to a Supabase Realtime
  * channel. Sends syncable actions outbound; applies inbound ops via the
  * normal dispatch path so the reducer is a single source of truth for
  * how state changes (no parallel "apply remote" code path that could
  * drift from the local one).
+ *
+ * Phase 6: outbound ops broadcast when connected, otherwise enqueue to
+ * localStorage. On reconnect (channel status flips to SUBSCRIBED), the
+ * queue drains at 20Hz so a long offline burst doesn't immediately
+ * blow the channel's rate limit.
  */
 export function useOpSync({ blobId, active }: UseOpSyncArgs): void {
     const { dispatch, subscribeActions } = useCanvasStore();
     const channelRef = useRef<RealtimeChannel | null>(null);
-    // Lamport clock — bumped on every send AND on every received op so it
-    // tracks the highest tick we've seen. Carried in OpPayload.lamport for
-    // future per-item LWW; not used for ordering decisions yet.
+    // Lamport clock — persisted per-blob so it survives reload. On mount
+    // we load the saved value so post-reload sends carry monotonically
+    // higher ticks than anything we queued before.
     const lamportRef = useRef(0);
+    const connectedRef = useRef(false);
+    const drainingRef = useRef(false);
 
     useEffect(() => {
         if (!blobId) return;
         const supabase = getRealtimeClient();
         const channelName = `${CHANNEL_PREFIX}${blobId}`;
         const deviceId = getDeviceId();
+
+        // Hydrate lamport from persisted value so a fresh tab continues
+        // from where the previous session left off.
+        lamportRef.current = Math.max(lamportRef.current, loadLamport(blobId));
+
+        const bumpLamport = (): number => {
+            lamportRef.current += 1;
+            saveLamport(blobId, lamportRef.current);
+            return lamportRef.current;
+        };
+
+        const enqueue = (q: QueuedOp): void => {
+            const cur = loadQueue(blobId);
+            cur.push(q);
+            saveQueue(blobId, cur);
+        };
+
+        // Drain the offline queue one op at a time so the catch-up burst
+        // doesn't trip Realtime's rate limit. Stops early if we disconnect
+        // mid-drain (left-over ops stay queued for the next reconnect).
+        const drainQueue = async (): Promise<void> => {
+            if (drainingRef.current) return;
+            drainingRef.current = true;
+            try {
+                while (connectedRef.current) {
+                    const cur = loadQueue(blobId);
+                    if (cur.length === 0) break;
+                    const head = cur[0];
+                    const channel = channelRef.current;
+                    if (!channel) break;
+                    try {
+                        await channel.send({
+                            type: 'broadcast',
+                            event: 'op',
+                            payload: { device_id: deviceId, lamport: head.lamport, action: head.action } satisfies OpPayload,
+                        });
+                        // Successful send — pop the head and persist.
+                        cur.shift();
+                        saveQueue(blobId, cur);
+                    } catch (err) {
+                        console.warn('[opSync] drain send failed, keeping in queue:', err);
+                        break;
+                    }
+                    await new Promise(r => setTimeout(r, DRAIN_INTERVAL_MS));
+                }
+            } finally {
+                drainingRef.current = false;
+            }
+        };
 
         // Open (or reuse) the channel. If useCanvasCollab opened one with
         // the same name in the same client, Supabase de-dups — both end up
@@ -123,9 +225,11 @@ export function useOpSync({ blobId, active }: UseOpSyncArgs): void {
             if (!p || typeof p.device_id !== 'string') return;
             if (p.device_id === deviceId) return; // self-echo guard
             // Bump our lamport beyond what we've seen so subsequent local
-            // sends carry a higher tick.
+            // sends carry a higher tick. Persist immediately so a crash
+            // doesn't roll back to an older tick on reload.
             if (typeof p.lamport === 'number' && p.lamport > lamportRef.current) {
                 lamportRef.current = p.lamport;
+                saveLamport(blobId, lamportRef.current);
             }
             const action = p.action as CanvasAction;
             if (!action || typeof action !== 'object' || !('type' in action)) return;
@@ -138,25 +242,42 @@ export function useOpSync({ blobId, active }: UseOpSyncArgs): void {
             }
         });
 
-        channel.subscribe();
+        channel.subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+                connectedRef.current = true;
+                // Reconnect catch-up: flush any ops queued while offline.
+                void drainQueue();
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                connectedRef.current = false;
+            }
+        });
 
         // Outbound: every local action that's syncable + not flagged remote.
         const unsubscribe = subscribeActions((action) => {
             if ((action as any).__remote) return;
             if (!SYNCABLE_ACTIONS.has(action.type)) return;
             if (!active) return; // background tab — don't broadcast
-            lamportRef.current += 1;
+            const tick = bumpLamport();
             const payload: OpPayload = {
                 device_id: deviceId,
-                lamport: lamportRef.current,
+                lamport: tick,
                 action,
             };
+            // If not connected, skip the send attempt entirely — go straight
+            // to the queue so the drain-on-reconnect path is the only flush.
+            if (!connectedRef.current) {
+                enqueue({ lamport: tick, action, queuedAt: Date.now() });
+                return;
+            }
             channel.send({
                 type: 'broadcast',
                 event: 'op',
                 payload,
             }).catch((err: unknown) => {
-                console.warn('[opSync] send failed:', err);
+                // Send failed despite "connected" — likely a transient
+                // hiccup. Queue so the next drain picks it up.
+                console.warn('[opSync] send failed; queuing for retry:', err);
+                enqueue({ lamport: tick, action, queuedAt: Date.now() });
             });
         });
 
