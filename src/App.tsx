@@ -2048,25 +2048,40 @@ function AppMain() {
                             <span className="text-xs font-bold uppercase tracking-widest text-white/80">{t('settings.account')} & {t('settings.privacy_mode')}</span>
                         </div>
                         <div className="flex-1 overflow-y-auto p-6 space-y-8">
-                            {/* Account Section */}
+                            {/* Account Section — signed-in users get full
+                                identity card; trial / not-signed-in users get
+                                a Sign In CTA so they can deliberately auth
+                                without waiting for the 7-day trial to expire. */}
                             <div className="space-y-3">
                                 <div className="flex items-center gap-2 text-white/40"><User size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">{t('settings.account')}</span></div>
-                                <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-sm">
-                                            {auth.user?.displayName?.[0]?.toUpperCase() || auth.user?.email?.[0]?.toUpperCase() || '?'}
+                                {auth.isAuthenticated ? (
+                                    <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-sm">
+                                                {auth.user?.displayName?.[0]?.toUpperCase() || auth.user?.email?.[0]?.toUpperCase() || '?'}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="text-sm font-medium text-white truncate">{auth.user?.displayName || 'User'}</div>
+                                                <div className="text-xs text-white/40 truncate">{auth.user?.email}</div>
+                                            </div>
+                                            <span className={cn('px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider', auth.user?.tier === 'admin' ? 'bg-amber-500/20 text-amber-400' : auth.user?.tier === 'pro' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/10 text-white/50')}>{t(`settings.tier_${auth.user?.tier || 'free'}` as any)}</span>
                                         </div>
-                                        <div className="flex-1 min-w-0">
-                                            <div className="text-sm font-medium text-white truncate">{auth.user?.displayName || 'User'}</div>
-                                            <div className="text-xs text-white/40 truncate">{auth.user?.email}</div>
+                                        <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between">
+                                            <span className="text-[10px] text-white/30">{t('settings.queries_count').replace('{today}', String(auth.user?.queriesToday || 0)).replace('{total}', String(auth.user?.queriesTotal || 0))}</span>
+                                            <button onClick={() => { auth.signOut(); settings.setShowSettings(false); }} className="text-[10px] text-red-400/70 hover:text-red-400 transition-colors cursor-pointer">{t('settings.signout')}</button>
                                         </div>
-                                        <span className={cn('px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider', auth.user?.tier === 'admin' ? 'bg-amber-500/20 text-amber-400' : auth.user?.tier === 'pro' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/10 text-white/50')}>{t(`settings.tier_${auth.user?.tier || 'free'}` as any)}</span>
                                     </div>
-                                    <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between">
-                                        <span className="text-[10px] text-white/30">{t('settings.queries_count').replace('{today}', String(auth.user?.queriesToday || 0)).replace('{total}', String(auth.user?.queriesTotal || 0))}</span>
-                                        <button onClick={() => { auth.signOut(); settings.setShowSettings(false); }} className="text-[10px] text-red-400/70 hover:text-red-400 transition-colors cursor-pointer">{t('settings.signout')}</button>
+                                ) : (
+                                    <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                                        <div className="text-xs text-white/65 leading-relaxed">{t('settings.signin_cta_body')}</div>
+                                        <button
+                                            onClick={() => { settings.setShowSettings(false); (window as any).klypixShowSignIn?.(); }}
+                                            className="mt-3 w-full px-3 py-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-xs font-medium transition-colors cursor-pointer"
+                                        >
+                                            {t('settings.signin_cta_button')}
+                                        </button>
                                     </div>
-                                </div>
+                                )}
                             </div>
 
                             {/* AI Provider — Gemini API key. Stored in localStorage

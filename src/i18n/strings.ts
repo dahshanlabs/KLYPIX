@@ -47,6 +47,8 @@ const strings: Strings = {
     'settings.power_user.hint': { en: 'Show advanced banners (WSL2 sandbox setup, etc.)', ar: 'إظهار اللوحات المتقدمة (إعداد WSL2 ونحوه)' },
     'settings.account': { en: 'Account', ar: 'الحساب' },
     'settings.signout': { en: 'Sign Out', ar: 'تسجيل الخروج' },
+    'settings.signin_cta_body': { en: 'You\'re using KLYPIX in trial mode. Sign in to enable cloud canvas sync, collaboration, and your full agent budget.', ar: 'أنت تستخدم KLYPIX في وضع التجربة. سجّل الدخول لتفعيل مزامنة اللوحات السحابية والتعاون وميزانية الوكيل الكاملة.' },
+    'settings.signin_cta_button': { en: 'Sign in', ar: 'تسجيل الدخول' },
     'settings.shortcut': { en: 'Global Shortcut', ar: 'الاختصار العام' },
     'settings.shortcut.hint': { en: 'Use at least 2 keys (Modifier + Key)', ar: 'استخدم مفتاحين على الأقل (مفتاح تعديل + مفتاح)' },
     'settings.shortcut.activate': { en: 'Activate Assistant', ar: 'تفعيل المساعد' },
