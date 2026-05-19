@@ -58,6 +58,7 @@ import { CanvasDashboard } from './dashboard/CanvasDashboard';
 import { ShareModal } from './cloud/ShareModal';
 import { Share2 } from 'lucide-react';
 import { useCanvasCollab } from './collab/useCanvasCollab';
+import { useOpSync } from './collab/useOpSync';
 import { CollabPresenceChips } from './collab/CollabPresenceChips';
 import { getCloudShare } from './cloud/cloudShareStore';
 import { useAuth } from '../components/AuthProvider';
@@ -734,6 +735,13 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         blobId: cloudShare?.blobId ?? null,
         userId: auth.user?.id ?? null,
         displayName: auth.user?.displayName ?? null,
+        active: tabActive,
+    });
+    // Phase 3: live op streaming — broadcasts mutation actions to peers and
+    // applies inbound ones via dispatch. Background tabs receive but don't
+    // send. Inert when the canvas hasn't been shared (no blob id).
+    useOpSync({
+        blobId: cloudShare?.blobId ?? null,
         active: tabActive,
     });
     // Publish our local selection so peers can render colored halos around

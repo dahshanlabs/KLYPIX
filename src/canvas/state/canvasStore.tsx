@@ -1278,6 +1278,12 @@ interface CanvasStoreValue {
     redo: () => void;
     canUndo: boolean;
     canRedo: boolean;
+    // Subscribe to every dispatched action (after it's applied). Used by
+    // the collab op-sync layer to broadcast state mutations to peers.
+    // Returns an unsubscribe function. Actions tagged with `__remote: true`
+    // (delivered from a peer via the channel) are NOT skipped here — the
+    // subscriber decides whether to re-broadcast.
+    subscribeActions: (listener: (action: CanvasAction) => void) => () => void;
 }
 
 const CanvasStoreContext = createContext<CanvasStoreValue | null>(null);
@@ -1285,7 +1291,7 @@ const CanvasStoreContext = createContext<CanvasStoreValue | null>(null);
 const MAX_UNDO = 100;
 
 export function CanvasStoreProvider({ children }: { children: React.ReactNode }) {
-    const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
+    const [state, rawDispatch] = useReducer(reducer, INITIAL_STATE);
 
     // Refs so commit/undo/redo don't re-create on every render and capture
     // latest state without stale closures.
@@ -1297,14 +1303,38 @@ export function CanvasStoreProvider({ children }: { children: React.ReactNode })
     // Force re-render when stack sizes change so canUndo/canRedo flip.
     const [stackTick, bumpStack] = useReducer((n: number) => n + 1, 0);
 
+    // Action-listener registry — fed by subscribeActions(). Fires after
+    // every action passes through the wrapped dispatch. The collab op-sync
+    // layer subscribes here to broadcast mutations to peers; a listener
+    // throw is swallowed so a buggy subscriber can never block dispatches.
+    const actionListenersRef = useRef<Set<(action: CanvasAction) => void>>(new Set());
+    const subscribeActions = useCallback((cb: (action: CanvasAction) => void) => {
+        actionListenersRef.current.add(cb);
+        return () => { actionListenersRef.current.delete(cb); };
+    }, []);
+    const fireListeners = useCallback((action: CanvasAction) => {
+        for (const l of actionListenersRef.current) {
+            try { l(action); } catch (err) { console.warn('[canvasStore] action listener threw:', err); }
+        }
+    }, []);
+
+    // Wrapped dispatch: applies the action, then fans out to listeners.
+    // Every consumer that reads `dispatch` from the context gets this
+    // version automatically — no migration of call sites needed.
+    const dispatch = useCallback((action: CanvasAction) => {
+        rawDispatch(action);
+        fireListeners(action);
+    }, [fireListeners]);
+
     const commit = useCallback((action: CanvasAction, _label?: string) => {
         // Snapshot BEFORE applying. Used to undo back to this point.
         undoStackRef.current.push(snapshot(stateRef.current));
         if (undoStackRef.current.length > MAX_UNDO) undoStackRef.current.shift();
         redoStackRef.current = [];
-        dispatch(action);
+        rawDispatch(action);
+        fireListeners(action);
         bumpStack();
-    }, []);
+    }, [fireListeners]);
 
     const pushSnapshot = useCallback(() => {
         undoStackRef.current.push(snapshot(stateRef.current));
@@ -1387,7 +1417,8 @@ export function CanvasStoreProvider({ children }: { children: React.ReactNode })
         redo,
         canUndo: undoStackRef.current.length > 0,
         canRedo: redoStackRef.current.length > 0,
-    }), [stateWithDerived, commit, pushSnapshot, popLastSnapshot, undo, redo, stackTick]);
+        subscribeActions,
+    }), [stateWithDerived, dispatch, commit, pushSnapshot, popLastSnapshot, undo, redo, stackTick, subscribeActions]);
 
     return <CanvasStoreContext.Provider value={value}>{children}</CanvasStoreContext.Provider>;
 }
