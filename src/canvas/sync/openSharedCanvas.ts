@@ -17,6 +17,13 @@ export interface OpenSharedInput {
     blobId: string;
     keyB64: string;
     titleHint?: string | null;
+    /** Phase 18: identity of the person who shared this canvas. Persisted
+     *  into cloudShareStore so the canvas chrome can show "Shared by Alice"
+     *  even after a restart. */
+    invitedBy?: {
+        name: string | null;
+        email: string | null;
+    } | null;
 }
 
 export type OpenSharedResult =
@@ -74,6 +81,10 @@ export async function openSharedCanvas(input: OpenSharedInput): Promise<OpenShar
         // the normal Share flow which fills this in.
         shareUrl: '',
         lastPushedAt: Date.now(),
+        invitedBy: input.invitedBy ? {
+            name: input.invitedBy.name ?? null,
+            email: input.invitedBy.email ?? null,
+        } : undefined,
     });
 
     return { ok: true, filePath: writeRes.filePath };

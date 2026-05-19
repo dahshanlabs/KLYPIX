@@ -15,13 +15,22 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 
+// Phase 18: invitations now carry the inviter's identity so the recipient
+// sees who is asking them to collaborate. Both fields are optional — older
+// servers without the get_invitation_preview RPC still work, just without
+// the inviter line.
+interface InviterIdentity {
+    name: string | null;
+    email: string | null;
+}
+
 type ViewState =
     | { status: 'loading' }
     | { status: 'invalid'; reason: string }
-    | { status: 'preview'; titleHint: string | null; blobId: string }
-    | { status: 'sign-in'; titleHint: string | null }
+    | { status: 'preview'; titleHint: string | null; blobId: string; inviter: InviterIdentity }
+    | { status: 'sign-in'; titleHint: string | null; inviter: InviterIdentity }
     | { status: 'accepting' }
-    | { status: 'accepted'; titleHint: string | null }
+    | { status: 'accepted'; titleHint: string | null; inviter: InviterIdentity }
     | { status: 'error'; message: string };
 
 export default function AcceptInvitePage() {
@@ -43,29 +52,65 @@ export default function AcceptInvitePage() {
             const { data: sessionData } = await supabase.auth.getSession();
             const isAuthed = !!sessionData?.session;
 
-            const { data, error } = await supabase
-                .from('canvas_invitations')
-                .select('blob_id, title_hint')
-                .eq('token', token)
-                .maybeSingle();
-
-            if (cancelled) return;
-            if (error) {
-                if (/does not exist|placeholder/i.test(error.message)) {
-                    setView({ status: 'error', message: 'Viewer is missing Supabase config.' });
-                } else {
-                    setView({ status: 'invalid', reason: error.message });
+            // Phase 18: prefer the new identity-bearing RPC. Falls back to
+            // the old anon table read on stale servers so existing canvases
+            // keep working through the migration window.
+            let titleHint: string | null = null;
+            let blobId: string | null = null;
+            let inviter: InviterIdentity = { name: null, email: null };
+            let fallbackError: string | null = null;
+            try {
+                const { data: previewRow, error: previewErr } = await supabase
+                    .rpc('get_invitation_preview', { p_token: token });
+                if (previewErr) throw previewErr;
+                if (previewRow && typeof previewRow === 'object') {
+                    const row = Array.isArray(previewRow) ? previewRow[0] : previewRow;
+                    if (row) {
+                        titleHint = row.title_hint ?? null;
+                        blobId = row.blob_id ?? null;
+                        inviter = {
+                            name: row.inviter_display_name ?? null,
+                            email: row.inviter_email ?? null,
+                        };
+                    }
                 }
-                return;
+            } catch (e: any) {
+                // Most likely: RPC missing on the server (404/PGRST). Fall back
+                // to the legacy anon SELECT so older deployments still work.
+                fallbackError = e?.message ?? null;
             }
-            if (!data) {
+
+            if (!blobId) {
+                const { data, error } = await supabase
+                    .from('canvas_invitations')
+                    .select('blob_id, title_hint')
+                    .eq('token', token)
+                    .maybeSingle();
+                if (cancelled) return;
+                if (error) {
+                    if (/does not exist|placeholder/i.test(error.message)) {
+                        setView({ status: 'error', message: 'Viewer is missing Supabase config.' });
+                    } else {
+                        setView({ status: 'invalid', reason: error.message });
+                    }
+                    return;
+                }
+                if (!data) {
+                    setView({ status: 'invalid', reason: fallbackError || 'Invitation expired, revoked, or already used.' });
+                    return;
+                }
+                titleHint = data.title_hint ?? null;
+                blobId = data.blob_id ?? null;
+            }
+            if (cancelled) return;
+            if (!blobId) {
                 setView({ status: 'invalid', reason: 'Invitation expired, revoked, or already used.' });
                 return;
             }
             if (isAuthed) {
-                setView({ status: 'preview', titleHint: data.title_hint, blobId: data.blob_id });
+                setView({ status: 'preview', titleHint, blobId, inviter });
             } else {
-                setView({ status: 'sign-in', titleHint: data.title_hint });
+                setView({ status: 'sign-in', titleHint, inviter });
             }
         })();
         return () => { cancelled = true; };
@@ -74,17 +119,29 @@ export default function AcceptInvitePage() {
     // Step 3: when user transitions from preview/sign-in to authed, call the
     // accept RPC. The auth event listener handles the post-sign-in trigger.
     const accept = async () => {
+        // Snapshot the inviter so we still have it after the accepted-state
+        // transition — the RPC also returns it but we want a graceful path
+        // when an old server omits it.
+        const previewInviter: InviterIdentity = (() => {
+            if (view.status === 'preview' || view.status === 'sign-in') return view.inviter;
+            return { name: null, email: null };
+        })();
         setView({ status: 'accepting' });
         try {
             const { data, error } = await supabase.rpc('accept_canvas_invitation', { p_token: token });
             if (error) throw error;
-            // RPC returns a JSON object {blob_id, title_hint}. Older builds of
-            // the function returned an array of rows — handle both shapes so
-            // a stale client doesn't break post-migration.
-            const titleHint = data && typeof data === 'object'
-                ? (Array.isArray(data) ? data[0]?.title_hint : data.title_hint) ?? null
+            // RPC returns a JSON object {blob_id, title_hint, key_b64, inviter_email, inviter_display_name}.
+            // Older builds returned an array of rows or omitted the inviter fields —
+            // handle all three shapes so a stale client doesn't break post-migration.
+            const row = data && typeof data === 'object'
+                ? (Array.isArray(data) ? data[0] : data)
                 : null;
-            setView({ status: 'accepted', titleHint });
+            const titleHint = row?.title_hint ?? null;
+            const inviter: InviterIdentity = {
+                name: row?.inviter_display_name ?? previewInviter.name,
+                email: row?.inviter_email ?? previewInviter.email,
+            };
+            setView({ status: 'accepted', titleHint, inviter });
         } catch (e: any) {
             setView({ status: 'error', message: e?.message || 'Could not accept invitation' });
         }
@@ -111,14 +168,15 @@ export default function AcceptInvitePage() {
                     {view.status === 'preview' && (
                         <PreviewCard
                             titleHint={view.titleHint}
+                            inviter={view.inviter}
                             onAccept={accept}
                         />
                     )}
                     {view.status === 'sign-in' && (
-                        <SignInCard titleHint={view.titleHint} />
+                        <SignInCard titleHint={view.titleHint} inviter={view.inviter} />
                     )}
                     {view.status === 'accepting' && <LoadingCard label="Accepting…" />}
-                    {view.status === 'accepted' && <AcceptedCard titleHint={view.titleHint} />}
+                    {view.status === 'accepted' && <AcceptedCard titleHint={view.titleHint} inviter={view.inviter} />}
                     {view.status === 'error' && <ErrorCard message={view.message} />}
                 </div>
                 <Footer />
@@ -173,12 +231,37 @@ function ErrorCard({ message }: { message: string }) {
     );
 }
 
-function PreviewCard({ titleHint, onAccept }: { titleHint: string | null; onAccept: () => void }) {
+function InviterLine({ inviter }: { inviter: InviterIdentity }) {
+    if (!inviter.name && !inviter.email) return null;
+    const display = inviter.name || inviter.email || '';
+    return (
+        <div className="flex items-center gap-2 mt-3">
+            <div className="w-6 h-6 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-300 text-[11px] font-medium">
+                {display.slice(0, 1).toUpperCase()}
+            </div>
+            <div className="min-w-0">
+                <div className="text-white/85 text-xs font-medium truncate">{display}</div>
+                {inviter.name && inviter.email && (
+                    <div className="text-white/40 text-[10px] truncate">{inviter.email}</div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+function PreviewCard({ titleHint, inviter, onAccept }: { titleHint: string | null; inviter: InviterIdentity; onAccept: () => void }) {
+    const hasInviter = !!(inviter.name || inviter.email);
     return (
         <div className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
             <div className="px-5 py-4 border-b border-white/5">
-                <div className="text-white/40 text-[10px] uppercase tracking-wider mb-1">You're invited to collaborate on</div>
-                <div className="text-white text-base font-medium truncate">{titleHint || 'Untitled canvas'}</div>
+                <div className="text-white/40 text-[10px] uppercase tracking-wider mb-1">
+                    {hasInviter ? 'You\'re invited by' : 'You\'re invited to collaborate on'}
+                </div>
+                {hasInviter && <InviterLine inviter={inviter} />}
+                <div className={`text-white text-base font-medium truncate ${hasInviter ? 'mt-3' : ''}`}>
+                    {hasInviter && <span className="text-white/40 text-xs font-normal mr-1">on</span>}
+                    {titleHint || 'Untitled canvas'}
+                </div>
             </div>
             <div className="px-5 py-5">
                 <button
@@ -195,7 +278,8 @@ function PreviewCard({ titleHint, onAccept }: { titleHint: string | null; onAcce
     );
 }
 
-function AcceptedCard({ titleHint }: { titleHint: string | null }) {
+function AcceptedCard({ titleHint, inviter }: { titleHint: string | null; inviter: InviterIdentity }) {
+    const hasInviter = !!(inviter.name || inviter.email);
     return (
         <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] px-5 py-6">
             <div className="flex items-center gap-2 mb-2">
@@ -205,7 +289,9 @@ function AcceptedCard({ titleHint }: { titleHint: string | null }) {
                 <div className="text-emerald-300 text-sm font-medium">Invitation accepted</div>
             </div>
             <div className="text-white/60 text-xs leading-relaxed">
-                You're now a collaborator on <span className="text-white font-medium">{titleHint || 'this canvas'}</span>. Open the KLYPIX desktop app — the canvas will appear in your library shortly.
+                You're now a collaborator on <span className="text-white font-medium">{titleHint || 'this canvas'}</span>
+                {hasInviter && <> — shared by <span className="text-white font-medium">{inviter.name || inviter.email}</span></>}.
+                Open the KLYPIX desktop app — the canvas will appear in your library shortly.
             </div>
             <div className="text-white/40 text-[10px] mt-4 leading-relaxed">
                 Don't have KLYPIX yet? <a href="https://klypix.com" className="text-emerald-400/80 hover:text-emerald-400">Get it at klypix.com →</a>
@@ -214,7 +300,8 @@ function AcceptedCard({ titleHint }: { titleHint: string | null }) {
     );
 }
 
-function SignInCard({ titleHint }: { titleHint: string | null }) {
+function SignInCard({ titleHint, inviter }: { titleHint: string | null; inviter: InviterIdentity }) {
+    const hasInviter = !!(inviter.name || inviter.email);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [displayName, setDisplayName] = useState('');
@@ -276,8 +363,14 @@ function SignInCard({ titleHint }: { titleHint: string | null }) {
     return (
         <div className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
             <div className="px-5 py-4 border-b border-white/5">
-                <div className="text-white/40 text-[10px] uppercase tracking-wider mb-1">You're invited to collaborate on</div>
-                <div className="text-white text-base font-medium truncate">{titleHint || 'Untitled canvas'}</div>
+                <div className="text-white/40 text-[10px] uppercase tracking-wider mb-1">
+                    {hasInviter ? 'You\'re invited by' : 'You\'re invited to collaborate on'}
+                </div>
+                {hasInviter && <InviterLine inviter={inviter} />}
+                <div className={`text-white text-base font-medium truncate ${hasInviter ? 'mt-3' : ''}`}>
+                    {hasInviter && <span className="text-white/40 text-xs font-normal mr-1">on</span>}
+                    {titleHint || 'Untitled canvas'}
+                </div>
                 <div className="text-white/50 text-xs mt-2">Sign in or create an account to accept.</div>
             </div>
             <div className="px-5 pt-5 flex flex-col gap-2">

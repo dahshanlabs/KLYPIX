@@ -331,19 +331,33 @@ export function registerCloudHandlers(ipcMain: IpcMain): void {
     // query (canvas_blobs filtered by owner_id) — this RPC is just for
     // collaborator-side membership.
     //
-    // Includes key_b64 (the canvas encryption key, copied from the invitation
-    // on accept) so the desktop can decrypt the cloud blob without a separate
-    // RPC round-trip.
+    // Phase 18: prefers list_shared_canvases() RPC which joins auth.users to
+    // surface the inviter's display name + email. Falls back to the legacy
+    // direct SELECT when the RPC isn't deployed yet (older servers / first
+    // run after upgrade).
     ipcMain.handle('canvas-cloud:list-shared', async () => {
         const userId = await requireUserId();
         const supabase = getSupabase();
-        const { data, error } = await supabase
+        try {
+            const { data, error } = await supabase.rpc('list_shared_canvases');
+            if (error) {
+                if (!/function .* does not exist|404/i.test(error.message)) throw error;
+                // RPC missing → fall through to legacy path
+            } else {
+                return Array.isArray(data) ? data : (data ?? []);
+            }
+        } catch (e: any) {
+            if (!/function .* does not exist|404/i.test(e?.message ?? '')) {
+                throw new Error(`List shared canvases (rpc) failed: ${e.message}`);
+            }
+        }
+        const { data: legacyData, error: legacyError } = await supabase
             .from(COLLABORATORS_TABLE)
             .select('blob_id, role, accepted_at, key_b64, canvas_blobs(title_hint, byte_size, updated_at)')
             .eq('user_id', userId)
             .order('accepted_at', { ascending: false });
-        if (error) throw new Error(`List shared canvases failed: ${error.message}`);
-        return data ?? [];
+        if (legacyError) throw new Error(`List shared canvases failed: ${legacyError.message}`);
+        return legacyData ?? [];
     });
 
     // Remove the caller from a canvas that was shared with them ("leave"

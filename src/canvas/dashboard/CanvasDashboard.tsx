@@ -90,11 +90,21 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
     const handleOpenShared = async (entry: SharedCanvas) => {
         if (!entry.key_b64) return; // disabled state — UI already prevents click, defensive
         setOpeningPath(entry.blob_id);
+        // Phase 18: pull inviter identity off the entry (either the rich
+        // RPC shape or the legacy bare-uuid string). If we only have a uuid,
+        // there's nothing display-worthy to persist, so pass null.
+        const invitedBy = (() => {
+            const ib = entry.invited_by;
+            if (!ib || typeof ib === 'string') return null;
+            if (!ib.email && !ib.display_name) return null;
+            return { name: ib.display_name ?? null, email: ib.email ?? null };
+        })();
         try {
             const res = await openSharedCanvas({
                 blobId: entry.blob_id,
                 keyB64: entry.key_b64,
                 titleHint: entry.canvas_blobs?.title_hint,
+                invitedBy,
             });
             if (res.ok) {
                 // The shared canvas is now on disk. Hand it off to the normal

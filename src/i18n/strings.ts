@@ -355,6 +355,7 @@ const strings: Strings = {
     'canvas_top.save_as_short': { en: 'Save as… (Ctrl+Shift+S)', ar: 'حفظ باسم… (Ctrl+Shift+S)' },
     'canvas_top.close_canvas': { en: 'Close canvas (Ctrl+W)', ar: 'إغلاق اللوحة (Ctrl+W)' },
     'canvas_top.share_canvas': { en: 'Share canvas', ar: 'مشاركة اللوحة' },
+    'canvas_top.shared_by': { en: 'Shared by', ar: 'مشاركة من' },
     'canvas_top.save_first_share': { en: 'Save first, then share', ar: 'احفظ أولًا ثم شارك' },
     'canvas_top.search_short': { en: 'Search (Ctrl+F)', ar: 'بحث (Ctrl+F)' },
     'canvas_top.present': { en: 'Present', ar: 'عرض' },

@@ -30,6 +30,15 @@ export interface CloudShare {
     shareUrl: string;
     /** When this canvas was last successfully pushed (ms epoch). */
     lastPushedAt: number;
+    /** Phase 18: identity of the person who shared this canvas with us
+     *  (populated when we ACCEPTED someone else's invitation). Empty for
+     *  canvases we own ourselves. Used by the canvas chrome to show a
+     *  "Shared by Alice" badge so the recipient always knows whose canvas
+     *  they're in. */
+    invitedBy?: {
+        name: string | null;
+        email: string | null;
+    };
 }
 
 type ShareMap = Record<string, CloudShare>;

@@ -2658,6 +2658,18 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 <span className={state.isDirty ? 'text-amber-300' : 'text-white/70'}>
                     {state.isDirty ? '• ' : ''}{state.title === 'Untitled' ? tLocale('status.untitled') : state.title}
                 </span>
+                {/* Phase 18: "Shared by Alice" badge when this canvas was
+                    accepted from someone else's invitation. Persisted in
+                    cloudShareStore so it survives restarts; renders nothing
+                    for canvases the user owns themselves. */}
+                {cloudShare?.invitedBy && (cloudShare.invitedBy.name || cloudShare.invitedBy.email) && (
+                    <>
+                        <span className="text-white/20">·</span>
+                        <span className="normal-case tracking-normal text-emerald-300/90" title={cloudShare.invitedBy.email || ''}>
+                            {tLocale('canvas_top.shared_by')} {cloudShare.invitedBy.name || cloudShare.invitedBy.email}
+                        </span>
+                    </>
+                )}
                 <span className="text-white/20">·</span>
                 <span className="text-emerald-300">{translateTool(state.tool)}</span>
                 <span className="text-white/20">·</span>

@@ -21,6 +21,14 @@ export interface SharedCanvas {
         byte_size: number;
         updated_at: string;
     } | null;
+    /** Phase 18: identity of the person who shared this canvas with us.
+     *  Object form populated by the list_shared_canvases RPC; bare uuid
+     *  string surfaces when the legacy SELECT fallback is in use. */
+    invited_by?: string | {
+        user_id: string | null;
+        email: string | null;
+        display_name: string | null;
+    } | null;
 }
 
 interface UseSharedCanvasesResult {
