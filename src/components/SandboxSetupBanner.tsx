@@ -12,11 +12,16 @@ interface SandboxStatus {
 }
 
 const DISMISSED_KEY = 'klypix:sandboxBannerDismissed';
+const POWER_USER_KEY = 'klypix:powerUser';
 
 export function SandboxSetupBanner() {
   useLocale();
   const [status, setStatus] = useState<SandboxStatus | null>(null);
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(DISMISSED_KEY) === '1');
+  // Phase 22: hide for new-install UX. The WSL2 prompt was confusing
+  // first-time users who never asked for Python sandboxing — keep it
+  // out of sight until the user opts into Power User mode via Settings.
+  const [powerUser, setPowerUser] = useState(() => localStorage.getItem(POWER_USER_KEY) === '1');
 
   useEffect(() => {
     const electron = (window as any).electron;
@@ -29,13 +34,23 @@ export function SandboxSetupBanner() {
     electron.sandbox.onStatus((s: SandboxStatus) => setStatus(s));
   }, []);
 
+  // Sync power-user flag when the user flips it elsewhere (Settings panel).
+  // localStorage doesn't emit events on the same tab, so this catches
+  // cross-tab toggles and is a no-op for same-tab updates (Settings will
+  // re-render its own consumer).
+  useEffect(() => {
+    const handler = () => setPowerUser(localStorage.getItem(POWER_USER_KEY) === '1');
+    window.addEventListener('storage', handler);
+    return () => window.removeEventListener('storage', handler);
+  }, []);
+
   const handleDismiss = () => {
     setDismissed(true);
     localStorage.setItem(DISMISSED_KEY, '1');
   };
 
-  // Only show if sandbox is not available and user hasn't dismissed
-  if (!status || status.available || dismissed) return null;
+  // Only show if Power User mode is on AND sandbox is not available AND not dismissed.
+  if (!powerUser || !status || status.available || dismissed) return null;
 
   return (
     <div className="mb-3 bg-blue-500/10 border border-blue-500/25 rounded-xl p-2.5 flex items-start gap-2 animate-slideIn">

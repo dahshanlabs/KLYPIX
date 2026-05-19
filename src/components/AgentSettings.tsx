@@ -201,6 +201,11 @@ export const AgentSettings: React.FC = () => {
           re-lays-out. */}
       <LanguageToggleRow />
 
+      {/* Power User mode — gates advanced UX surfaces (currently: the WSL2
+          sandbox setup banner). Off by default so first-time installs aren't
+          prompted to install Linux. */}
+      <PowerUserRow />
+
       {savedMsg && <p className="text-xs text-emerald-400">{savedMsg}</p>}
 
       {/* Eval Harness — gated behind a details toggle so it stays out of the way */}
@@ -220,6 +225,33 @@ const LANGUAGES: { id: Locale; labelKey: 'settings.language.english' | 'settings
   { id: 'en', labelKey: 'settings.language.english' },
   { id: 'ar', labelKey: 'settings.language.arabic' },
 ];
+
+const PowerUserRow: React.FC = () => {
+  useLocale();
+  const [on, setOn] = useState(() => localStorage.getItem('klypix:powerUser') === '1');
+  return (
+    <div className="space-y-1">
+      <label className="flex items-center justify-between cursor-pointer">
+        <span className="text-xs text-gray-400">{t('settings.power_user')}</span>
+        <input
+          type="checkbox"
+          checked={on}
+          onChange={(e) => {
+            const next = e.target.checked;
+            setOn(next);
+            localStorage.setItem('klypix:powerUser', next ? '1' : '0');
+            // Notify other tabs/components that watch this flag. Same-tab
+            // storage events don't fire from the writer, so we synthesize
+            // one — the SandboxSetupBanner listens for it.
+            try { window.dispatchEvent(new StorageEvent('storage', { key: 'klypix:powerUser' })); } catch { /* no-op */ }
+          }}
+          className="w-3.5 h-3.5 accent-emerald-500"
+        />
+      </label>
+      <p className="text-[10px] text-gray-500 leading-relaxed">{t('settings.power_user.hint')}</p>
+    </div>
+  );
+};
 
 const LanguageToggleRow: React.FC = () => {
   const [locale, setLocaleFn] = useLocale();

@@ -43,6 +43,8 @@ const strings: Strings = {
     // already used for the Arabic entry.
     'settings.language.english': { en: 'English', ar: 'English' },
     'settings.language.arabic': { en: 'العربية', ar: 'العربية' },
+    'settings.power_user': { en: 'Power User Mode', ar: 'وضع المستخدم المتقدم' },
+    'settings.power_user.hint': { en: 'Show advanced banners (WSL2 sandbox setup, etc.)', ar: 'إظهار اللوحات المتقدمة (إعداد WSL2 ونحوه)' },
     'settings.account': { en: 'Account', ar: 'الحساب' },
     'settings.signout': { en: 'Sign Out', ar: 'تسجيل الخروج' },
     'settings.shortcut': { en: 'Global Shortcut', ar: 'الاختصار العام' },
