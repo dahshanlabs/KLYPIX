@@ -430,6 +430,11 @@ const strings: Strings = {
     'canvas.collab_reconnected_toast': { en: 'Live collab reconnected', ar: 'تم استعادة التعاون المباشر' },
     'canvas.collab_conflict_overwritten': { en: 'A collaborator just edited the same item — your change may have been overwritten', ar: 'قام متعاون بتعديل نفس العنصر للتو — قد تكون تعديلاتك تم استبدالها' },
     'canvas.collab_conflict_deleted': { en: 'A collaborator just deleted an item you were editing', ar: 'قام متعاون بحذف عنصر كنت تعدّله للتو' },
+    'canvas.collab_peer.online_now': { en: 'Online now', ar: 'متصل الآن' },
+    'canvas.collab_peer.last_seen_secs': { en: 'Seen {n}s ago', ar: 'آخر ظهور قبل {n} ث' },
+    'canvas.collab_peer.status': { en: 'Status', ar: 'الحالة' },
+    'canvas.collab_peer.device': { en: 'Device', ar: 'الجهاز' },
+    'canvas.collab_peer.unknown': { en: 'Unknown user', ar: 'مستخدم غير معروف' },
     // Layers panel
     'canvas.layer_content': { en: 'content', ar: 'المحتوى' },
     'canvas.layer_agent': { en: 'agent', ar: 'الوكيل' },
