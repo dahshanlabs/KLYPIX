@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import { getRealtimeClient, setRealtimeAuth } from './supabaseRealtimeClient';
+import { setRealtimeAuth } from './supabaseRealtimeClient';
+import { acquireCanvasChannel } from './channelRegistry';
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -110,13 +111,13 @@ export interface UseCanvasCollabResult {
     publishSelection: (selectionIds: string[]) => void;
 }
 
-const CHANNEL_PREFIX = 'klypix-canvas-';
-
 /**
- * Phase 1 collab: subscribes to a Supabase Realtime channel keyed by the
- * canvas's blob id and tracks who else is online. No cursors, no ops yet —
- * those land in Phases 2 + 3. The channel name namespaces collab traffic
- * away from the existing blob-sync table subscriptions.
+ * Phase 1 collab: subscribes (via the shared channelRegistry, post-Phase 14)
+ * to a Supabase Realtime channel keyed by the canvas's blob id and tracks
+ * who else is online. Cursors + ops + assets all share that same channel —
+ * the registry guarantees a single subscription so broadcasts hit every
+ * listener consistently (the 3-channel split before Phase 14 was the root
+ * cause of items not syncing across PCs in the real two-PC test).
  *
  * Identity model: each peer is uniquely identified by (userId, deviceId).
  * One user on two devices = two peer entries. We tag each with a stable
@@ -177,9 +178,6 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
             return;
         }
 
-        const supabase = getRealtimeClient();
-        const channelName = `${CHANNEL_PREFIX}${blobId}`;
-        const deviceId = getDeviceId();
         const myName = displayName || 'Anonymous';
 
         // Phase 12: hand the current Supabase access token to the Realtime
@@ -194,16 +192,31 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
             } catch { /* signed out / IPC missing → leave unauthenticated */ }
         })();
 
-        // `presence: { key }` keys the presence slot. Using the per-device id
-        // (not the user id) means a user with two tabs/devices appears as
-        // two separate peers — accurate for the UI ("two of Sally's
-        // devices are connected").
-        const channel = supabase.channel(channelName, {
-            config: {
-                presence: { key: deviceId },
-                broadcast: { self: false, ack: false },
-            },
-        });
+        // Phase 14: acquire the shared canvas channel via the registry.
+        // useOpSync + useAssetSync use the SAME channel via the same
+        // registry call, so broadcasts hit one shared subscription
+        // instead of competing across three channel objects.
+        let cancelled = false;
+        const onStatus = (status: string) => {
+            if (cancelled) return;
+            if (status === 'SUBSCRIBED') {
+                setConnected(true);
+                // Only broadcast our presence when the tab is active.
+                if (active) {
+                    void channel.track({
+                        user_id: userId,
+                        device_id: deviceId,
+                        display_name: myName,
+                        joined_at: Date.now(),
+                    } satisfies PresenceRow);
+                }
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                setConnected(false);
+            }
+        };
+        const acquired = acquireCanvasChannel(blobId, onStatus);
+        const channel = acquired.channel;
+        const deviceId = acquired.deviceId;
         channelRef.current = channel;
 
         // Per-device ephemeral state (cursor + selection) accumulated from
@@ -223,6 +236,7 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         };
 
         const computeAndSet = () => {
+            if (cancelled) return;
             const presenceState = channel.presenceState() as Record<string, PresenceRow[]>;
             const flat: CollabPeer[] = [];
             const now = Date.now();
@@ -267,6 +281,7 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
             // sender's device id so we can attribute it; null x/y means
             // "cursor left the canvas" → hide the remote cursor.
             .on('broadcast', { event: 'cursor' }, (msg) => {
+                if (cancelled) return;
                 const p = (msg as any)?.payload;
                 if (!p || typeof p.device_id !== 'string') return;
                 if (p.device_id === deviceId) return; // ignore echoes (self:false already, but defensive)
@@ -280,31 +295,16 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                 scheduleRender();
             })
             .on('broadcast', { event: 'selection' }, (msg) => {
+                if (cancelled) return;
                 const p = (msg as any)?.payload;
                 if (!p || typeof p.device_id !== 'string') return;
                 if (p.device_id === deviceId) return;
                 const prev = ephemeralRef.get(p.device_id) || {};
                 ephemeralRef.set(p.device_id, { ...prev, selectionIds: Array.isArray(p.ids) ? p.ids : [] });
                 scheduleRender();
-            })
-            .subscribe(async (status) => {
-                if (status === 'SUBSCRIBED') {
-                    setConnected(true);
-                    // Only broadcast our presence when the tab is active.
-                    // Inactive tabs still receive updates so the chip count
-                    // is correct when the user returns.
-                    if (active) {
-                        await channel.track({
-                            user_id: userId,
-                            device_id: deviceId,
-                            display_name: myName,
-                            joined_at: Date.now(),
-                        } satisfies PresenceRow);
-                    }
-                } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-                    setConnected(false);
-                }
             });
+        // Channel subscribe happens once inside acquireCanvasChannel —
+        // status changes flow through onStatus above.
 
         // Periodic stale-cursor sweep: every 2s, force a recompute so cursors
         // older than CURSOR_STALE_MS get filtered out. Without this, a peer
@@ -323,13 +323,14 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         }, 2000);
 
         return () => {
+            cancelled = true;
             channelRef.current = null;
             window.clearInterval(staleInterval);
-            // untrack + unsubscribe is wrapped in try/catch because the
-            // channel may already be closed (network drop). Either way
-            // we want to release the local handle.
+            // untrack just our presence (other hooks on this same channel
+            // may still need it alive). Then release our refCount; the
+            // registry tears down the channel when refCount hits 0.
             try { channel.untrack(); } catch { /* ignored */ }
-            try { supabase.removeChannel(channel); } catch { /* ignored */ }
+            acquired.release();
             setConnected(false);
             setPeers([]);
         };

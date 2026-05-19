@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import { getRealtimeClient } from './supabaseRealtimeClient';
+import { acquireCanvasChannel } from './channelRegistry';
 import { useCanvasStore } from '../state/canvasStore';
 import type { CanvasAction } from '../state/canvasStore';
 import { getAsset, registerAsset, bytesToBase64, base64ToBytes, mimeFromExtension } from '../file/assetRegistry';
@@ -23,7 +23,6 @@ import { encrypt, decrypt, importKey } from '../cloud/encryption';
 // large-asset sync (storage-bucket-backed + chunked notification) is a
 // Phase 4.1 follow-up.
 
-const CHANNEL_PREFIX = 'klypix-canvas-';
 const ASSET_PLAINTEXT_CAP = 600 * 1024;
 
 // Phase 8: chunked-send config. Anything over the inline cap gets sliced
@@ -49,16 +48,6 @@ interface AssetPayload {
     file_name?: string;
     /** Base64-encoded AES-GCM ciphertext + IV concatenated as `iv||ct`. */
     encrypted_b64: string;
-}
-
-function getDeviceId(): string {
-    const KEY = 'klypix:collab:deviceId';
-    let id = localStorage.getItem(KEY);
-    if (!id) {
-        id = 'cdev_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-        localStorage.setItem(KEY, id);
-    }
-    return id;
 }
 
 /** Inspect a syncable ADD_ITEM and pull out the assetId if present.
@@ -94,9 +83,6 @@ export function useAssetSync({ blobId, keyB64, active }: UseAssetSyncArgs): void
     useEffect(() => {
         if (!blobId || !keyB64) return;
         let cancelled = false;
-        const supabase = getRealtimeClient();
-        const channelName = `${CHANNEL_PREFIX}${blobId}`;
-        const deviceId = getDeviceId();
 
         // Resolve the AES key asynchronously. Until it's ready, queue any
         // outbound broadcasts (no inbound work — we can't decrypt yet).
@@ -116,13 +102,18 @@ export function useAssetSync({ blobId, keyB64, active }: UseAssetSyncArgs): void
             console.warn('[assetSync] failed to import canvas key:', err);
         });
 
-        const channel = supabase.channel(channelName, {
-            config: { broadcast: { self: false, ack: false } },
-        });
+        // Phase 14: acquire the shared canvas channel via the registry.
+        // useCanvasCollab + useOpSync use the SAME channel via the same
+        // registry call, so asset broadcasts share one subscription
+        // (was the root cause of inconsistent delivery in two-PC tests).
+        const acquired = acquireCanvasChannel(blobId);
+        const channel = acquired.channel;
+        const deviceId = acquired.deviceId;
         channelRef.current = channel;
 
         // Inline (small) asset receiver.
         channel.on('broadcast', { event: 'asset' }, async (msg: any) => {
+            if (cancelled) return;
             const p = msg?.payload as AssetPayload | undefined;
             if (!p || typeof p.device_id !== 'string') return;
             if (p.device_id === deviceId) return;
@@ -172,6 +163,7 @@ export function useAssetSync({ blobId, keyB64, active }: UseAssetSyncArgs): void
         }, 5000);
 
         channel.on('broadcast', { event: 'asset.chunk' }, async (msg: any) => {
+            if (cancelled) return;
             const p = msg?.payload as {
                 device_id: string;
                 asset_id: string;
@@ -233,7 +225,9 @@ export function useAssetSync({ blobId, keyB64, active }: UseAssetSyncArgs): void
             }
         });
 
-        channel.subscribe();
+        // Note: channel.subscribe() is called ONCE inside acquireCanvasChannel.
+        // We don't need status callbacks here — outbound sends just no-op if
+        // the underlying channel isn't connected yet.
 
         const unsubscribe = subscribeActions((action) => {
             if ((action as any).__remote) return;
@@ -311,7 +305,9 @@ export function useAssetSync({ blobId, keyB64, active }: UseAssetSyncArgs): void
             unsubscribe();
             channelRef.current = null;
             window.clearInterval(sweepReassembly);
-            try { supabase.removeChannel(channel); } catch { /* ignored */ }
+            // Release our refCount on the shared channel — the registry
+            // tears the channel down when refCount hits 0.
+            acquired.release();
         };
     }, [blobId, keyB64, active, subscribeActions]);
 }

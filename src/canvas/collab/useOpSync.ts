@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import { getRealtimeClient } from './supabaseRealtimeClient';
+import { acquireCanvasChannel } from './channelRegistry';
 import { useCanvasStore } from '../state/canvasStore';
 import type { CanvasAction } from '../state/canvasStore';
 
@@ -28,10 +28,9 @@ import type { CanvasAction } from '../state/canvasStore';
 //   - RESTORE (undo/redo replays the user's local action history; replicating
 //     undo across devices is a Phase ∞ problem — skip for now).
 //
-// Same channel as presence + cursors keeps the network footprint tight —
-// one Realtime subscription handles everything.
-
-const CHANNEL_PREFIX = 'klypix-canvas-';
+// Phase 14: same channel as presence + cursors via the channelRegistry
+// shared-channel model — one underlying subscription handles everything
+// (presence, cursors, ops, assets) so broadcast delivery is consistent.
 
 // Action types that mutate persistent state and should be broadcast.
 // Anything not listed here stays local. Update this list if you add a
@@ -62,18 +61,6 @@ interface OpPayload {
     lamport: number;
     /** The canvas action verbatim, JSON-serialized. */
     action: CanvasAction;
-}
-
-/** Stable per-device id — same key used by useCanvasCollab so a peer's
- *  cursor + ops share an identity. */
-function getDeviceId(): string {
-    const KEY = 'klypix:collab:deviceId';
-    let id = localStorage.getItem(KEY);
-    if (!id) {
-        id = 'cdev_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-        localStorage.setItem(KEY, id);
-    }
-    return id;
 }
 
 export interface UseOpSyncArgs {
@@ -207,9 +194,7 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
 
     useEffect(() => {
         if (!blobId) return;
-        const supabase = getRealtimeClient();
-        const channelName = `${CHANNEL_PREFIX}${blobId}`;
-        const deviceId = getDeviceId();
+        let cancelled = false;
 
         // Hydrate lamport from persisted value so a fresh tab continues
         // from where the previous session left off.
@@ -292,12 +277,39 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
             }
         };
 
-        // Open (or reuse) the channel. If useCanvasCollab opened one with
-        // the same name in the same client, Supabase de-dups — both end up
-        // sharing the underlying connection.
-        const channel = supabase.channel(channelName, {
-            config: { broadcast: { self: false, ack: false } },
-        });
+        // Phase 14: acquire the shared canvas channel via the registry.
+        // useCanvasCollab + useAssetSync use the SAME channel via the same
+        // registry call, so broadcasts hit one shared subscription instead
+        // of competing across three channel objects (was the root cause of
+        // the "items not syncing across PCs" bug in the real two-PC test).
+        const onStatus = (status: string) => {
+            if (cancelled) return;
+            if (status === 'SUBSCRIBED') {
+                connectedRef.current = true;
+                // Pull-then-drain order: get the server's view of history
+                // first, THEN flush our local queue. This way our queued
+                // ops carry higher lamports than anything we just imported.
+                // queueMicrotask defers past the synchronous tail of this
+                // useEffect so backfillFromServer/drainQueue (defined below)
+                // are in scope — required because the registry fires this
+                // callback synchronously when the channel is already
+                // subscribed by another hook.
+                queueMicrotask(() => {
+                    if (cancelled) return;
+                    void (async () => {
+                        if (cancelled) return;
+                        await backfillFromServer();
+                        if (cancelled) return;
+                        await drainQueue();
+                    })();
+                });
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                connectedRef.current = false;
+            }
+        };
+        const acquired = acquireCanvasChannel(blobId, onStatus);
+        const channel = acquired.channel;
+        const deviceId = acquired.deviceId;
         channelRef.current = channel;
 
         // Inbound op handler: parse + apply via wrapped dispatch. We tag
@@ -306,6 +318,7 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
         // ignores the tag — it's a passthrough marker only the listener
         // checks.
         channel.on('broadcast', { event: 'op' }, (msg: any) => {
+            if (cancelled) return;
             const p = msg?.payload as OpPayload | undefined;
             if (!p || typeof p.device_id !== 'string') return;
             if (p.device_id === deviceId) return; // self-echo guard
@@ -387,20 +400,8 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
             }
         };
 
-        channel.subscribe((status) => {
-            if (status === 'SUBSCRIBED') {
-                connectedRef.current = true;
-                // Pull-then-drain order: get the server's view of history
-                // first, THEN flush our local queue. This way our queued
-                // ops carry higher lamports than anything we just imported.
-                void (async () => {
-                    await backfillFromServer();
-                    await drainQueue();
-                })();
-            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-                connectedRef.current = false;
-            }
-        });
+        // Note: channel.subscribe() is called ONCE inside acquireCanvasChannel;
+        // we get state changes via the onStatus handler captured above.
 
         // Outbound: every local action that's syncable + not flagged remote.
         const unsubscribe = subscribeActions((action) => {
@@ -524,8 +525,10 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
         };
 
         return () => {
+            cancelled = true;
             unsubscribe();
             channelRef.current = null;
+            connectedRef.current = false;
             // Best-effort flush of any pending outbound buffer to the
             // persistent queue so unmount during a drag doesn't drop
             // mid-flight UPDATE_ITEMs.
@@ -536,7 +539,9 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
             for (const q of outboundBuffer) enqueue(q);
             outboundBuffer.length = 0;
             outboundIndex.clear();
-            try { supabase.removeChannel(channel); } catch { /* ignored */ }
+            // Release our refCount on the shared channel — the registry
+            // tears the channel down when refCount hits 0.
+            acquired.release();
         };
     }, [blobId, active, dispatch, subscribeActions]);
 }
