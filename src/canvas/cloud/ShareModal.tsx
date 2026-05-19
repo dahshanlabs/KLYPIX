@@ -266,8 +266,140 @@ function ShareReadyBody({ share, copied, onCopy, onUpdate, isNew }: { share: { s
                 </button>
             </div>
             <InviteCollaboratorsSection share={share} />
+            <PendingInvitationsSection blobId={share.blobId} />
             <CollaboratorsListSection blobId={share.blobId} />
         </>
+    );
+}
+
+// ── Phase 20: pending invitations list ────────────────────────────────────
+// Sent-but-not-yet-accepted invitations. Owners can revoke them here so a
+// link goes dead if it leaked to the wrong person, or if the inviter
+// changes their mind. Polls every 10s alongside the collaborators list so
+// "they just accepted" updates ripple across both views.
+function PendingInvitationsSection({ blobId }: { blobId: string }) {
+    const [rows, setRows] = useState<Array<{ token: string; invitee_email: string | null; created_at: string; expires_at: string; accepted_at: string | null; inviteUrl: string }>>([]);
+    const [revoking, setRevoking] = useState<string | null>(null);
+    const [tick, setTick] = useState(0);
+    const refresh = () => setTick(n => n + 1);
+
+    useEffect(() => {
+        if (!blobId) return;
+        let cancelled = false;
+        const cloud: any = (window as any).electron?.cloud;
+        if (!cloud?.listInvitations) return;
+        const fetch = async () => {
+            if (cancelled) return;
+            try {
+                const all = await cloud.listInvitations(blobId);
+                if (cancelled) return;
+                // Pending = no accepted_at and not expired. The IPC returns
+                // both accepted + still-pending; filter here so the UI only
+                // shows revocable rows.
+                const now = Date.now();
+                const pending = (Array.isArray(all) ? all : []).filter((r: any) =>
+                    !r.accepted_at && new Date(r.expires_at).getTime() > now
+                );
+                setRows(pending);
+            } catch {
+                // Most likely auth missing — leave the list empty silently.
+            }
+        };
+        void fetch();
+        const id = window.setInterval(fetch, 10_000);
+        return () => { cancelled = true; window.clearInterval(id); };
+    }, [blobId, tick]);
+
+    const revoke = async (token: string) => {
+        const cloud: any = (window as any).electron?.cloud;
+        if (!cloud?.revokeInvitation) return;
+        setRevoking(token);
+        try {
+            await cloud.revokeInvitation(token);
+            // Optimistic remove — the next fetch will confirm.
+            setRows(prev => prev.filter(r => r.token !== token));
+        } catch (e: any) {
+            window.alert(`Revoke failed: ${e?.message || String(e)}`);
+        } finally {
+            setRevoking(null);
+            refresh();
+        }
+    };
+
+    const copyOne = async (url: string) => {
+        try { await navigator.clipboard.writeText(url); } catch { /* swallow */ }
+    };
+
+    if (rows.length === 0) return null;
+    return (
+        <div style={{
+            marginTop: 14,
+            paddingTop: 12,
+            borderTop: '1px solid rgba(255,255,255,0.08)',
+        }}>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Mail size={11} />
+                {t('share.pending_section').replace('{n}', String(rows.length))}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {rows.map((r) => {
+                    const expiresMs = new Date(r.expires_at).getTime() - Date.now();
+                    const expiresDays = Math.max(0, Math.round(expiresMs / 86_400_000));
+                    return (
+                        <div key={r.token} style={{
+                            display: 'flex', alignItems: 'center', gap: 8,
+                            padding: '6px 8px',
+                            borderRadius: 6,
+                            background: 'rgba(255,255,255,0.03)',
+                        }}>
+                            <Mail size={11} style={{ color: 'rgba(255,255,255,0.4)', flexShrink: 0 }} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {r.invitee_email || t('share.pending_no_recipient')}
+                                </div>
+                                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>
+                                    {t('share.pending_expires_in').replace('{n}', String(expiresDays))}
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => copyOne(r.inviteUrl)}
+                                title={t('share.pending_copy_link')}
+                                style={{
+                                    padding: '4px 8px',
+                                    borderRadius: 5,
+                                    background: 'rgba(255,255,255,0.05)',
+                                    border: '1px solid rgba(255,255,255,0.08)',
+                                    color: 'rgba(255,255,255,0.7)',
+                                    cursor: 'pointer',
+                                    fontSize: 10,
+                                }}
+                            >
+                                <Copy size={11} />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => revoke(r.token)}
+                                disabled={revoking === r.token}
+                                title={t('share.pending_revoke')}
+                                style={{
+                                    padding: '4px 8px',
+                                    borderRadius: 5,
+                                    background: 'rgba(239, 68, 68, 0.12)',
+                                    border: '1px solid rgba(239, 68, 68, 0.25)',
+                                    color: '#fca5a5',
+                                    cursor: revoking === r.token ? 'not-allowed' : 'pointer',
+                                    opacity: revoking === r.token ? 0.5 : 1,
+                                    fontSize: 10,
+                                }}
+                            >
+                                <X size={11} />
+                            </button>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
     );
 }
 
