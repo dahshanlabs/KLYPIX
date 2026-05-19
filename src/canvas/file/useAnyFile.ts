@@ -448,27 +448,40 @@ export function useAnyFile(tabActive = true, skipAutosaveCheck = false) {
         return off;
     }, [openByPath, tabActive]);
 
-    // --- 30s autosave loop ---
+    // --- Autosave ---
     // Saves to the file path when one exists. Otherwise writes a crash-recovery
     // snapshot to %APPDATA%/klypix/autosave/untitled.any so nothing is lost if
     // the app dies before the user saves.
+    //
+    // Two triggers:
+    //   1) 30s debounced timer while isDirty — the routine path.
+    //   2) External callers via flushAutosaveNow() — used by the collab layer
+    //      to capture state IMMEDIATELY when the user goes offline, so a
+    //      crash + offline + edits = no work lost (no waiting on the 30s).
+    const flushAutosave = useCallback(async (): Promise<{ ok: boolean }> => {
+        const s = stateRef.current;
+        if (!s.isDirty) return { ok: true };
+        if (s.filePath) {
+            await doSave();
+            return { ok: true };
+        }
+        const api = getApi();
+        if (!api?.autosave) return { ok: false };
+        const doc = serialize(s, s.title);
+        const assets = buildAssetPayload(s);
+        try {
+            await api.autosave({ json: JSON.stringify(doc), assets });
+            return { ok: true };
+        } catch {
+            return { ok: false };
+        }
+    }, [doSave]);
+
     useEffect(() => {
         if (!state.isDirty) return;
-        const timer = setTimeout(async () => {
-            if (!stateRef.current.isDirty) return;
-            if (stateRef.current.filePath) {
-                doSave();
-            } else {
-                const api = getApi();
-                if (api?.autosave) {
-                    const doc = serialize(stateRef.current, stateRef.current.title);
-                    const assets = buildAssetPayload(stateRef.current);
-                    api.autosave({ json: JSON.stringify(doc), assets }).catch(() => {});
-                }
-            }
-        }, 30_000);
+        const timer = setTimeout(() => { void flushAutosave(); }, 30_000);
         return () => clearTimeout(timer);
-    }, [state.filePath, state.isDirty, doSave]);
+    }, [state.filePath, state.isDirty, flushAutosave]);
 
     // Clear the crash-recovery slot when the user saves to a real file.
     useEffect(() => {
@@ -556,5 +569,5 @@ export function useAnyFile(tabActive = true, skipAutosaveCheck = false) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tabActive, skipAutosaveCheck]);
 
-    return { newFile, save: doSave, saveAs, open, openByPath, restoreFromSnapshot, restoreSettled };
+    return { newFile, save: doSave, saveAs, open, openByPath, restoreFromSnapshot, restoreSettled, flushAutosaveNow: flushAutosave };
 }

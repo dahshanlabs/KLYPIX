@@ -765,6 +765,12 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         if (!collabHealth.event) return;
         if (collabHealth.event.kind === 'disconnected') {
             setToast({ text: tLocale('canvas.collab_disconnected_toast'), id: Date.now() });
+            // Phase 11: aggressive autosave the instant collab drops.
+            // Don't wait for the 30s timer — we're now editing in a state
+            // where peers can't see our changes; capturing to disk
+            // immediately is the cheapest insurance against crash + offline
+            // edits = lost work.
+            void file.flushAutosaveNow();
         } else {
             setToast({ text: tLocale('canvas.collab_reconnected_toast'), id: Date.now() });
         }
@@ -772,7 +778,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         // so the toast is fully visible first.
         const t = setTimeout(() => collabHealth.acknowledge(), 50);
         return () => clearTimeout(t);
-    }, [collabHealth.event]);
+    }, [collabHealth.event, file]);
     // Publish our local selection so peers can render colored halos around
     // items we have selected. Throttle (10Hz) lives inside publishSelection.
     useEffect(() => {
