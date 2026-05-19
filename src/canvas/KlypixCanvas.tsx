@@ -60,6 +60,7 @@ import { Share2 } from 'lucide-react';
 import { useCanvasCollab } from './collab/useCanvasCollab';
 import { useOpSync } from './collab/useOpSync';
 import { useAssetSync } from './collab/useAssetSync';
+import { useCollabHealth } from './collab/useCollabHealth';
 import { CollabPresenceChips } from './collab/CollabPresenceChips';
 import { getCloudShare } from './cloud/cloudShareStore';
 import { useAuth } from '../components/AuthProvider';
@@ -753,6 +754,25 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         keyB64: cloudShare?.keyB64 ?? null,
         active: tabActive,
     });
+    // Phase 5: surface connection lifecycle for the user. The collab strip
+    // already dims on disconnect; this adds a brief banner when a real
+    // (debounced > 2.5s) drop happens, and another when it recovers.
+    const collabHealth = useCollabHealth({
+        connected: collab.connected,
+        eligible: !!cloudShare?.blobId,
+    });
+    useEffect(() => {
+        if (!collabHealth.event) return;
+        if (collabHealth.event.kind === 'disconnected') {
+            setToast({ text: tLocale('canvas.collab_disconnected_toast'), id: Date.now() });
+        } else {
+            setToast({ text: tLocale('canvas.collab_reconnected_toast'), id: Date.now() });
+        }
+        // Acknowledge so the same event doesn't re-fire — but on a delay
+        // so the toast is fully visible first.
+        const t = setTimeout(() => collabHealth.acknowledge(), 50);
+        return () => clearTimeout(t);
+    }, [collabHealth.event]);
     // Publish our local selection so peers can render colored halos around
     // items we have selected. Throttle (10Hz) lives inside publishSelection.
     useEffect(() => {

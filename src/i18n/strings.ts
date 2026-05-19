@@ -423,6 +423,8 @@ const strings: Strings = {
     'canvas.collab_n_here': { en: '{n} people here', ar: '{n} أشخاص هنا' },
     'canvas.collab_more_count': { en: '+{n} more', ar: '+{n} آخرون' },
     'canvas.collab_disconnected': { en: 'Reconnecting…', ar: 'إعادة الاتصال…' },
+    'canvas.collab_disconnected_toast': { en: 'Live collab disconnected — edits will not sync until you reconnect', ar: 'انقطع التعاون المباشر — لن تتزامن التعديلات حتى تعيد الاتصال' },
+    'canvas.collab_reconnected_toast': { en: 'Live collab reconnected', ar: 'تم استعادة التعاون المباشر' },
     // Layers panel
     'canvas.layer_content': { en: 'content', ar: 'المحتوى' },
     'canvas.layer_agent': { en: 'agent', ar: 'الوكيل' },
