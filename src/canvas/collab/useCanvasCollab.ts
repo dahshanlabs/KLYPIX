@@ -292,6 +292,14 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                 } else {
                     ephemeralRef.set(p.device_id, { ...prev, cursorX: p.x, cursorY: p.y, cursorAt: Date.now() });
                 }
+                // Phase 15: dev-only inbound cursor log.
+                if (localStorage.getItem('klypix:debugCursor') === '1') {
+                    if (p.x == null || p.y == null) {
+                        console.log('[cursor.in]', p.device_id.slice(0, 10), 'left');
+                    } else {
+                        console.log('[cursor.in]', p.device_id.slice(0, 10), { x: p.x.toFixed(1), y: p.y.toFixed(1) });
+                    }
+                }
                 scheduleRender();
             })
             .on('broadcast', { event: 'selection' }, (msg) => {
@@ -357,6 +365,13 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                 event: 'cursor',
                 payload: { device_id: deviceId, x: payload?.x ?? null, y: payload?.y ?? null },
             });
+            // Phase 15: dev-only outbound cursor log. Enable with
+            // localStorage['klypix:debugCursor'] = '1'. Logs the world coord
+            // we just broadcast so the user can verify on the OTHER PC's
+            // dev console (where Phase 15 logs the received value).
+            if (localStorage.getItem('klypix:debugCursor') === '1') {
+                console.log('[cursor.out]', payload === null ? 'null' : { x: payload.x.toFixed(1), y: payload.y.toFixed(1) });
+            }
             return;
         }
         // Trailing flush: schedule a single timer to send the latest queued

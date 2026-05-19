@@ -60,6 +60,12 @@ function PeerCursor({ peer, viewZoom }: { peer: CollabPeer; viewZoom: number }) 
     const PADDING = 4 * inv;
     const LABEL_FONT = 11 * inv;
 
+    // Phase 15: dev-only debug badge — flip on with
+    // localStorage['klypix:debugCursor'] = '1' to see the raw world coord
+    // the peer is broadcasting. Pair with the [cursor.in]/[cursor.out]
+    // console logs to verify the two PCs agree on coordinates.
+    const debugCursor = typeof window !== 'undefined' && localStorage.getItem('klypix:debugCursor') === '1';
+
     return (
         <div
             style={{
@@ -108,6 +114,11 @@ function PeerCursor({ peer, viewZoom }: { peer: CollabPeer; viewZoom: number }) 
                 }}
             >
                 {peer.displayName}
+                {debugCursor && (
+                    <span style={{ marginLeft: PADDING, opacity: 0.85, fontFamily: 'monospace', fontWeight: 400 }}>
+                        {Math.round(pos.x)},{Math.round(pos.y)}
+                    </span>
+                )}
             </div>
         </div>
     );
