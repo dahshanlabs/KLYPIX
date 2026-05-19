@@ -132,6 +132,7 @@ export default function SharedCanvasPage() {
                     canvas={view.canvas}
                     onDownload={() => downloadAsKlypixFile(view.bytes, filename)}
                     onCursorMoveWorld={collab.publishCursor}
+                    remotePeers={collab.peers}
                 />
                 {/* Live presence overlay — shows desktop / web users
                     currently viewing this same canvas. Plus this tab's

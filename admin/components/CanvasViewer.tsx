@@ -31,6 +31,17 @@ interface Props {
      *  the consuming hook throttles internally. Receives null when the
      *  cursor leaves the viewer surface. */
     onCursorMoveWorld?: (world: { x: number; y: number } | null) => void;
+    /** Optional: peers in the same canvas, with cursor coords. Renders
+     *  colored cursor arrows + name labels inside the world transform so
+     *  the viewer is aware of the desktop user moving around. */
+    remotePeers?: Array<{
+        userId: string;
+        deviceId: string;
+        displayName: string;
+        color: string;
+        cursorX?: number;
+        cursorY?: number;
+    }>;
 }
 
 interface ViewTransform {
@@ -72,7 +83,7 @@ function isDarkHex(hex: string): boolean {
     return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 < 0.5;
 }
 
-export const CanvasViewer: React.FC<Props> = ({ canvas, onDownload, onCursorMoveWorld }) => {
+export const CanvasViewer: React.FC<Props> = ({ canvas, onDownload, onCursorMoveWorld, remotePeers }) => {
     const surfaceRef = useRef<HTMLDivElement | null>(null);
     const [view, setView] = useState<ViewTransform>(() => fitInitialView(canvas));
     const [isPanning, setIsPanning] = useState(false);
@@ -236,6 +247,12 @@ export const CanvasViewer: React.FC<Props> = ({ canvas, onDownload, onCursorMove
                             item={item}
                             assetUrls={canvas.assetUrls}
                         />
+                    ))}
+                    {/* Remote peer cursors — rendered INSIDE the world
+                        transform so they pan/zoom with the canvas. Inverse-
+                        scale internally for legibility at any zoom level. */}
+                    {remotePeers && remotePeers.filter(p => p.cursorX != null && p.cursorY != null).map(p => (
+                        <ViewerPeerCursor key={`cursor-${p.deviceId}`} peer={p} zoom={view.zoom} />
                     ))}
                 </div>
             </div>
@@ -725,4 +742,50 @@ function fitInitialView(canvas: ParsedCanvas, surface?: HTMLDivElement | null): 
         y: surfaceH / 2 - cy * zoom,
         zoom,
     };
+}
+
+// ── Remote cursor rendering (Phase 2.5) ─────────────────────────────
+function ViewerPeerCursor({ peer, zoom }: {
+    peer: { userId: string; deviceId: string; displayName: string; color: string; cursorX?: number; cursorY?: number };
+    zoom: number;
+}) {
+    // Inverse-scale so the cursor stays a constant size on screen regardless
+    // of canvas zoom. Symmetrical with the desktop's PeerCursor.
+    const inv = 1 / Math.max(0.25, Math.min(4, zoom));
+    const ARROW = 16 * inv;
+    const PAD = 4 * inv;
+    const FONT = 11 * inv;
+    return (
+        <div
+            style={{
+                position: 'absolute',
+                left: peer.cursorX,
+                top: peer.cursorY,
+                pointerEvents: 'none',
+                zIndex: 1000,
+                userSelect: 'none',
+            }}
+        >
+            <svg width={ARROW} height={ARROW} viewBox="0 0 16 16" style={{ display: 'block', filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.4))' }}>
+                <path d="M2 2 L2 13 L5.5 10 L8.5 14 L10.5 13 L7.5 9 L12 8.5 Z" fill={peer.color} stroke="white" strokeWidth={1} strokeLinejoin="round" />
+            </svg>
+            <div
+                style={{
+                    position: 'absolute',
+                    left: ARROW * 0.7,
+                    top: ARROW * 0.7,
+                    background: peer.color,
+                    color: 'white',
+                    fontSize: FONT,
+                    fontWeight: 500,
+                    padding: `${PAD * 0.6}px ${PAD * 1.4}px`,
+                    borderRadius: PAD * 1.5,
+                    whiteSpace: 'nowrap',
+                    boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+                }}
+            >
+                {peer.displayName}
+            </div>
+        </div>
+    );
 }
