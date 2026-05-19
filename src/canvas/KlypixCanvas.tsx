@@ -56,12 +56,13 @@ import { saveTemplate } from './file/templates';
 import { setOpenCanvasLinkHandler } from './items/CanvasLinkItem';
 import { CanvasDashboard } from './dashboard/CanvasDashboard';
 import { ShareModal } from './cloud/ShareModal';
-import { Share2 } from 'lucide-react';
+import { Share2, MessageSquare } from 'lucide-react';
 import { useCanvasCollab } from './collab/useCanvasCollab';
 import { useOpSync } from './collab/useOpSync';
 import { useAssetSync } from './collab/useAssetSync';
 import { useCollabHealth } from './collab/useCollabHealth';
 import { useCollaboratorWatcher } from './collab/useCollaboratorWatcher';
+import { CanvasChatPanel } from './collab/CanvasChatPanel';
 import { CollabPresenceChips } from './collab/CollabPresenceChips';
 import { getCloudShare } from './cloud/cloudShareStore';
 import { useAuth } from '../components/AuthProvider';
@@ -726,6 +727,12 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     const [searchOpen, setSearchOpen] = useState(false);
     const [outlineOpen, setOutlineOpen] = useState(false);
     const [layersOpen, setLayersOpen] = useState(false);
+    // Phase 21: per-canvas DM panel. Opens via a chat button in the canvas
+    // chrome; only shown when this canvas has a cloud share so chat has
+    // somewhere to go. Auto-opens when an unread peer message arrives
+    // while the panel is closed — handled by the unread effect below.
+    const [chatOpen, setChatOpen] = useState(false);
+    const [chatUnread, setChatUnread] = useState(0);
     const [presenting, setPresenting] = useState(false);
     const [versionsOpen, setVersionsOpen] = useState(false);
     // Phase 1 live collab — presence only. Channel is keyed by the canvas's
@@ -763,6 +770,24 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         keyB64: cloudShare?.keyB64 ?? null,
         active: tabActive,
     });
+    // Phase 21: track unread DM count when the panel is closed. The most
+    // recent message ts on mount is the "I've seen this" watermark; every
+    // peer message past that bumps unread, every peer message past that
+    // ALSO auto-pulses the chat button. Resets to zero whenever the panel
+    // opens. Self-sent messages don't count.
+    const chatUnreadBaselineRef = useRef<number>(Date.now());
+    useEffect(() => {
+        if (chatOpen) {
+            setChatUnread(0);
+            chatUnreadBaselineRef.current = Date.now();
+            return;
+        }
+        const myId = auth.user?.id ?? null;
+        const baseline = chatUnreadBaselineRef.current;
+        const count = collab.messages.filter(m => m.fromUserId !== myId && m.ts > baseline).length;
+        if (count !== chatUnread) setChatUnread(count);
+    }, [chatOpen, collab.messages, auth.user?.id]);
+
     // Phase 17: poll for newly-accepted collaborators while we're the owner
     // of this canvas so we get a toast the moment someone takes our invite.
     // !invitedBy is the owner-side signal (recipients persist invitedBy when
@@ -2531,6 +2556,20 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
 
             {/* Panels */}
             <SearchPanel open={searchOpen} onClose={() => setSearchOpen(false)} />
+            {/* Phase 21: per-canvas DM panel. Mounted only when there's a
+                cloud share so chat is meaningful — collab without a blob
+                can't have peers anyway. */}
+            {cloudShare?.blobId && (
+                <CanvasChatPanel
+                    open={chatOpen}
+                    onClose={() => setChatOpen(false)}
+                    messages={collab.messages}
+                    onSend={collab.sendMessage}
+                    selfUserId={auth.user?.id ?? null}
+                    connected={collab.connected}
+                    hasPeers={collab.peers.length > 0}
+                />
+            )}
             {shareOpen && (
                 <ShareModal
                     canvasFilePath={state.filePath || null}
@@ -2654,6 +2693,27 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                         <span className="w-px h-4 bg-white/10 mx-0.5" />
                         <CollabPresenceChips peers={collab.peers} connected={collab.connected} />
                     </>
+                )}
+                {/* Phase 21: canvas chat. Shown only when this canvas is in
+                    cloud-share land (otherwise there's nobody to chat with). */}
+                {cloudShare?.blobId && (
+                    <button
+                        type="button"
+                        onClick={() => setChatOpen(v => !v)}
+                        title={tLocale('canvas_top.chat')}
+                        className="relative no-drag flex items-center justify-center w-6 h-6 rounded-md hover:bg-white/8 transition-colors cursor-pointer"
+                        style={{ color: chatOpen ? '#10b981' : 'rgba(255,255,255,0.6)' }}
+                    >
+                        <MessageSquare size={13} />
+                        {chatUnread > 0 && !chatOpen && (
+                            <span
+                                className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] rounded-full bg-red-500 text-white text-[8px] font-bold flex items-center justify-center px-[3px] tracking-normal"
+                                style={{ lineHeight: 1 }}
+                            >
+                                {chatUnread > 9 ? '9+' : chatUnread}
+                            </span>
+                        )}
+                    </button>
                 )}
                 <span className="w-px h-4 bg-white/10 mx-0.5" />
                 <FileOpButton label={tLocale('canvas_top.search_short')} onClick={() => setSearchOpen(true)}><SearchIcon size={13} /></FileOpButton>

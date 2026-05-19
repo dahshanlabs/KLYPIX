@@ -93,6 +93,28 @@ export interface UseCanvasCollabArgs {
     active: boolean;
 }
 
+/** Phase 21: ephemeral DM message broadcast on the canvas channel.
+ *  Not persisted server-side — durable chat is a follow-up. Messages
+ *  exist only for currently-connected peers; a late joiner sees an
+ *  empty thread. */
+export interface CollabMessage {
+    /** Unique per-message id, sender-assigned, used for React keys + dedupe. */
+    id: string;
+    /** Sender's userId (presence identity). */
+    fromUserId: string;
+    /** Sender's deviceId (so two devices of the same user are distinguishable). */
+    fromDeviceId: string;
+    /** Display name as known by the sender at send-time. */
+    fromName: string;
+    /** Color hash for chat-bubble accent — derived from fromUserId so the
+     *  same person stays the same color across cursor + chat + chip. */
+    color: string;
+    /** Text body. Trimmed + capped client-side to keep broadcasts small. */
+    text: string;
+    /** Send time (ms epoch). */
+    ts: number;
+}
+
 export interface UseCanvasCollabResult {
     /** Other connected users (excludes self). Empty when collab is
      *  inactive (no blob id / signed out / channel not yet joined). */
@@ -109,6 +131,16 @@ export interface UseCanvasCollabResult {
      *  Throttled to ~10Hz — selection changes are far less frequent
      *  than cursor moves so we don't need cursor-grade rates. */
     publishSelection: (selectionIds: string[]) => void;
+    /** Phase 21: messages from peers (excludes own — we keep an optimistic
+     *  echo via the same `messages` slot when we call sendMessage so the
+     *  UI gets instant feedback). Most recent last. Capped to last 200 in
+     *  memory; old ones drop off. */
+    messages: CollabMessage[];
+    /** Phase 21: send a DM-style message to all connected peers. Returns
+     *  the message we just broadcast so callers can render it optimistically
+     *  even if they don't read `messages` directly. Returns null when the
+     *  channel isn't connected (caller can show a "still connecting" hint). */
+    sendMessage: (text: string) => CollabMessage | null;
 }
 
 /**
@@ -133,10 +165,14 @@ const SELECTION_THROTTLE_MS = 100;
 // the safety net for unclean ones.
 const CURSOR_STALE_MS = 5000;
 
+const MESSAGE_MAX_TEXT = 2000;
+const MESSAGE_BUFFER_MAX = 200;
+
 export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResult {
     const { blobId, userId, displayName, active } = args;
     const [peers, setPeers] = useState<CollabPeer[]>([]);
     const [connected, setConnected] = useState(false);
+    const [messages, setMessages] = useState<CollabMessage[]>([]);
     const channelRef = useRef<RealtimeChannel | null>(null);
     // Throttle state: last-publish times + queued payloads. The published
     // value is always the freshest one — partial flushes drop intermediate
@@ -310,6 +346,35 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                 const prev = ephemeralRef.get(p.device_id) || {};
                 ephemeralRef.set(p.device_id, { ...prev, selectionIds: Array.isArray(p.ids) ? p.ids : [] });
                 scheduleRender();
+            })
+            // Phase 21: per-canvas DM. Ephemeral broadcast-only; no server
+            // persistence. Accepts only well-shaped payloads to keep this
+            // from being a vector for noise.
+            .on('broadcast', { event: 'dm.message' }, (msg) => {
+                if (cancelled) return;
+                const p = (msg as any)?.payload;
+                if (!p
+                    || typeof p.id !== 'string'
+                    || typeof p.from_user_id !== 'string'
+                    || typeof p.from_device_id !== 'string'
+                    || typeof p.text !== 'string'
+                    || typeof p.ts !== 'number') return;
+                if (p.from_device_id === deviceId) return; // own echo (already added optimistically)
+                const next: CollabMessage = {
+                    id: p.id,
+                    fromUserId: p.from_user_id,
+                    fromDeviceId: p.from_device_id,
+                    fromName: typeof p.from_name === 'string' ? p.from_name : 'Unknown',
+                    color: colorForUser(p.from_user_id),
+                    text: p.text.slice(0, MESSAGE_MAX_TEXT),
+                    ts: p.ts,
+                };
+                setMessages(prev => {
+                    // Dedupe by id (safety net for double-deliveries).
+                    if (prev.some(m => m.id === next.id)) return prev;
+                    const out = prev.concat(next);
+                    return out.length > MESSAGE_BUFFER_MAX ? out.slice(out.length - MESSAGE_BUFFER_MAX) : out;
+                });
             });
         // Channel subscribe happens once inside acquireCanvasChannel —
         // status changes flow through onStatus above.
@@ -428,6 +493,45 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         }, SELECTION_THROTTLE_MS - sinceLast);
     };
 
+    const sendMessage = (text: string): CollabMessage | null => {
+        const channel = channelRef.current;
+        const trimmed = text.trim();
+        if (!trimmed) return null;
+        if (!channel) return null;
+        if (!userId) return null;
+        const deviceId = getDeviceId();
+        const out: CollabMessage = {
+            id: 'm_' + Math.random().toString(36).slice(2) + Date.now().toString(36),
+            fromUserId: userId,
+            fromDeviceId: deviceId,
+            fromName: displayName || 'You',
+            color: colorForUser(userId),
+            text: trimmed.slice(0, MESSAGE_MAX_TEXT),
+            ts: Date.now(),
+        };
+        // Optimistic local append — own messages won't echo back because
+        // broadcast.self:false on the channel.
+        setMessages(prev => {
+            const next = prev.concat(out);
+            return next.length > MESSAGE_BUFFER_MAX ? next.slice(next.length - MESSAGE_BUFFER_MAX) : next;
+        });
+        try {
+            channel.send({
+                type: 'broadcast',
+                event: 'dm.message',
+                payload: {
+                    id: out.id,
+                    from_user_id: out.fromUserId,
+                    from_device_id: out.fromDeviceId,
+                    from_name: out.fromName,
+                    text: out.text,
+                    ts: out.ts,
+                },
+            });
+        } catch { /* best-effort; UI shows the optimistic copy regardless */ }
+        return out;
+    };
+
     return {
         // Ghost peers are visual-only; show them alongside whatever's
         // actually on the channel. When ghost-only (no real channel),
@@ -438,5 +542,7 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         connected: connected || ghostPeers.length > 0,
         publishCursor,
         publishSelection,
+        messages,
+        sendMessage,
     };
 }
