@@ -330,4 +330,12 @@ contextBridge.exposeInMainWorld('electron', {
         leaveShared: (blobId: string) =>
             ipcRenderer.invoke('canvas-cloud:leave-shared', blobId),
     },
+    // Phase 13: server-trusted daily spend tracking. Renderer dual-writes
+    // (localStorage + this RPC) and reads from here when checking budget
+    // so a localStorage edit can't reset the daily total.
+    agentUsage: {
+        record: (args: { model: string; inputTokens: number; outputTokens: number; cacheHitTokens?: number; costUsd: number }) =>
+            ipcRenderer.invoke('agent-usage:record', args),
+        getDailySpend: () => ipcRenderer.invoke('agent-usage:get-daily-spend'),
+    },
 });

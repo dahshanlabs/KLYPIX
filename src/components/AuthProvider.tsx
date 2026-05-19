@@ -184,6 +184,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return true;
     }, [tierLimits]);
 
+    // Phase 13: pull the server-trusted daily spend once on sign-in so
+    // the first agent-run budget check sees a real total (vs whatever
+    // localStorage says, which a user could've edited).
+    useEffect(() => {
+        if (!user) return;
+        // Lazy import — costTracker may pull pricing tables we don't
+        // want in the auth provider's initial bundle.
+        import('../core/agent/costTracker').then(m => {
+            m.CostTracker.refreshServerDailySpend().catch(() => { /* graceful */ });
+        }).catch(() => { /* costTracker unavailable in renderer-test envs */ });
+    }, [user?.id]);
+
     const value: AuthContextType = {
         user,
         isLoading,

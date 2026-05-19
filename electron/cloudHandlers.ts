@@ -369,4 +369,53 @@ export function registerCloudHandlers(ipcMain: IpcMain): void {
             throw new Error(`Leave shared canvas failed: ${error.message}`);
         }
     });
+
+    // ── Phase 13: server-side spend tracking ────────────────────────────
+    // Tracks daily agent USD spend in agent_usage so the localStorage-
+    // edit bypass of the daily budget cap is closed. Both RPCs return
+    // null when the user is signed out (RPC requires authenticated role).
+
+    ipcMain.handle('agent-usage:record', async (_e, args: {
+        model: string;
+        inputTokens: number;
+        outputTokens: number;
+        cacheHitTokens?: number;
+        costUsd: number;
+    }) => {
+        try {
+            await requireUserId();
+        } catch {
+            return { ok: false, dailyTotal: null, error: 'not signed in' };
+        }
+        const supabase = getSupabase();
+        const { data, error } = await supabase.rpc('record_agent_usage', {
+            p_model: args.model,
+            p_input_tokens: args.inputTokens | 0,
+            p_output_tokens: args.outputTokens | 0,
+            p_cache_hit_tokens: (args.cacheHitTokens ?? 0) | 0,
+            p_cost_usd: args.costUsd,
+        });
+        if (error) {
+            // RPC not yet deployed → fall back to local-only (renderer
+            // already has localStorage tracking). Don't throw — agent
+            // run should not fail because of telemetry plumbing.
+            if (/function .* does not exist/i.test(error.message)) {
+                return { ok: false, dailyTotal: null, error: 'rpc not deployed' };
+            }
+            return { ok: false, dailyTotal: null, error: error.message };
+        }
+        return { ok: true, dailyTotal: Number(data ?? 0) };
+    });
+
+    ipcMain.handle('agent-usage:get-daily-spend', async () => {
+        try {
+            await requireUserId();
+        } catch {
+            return { dailyTotal: null };
+        }
+        const supabase = getSupabase();
+        const { data, error } = await supabase.rpc('get_daily_spend');
+        if (error) return { dailyTotal: null };
+        return { dailyTotal: Number(data ?? 0) };
+    });
 }

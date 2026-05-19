@@ -136,9 +136,19 @@ export class CostTracker {
     localStorage.setItem('klypix:dailyBudget', amount.toFixed(2));
   }
 
+  // Phase 13: server-trusted daily total, populated by recordServerUsage's
+  // RPC dual-write. When available, isOverBudget prefers the larger of
+  // server vs local — covers both "user wiped localStorage" and "server
+  // doesn't have pre-signin spend." Graceful no-op if RPC undeployed /
+  // signed out — falls back to localStorage.
+  private static serverDailySpend: number | null = null;
+
   static isOverBudget(): boolean {
     const today = new Date().toISOString().split('T')[0];
-    const spent = parseFloat(localStorage.getItem(`klypix:spend:${today}`) || '0');
+    const local = parseFloat(localStorage.getItem(`klypix:spend:${today}`) || '0');
+    const spent = CostTracker.serverDailySpend != null
+      ? Math.max(CostTracker.serverDailySpend, local)
+      : local;
     return spent >= CostTracker.getDailyBudget();
   }
 
@@ -147,6 +157,43 @@ export class CostTracker {
     const key = `klypix:spend:${today}`;
     const current = parseFloat(localStorage.getItem(key) || '0');
     localStorage.setItem(key, (current + amount).toFixed(6));
+  }
+
+  /** Phase 13: dual-write today's agent-run usage to the server. Server
+   *  returns the updated daily total which we cache for the next
+   *  isOverBudget() check. Best-effort — failure logs and the local
+   *  path keeps working. */
+  static async recordServerUsage(args: {
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    cacheHitTokens?: number;
+    costUsd: number;
+  }): Promise<void> {
+    const api: any = (window as any).electron?.agentUsage;
+    if (!api?.record) return;
+    try {
+      const res = await api.record(args);
+      if (res?.ok && typeof res.dailyTotal === 'number') {
+        CostTracker.serverDailySpend = res.dailyTotal;
+      }
+    } catch (err) {
+      console.warn('[costTracker] recordServerUsage failed:', err);
+    }
+  }
+
+  /** Fetch the server's view of today's spend and cache it. Called once on
+   *  app start (or sign-in) so the first isOverBudget check has the real
+   *  number rather than a potentially-tampered localStorage value. */
+  static async refreshServerDailySpend(): Promise<void> {
+    const api: any = (window as any).electron?.agentUsage;
+    if (!api?.getDailySpend) return;
+    try {
+      const res = await api.getDailySpend();
+      if (typeof res?.dailyTotal === 'number') {
+        CostTracker.serverDailySpend = res.dailyTotal;
+      }
+    } catch { /* fall back to localStorage */ }
   }
 
   static getCostHistory(): number[] {

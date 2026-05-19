@@ -288,6 +288,16 @@ export function useClaudeAgent() {
             CostTracker.addSessionSpend(finalCost.estimatedCost);
             CostTracker.addDailySpend(finalCost.estimatedCost);
             (window as any).electron?.agentSettings?.addDailySpend?.(finalCost.estimatedCost);
+            // Phase 13: server-side spend tracking — closes the localStorage
+            // bypass of the daily cap. Fire-and-forget; graceful if RPC not
+            // yet deployed or user is signed out (recordServerUsage no-ops).
+            void CostTracker.recordServerUsage({
+                model: finalCost.model || 'unknown',
+                inputTokens: finalCost.inputTokens,
+                outputTokens: finalCost.outputTokens,
+                cacheHitTokens: finalCost.cacheHitTokens,
+                costUsd: finalCost.estimatedCost,
+            });
             agentSessionManager.complete(cleanFinal, finalCost, 'completed');
             setState('done');
 
