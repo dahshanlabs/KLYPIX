@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import { getRealtimeClient } from './supabaseRealtimeClient';
+import { getRealtimeClient, setRealtimeAuth } from './supabaseRealtimeClient';
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -181,6 +181,18 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         const channelName = `${CHANNEL_PREFIX}${blobId}`;
         const deviceId = getDeviceId();
         const myName = displayName || 'Anonymous';
+
+        // Phase 12: hand the current Supabase access token to the Realtime
+        // client so it can authenticate channel joins. Required once the
+        // server-side channel policy flips to `private: true` (until then
+        // it's a no-op for the channel but still primes the connection).
+        (async () => {
+            try {
+                const electronAuth: any = (window as any).electron?.auth;
+                const res = await electronAuth?.getAccessToken?.();
+                setRealtimeAuth(res?.token ?? null);
+            } catch { /* signed out / IPC missing → leave unauthenticated */ }
+        })();
 
         // `presence: { key }` keys the presence slot. Using the per-device id
         // (not the user id) means a user with two tabs/devices appears as

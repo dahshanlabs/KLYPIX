@@ -89,6 +89,23 @@ export function registerAuthHandlers(getMainWindow: () => BrowserWindow | null) 
         return { success: false };
     });
 
+    // Phase 12: surface the current Supabase access token to the renderer
+    // so it can authenticate its own Realtime client. Used to gate the
+    // collab channel under RLS once `private: true` mode is enabled
+    // server-side (see supabase/migrations/20260519_realtime_rls_*.sql).
+    // Returns null when signed out — the renderer-side caller is expected
+    // to skip auth in that case (anonymous viewer flow still works).
+    ipcMain.handle('auth:get-access-token', async () => {
+        try {
+            const { getSession } = await import('./tokenStore');
+            const session: any = getSession?.();
+            const token: string | null = session?.access_token ?? null;
+            return { token };
+        } catch {
+            return { token: null };
+        }
+    });
+
     // Tier checks
     ipcMain.handle('auth:get-tier-limits', (_event, { tier }: { tier: string }) => {
         return getTierLimits(tier);

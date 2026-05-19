@@ -14,6 +14,21 @@ const SUPABASE_URL = 'https://hiqwovwavlczlbuzzbel.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhpcXdvdndhdmxjemxidXp6YmVsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxODQ1MjEsImV4cCI6MjA4OTc2MDUyMX0.D38pbmA7HeH-it9Lyx1SGwafDIhkk35Grd5h0ze4Lko';
 
 let client: SupabaseClient | null = null;
+let lastAuthToken: string | null = null;
+
+/** Phase 12: set (or clear) the auth token the Realtime client uses to
+ *  authenticate channel joins. Required once the server-side channel
+ *  policy flips to `private: true` mode. No-op when called with the same
+ *  token we've already applied (avoids reconnect churn). */
+export function setRealtimeAuth(token: string | null): void {
+    if (token === lastAuthToken) return;
+    lastAuthToken = token;
+    try {
+        getRealtimeClient().realtime.setAuth(token);
+    } catch (err) {
+        console.warn('[realtime] setAuth failed:', err);
+    }
+}
 
 /** Get (or lazily create) the renderer's Realtime-only Supabase client. */
 export function getRealtimeClient(): SupabaseClient {

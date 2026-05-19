@@ -283,6 +283,10 @@ contextBridge.exposeInMainWorld('electron', {
         activateLicense: (key: string) => ipcRenderer.invoke('auth:activate-license', { key }),
         signOut: () => ipcRenderer.invoke('auth:sign-out'),
         getUser: () => ipcRenderer.invoke('auth:get-user'),
+        // Phase 12: current Supabase access token for the renderer's
+        // Realtime client to authenticate against. Returns { token: null }
+        // when signed out.
+        getAccessToken: () => ipcRenderer.invoke('auth:get-access-token'),
         refreshUser: () => ipcRenderer.invoke('auth:refresh-user'),
         getTierLimits: (tier: string) => ipcRenderer.invoke('auth:get-tier-limits', { tier }),
         canUseFeature: (tier: string, feature: string) => ipcRenderer.invoke('auth:can-use-feature', { tier, feature }),
