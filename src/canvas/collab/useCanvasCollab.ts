@@ -51,9 +51,16 @@ export interface CollabPeer {
     /** When the peer was last seen broadcasting anything. Used to fade
      *  stale entries when a network drop swallows the leave event. */
     lastSeen: number;
-    /** Cursor world coords (set in Phase 2). Optional in Phase 1. */
+    /** Cursor world coords. Null/undefined = cursor is off the canvas
+     *  (the peer's mouse left the surface) → render no cursor for them. */
     cursorX?: number;
     cursorY?: number;
+    /** When the cursor position was last received. Used to fade out the
+     *  remote cursor after a stale window with no updates. */
+    cursorAt?: number;
+    /** Item ids currently selected on the peer's side — used to draw
+     *  colored selection halos. */
+    selectionIds?: string[];
 }
 
 /** Shape of a single presence-state slot in Supabase's `presence_state` map.
@@ -93,6 +100,14 @@ export interface UseCanvasCollabResult {
      *  during connection or after an error. UI uses this to gray out
      *  the presence strip on flaky networks. */
     connected: boolean;
+    /** Publish this device's cursor position in canvas world coords.
+     *  Throttled to ~30Hz internally — callers can fire on every
+     *  pointermove. Pass null to clear (cursor left the canvas). */
+    publishCursor: (world: { x: number; y: number } | null) => void;
+    /** Publish this device's current selection so peers can draw halos.
+     *  Throttled to ~10Hz — selection changes are far less frequent
+     *  than cursor moves so we don't need cursor-grade rates. */
+    publishSelection: (selectionIds: string[]) => void;
 }
 
 const CHANNEL_PREFIX = 'klypix-canvas-';
@@ -107,11 +122,30 @@ const CHANNEL_PREFIX = 'klypix-canvas-';
  * One user on two devices = two peer entries. We tag each with a stable
  * color hash + display name so the UI can render legible chips.
  */
+// Throttle limits — keep cursor publishes well under Supabase Realtime's
+// per-second cap (configured 30 in supabaseRealtimeClient.ts). 33ms = 30Hz
+// for cursor; 100ms = 10Hz for selection (changes much less frequently).
+const CURSOR_THROTTLE_MS = 33;
+const SELECTION_THROTTLE_MS = 100;
+// Drop a remote cursor after this much silence — covers tab-park, mid-
+// network drops, etc. Channel-leave events handle clean exits; this is
+// the safety net for unclean ones.
+const CURSOR_STALE_MS = 5000;
+
 export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResult {
     const { blobId, userId, displayName, active } = args;
     const [peers, setPeers] = useState<CollabPeer[]>([]);
     const [connected, setConnected] = useState(false);
     const channelRef = useRef<RealtimeChannel | null>(null);
+    // Throttle state: last-publish times + queued payloads. The published
+    // value is always the freshest one — partial flushes drop intermediate
+    // positions, which is what we want for cursor motion.
+    const cursorLastPublishRef = useRef(0);
+    const cursorQueuedRef = useRef<{ x: number; y: number } | null | undefined>(undefined);
+    const cursorTimerRef = useRef<number | null>(null);
+    const selectionLastPublishRef = useRef(0);
+    const selectionQueuedRef = useRef<string[] | null>(null);
+    const selectionTimerRef = useRef<number | null>(null);
 
     // Dev-only ghost peer for UI verification on a single machine. Set
     // localStorage['klypix:devCollabGhost'] = '1' (or a comma-separated
@@ -160,7 +194,23 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         });
         channelRef.current = channel;
 
-        const refreshPeers = () => {
+        // Per-device ephemeral state (cursor + selection) accumulated from
+        // broadcast events. NOT in React state directly because cursor updates
+        // arrive at ~30Hz and we want a single coalesced render. Stored on a
+        // Map, then merged into peers via setPeers on each presence change OR
+        // broadcast tick (rAF-coalesced below).
+        const ephemeralRef = new Map<string, { cursorX?: number; cursorY?: number; cursorAt?: number; selectionIds?: string[] }>();
+        let renderScheduled = false;
+        const scheduleRender = () => {
+            if (renderScheduled) return;
+            renderScheduled = true;
+            requestAnimationFrame(() => {
+                renderScheduled = false;
+                computeAndSet();
+            });
+        };
+
+        const computeAndSet = () => {
             const presenceState = channel.presenceState() as Record<string, PresenceRow[]>;
             const flat: CollabPeer[] = [];
             const now = Date.now();
@@ -171,22 +221,60 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                     // knows they're here. Self is part of presenceState
                     // because Supabase echoes our own track() back.
                     if (row.user_id === userId && row.device_id === deviceId) continue;
+                    const eph = ephemeralRef.get(row.device_id);
+                    // Drop stale cursors so a peer that stopped moving doesn't
+                    // leave their cursor floating forever after a network drop.
+                    const cursorFresh = eph?.cursorAt && (now - eph.cursorAt) < CURSOR_STALE_MS;
                     flat.push({
                         userId: row.user_id,
                         deviceId: row.device_id,
                         displayName: row.display_name,
                         color: colorForUser(row.user_id),
                         lastSeen: now,
+                        cursorX: cursorFresh ? eph?.cursorX : undefined,
+                        cursorY: cursorFresh ? eph?.cursorY : undefined,
+                        cursorAt: cursorFresh ? eph?.cursorAt : undefined,
+                        selectionIds: eph?.selectionIds,
                     });
                 }
             }
+            // Clean up ephemeral entries for devices no longer in presence.
+            const liveDeviceIds = new Set(Object.values(presenceState).flat().map((r: any) => r?.device_id).filter(Boolean));
+            for (const k of Array.from(ephemeralRef.keys())) {
+                if (!liveDeviceIds.has(k)) ephemeralRef.delete(k);
+            }
             setPeers(flat);
         };
+        const refreshPeers = computeAndSet;
 
         channel
             .on('presence', { event: 'sync' }, refreshPeers)
             .on('presence', { event: 'join' }, refreshPeers)
             .on('presence', { event: 'leave' }, refreshPeers)
+            // Cursor broadcast — sent ~30Hz max per peer. Payload carries the
+            // sender's device id so we can attribute it; null x/y means
+            // "cursor left the canvas" → hide the remote cursor.
+            .on('broadcast', { event: 'cursor' }, (msg) => {
+                const p = (msg as any)?.payload;
+                if (!p || typeof p.device_id !== 'string') return;
+                if (p.device_id === deviceId) return; // ignore echoes (self:false already, but defensive)
+                const prev = ephemeralRef.get(p.device_id) || {};
+                if (p.x == null || p.y == null) {
+                    // Cursor left the canvas.
+                    ephemeralRef.set(p.device_id, { ...prev, cursorX: undefined, cursorY: undefined, cursorAt: undefined });
+                } else {
+                    ephemeralRef.set(p.device_id, { ...prev, cursorX: p.x, cursorY: p.y, cursorAt: Date.now() });
+                }
+                scheduleRender();
+            })
+            .on('broadcast', { event: 'selection' }, (msg) => {
+                const p = (msg as any)?.payload;
+                if (!p || typeof p.device_id !== 'string') return;
+                if (p.device_id === deviceId) return;
+                const prev = ephemeralRef.get(p.device_id) || {};
+                ephemeralRef.set(p.device_id, { ...prev, selectionIds: Array.isArray(p.ids) ? p.ids : [] });
+                scheduleRender();
+            })
             .subscribe(async (status) => {
                 if (status === 'SUBSCRIBED') {
                     setConnected(true);
@@ -206,8 +294,25 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                 }
             });
 
+        // Periodic stale-cursor sweep: every 2s, force a recompute so cursors
+        // older than CURSOR_STALE_MS get filtered out. Without this, a peer
+        // whose tab drops the network would leave their cursor frozen
+        // mid-canvas indefinitely until either the channel emits a leave
+        // event or new presence arrives.
+        const staleInterval = window.setInterval(() => {
+            // Only sweep if there's at least one peer with a cursor — saves
+            // setPeers churn for the common solo case.
+            let needsSweep = false;
+            const now = Date.now();
+            for (const eph of ephemeralRef.values()) {
+                if (eph.cursorAt && (now - eph.cursorAt) >= CURSOR_STALE_MS) { needsSweep = true; break; }
+            }
+            if (needsSweep) computeAndSet();
+        }, 2000);
+
         return () => {
             channelRef.current = null;
+            window.clearInterval(staleInterval);
             // untrack + unsubscribe is wrapped in try/catch because the
             // channel may already be closed (network drop). Either way
             // we want to release the local handle.
@@ -218,6 +323,83 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         };
     }, [blobId, userId, displayName, active]);
 
+    // Throttled cursor publisher. Callers can fire on every pointermove;
+    // we coalesce to at most one broadcast per CURSOR_THROTTLE_MS using
+    // a leading-edge + trailing-flush pattern (fire immediately on first
+    // call, queue the rest, flush once after the throttle window).
+    const publishCursor = (world: { x: number; y: number } | null): void => {
+        const channel = channelRef.current;
+        if (!channel) return;
+        cursorQueuedRef.current = world;
+        const now = Date.now();
+        const sinceLast = now - cursorLastPublishRef.current;
+        if (sinceLast >= CURSOR_THROTTLE_MS) {
+            // Leading edge: send immediately.
+            cursorLastPublishRef.current = now;
+            const payload = cursorQueuedRef.current;
+            cursorQueuedRef.current = undefined;
+            const deviceId = getDeviceId();
+            channel.send({
+                type: 'broadcast',
+                event: 'cursor',
+                payload: { device_id: deviceId, x: payload?.x ?? null, y: payload?.y ?? null },
+            });
+            return;
+        }
+        // Trailing flush: schedule a single timer to send the latest queued
+        // value at the end of this throttle window.
+        if (cursorTimerRef.current != null) return;
+        cursorTimerRef.current = window.setTimeout(() => {
+            cursorTimerRef.current = null;
+            const ch = channelRef.current;
+            if (!ch) return;
+            cursorLastPublishRef.current = Date.now();
+            const payload = cursorQueuedRef.current;
+            cursorQueuedRef.current = undefined;
+            const deviceId = getDeviceId();
+            ch.send({
+                type: 'broadcast',
+                event: 'cursor',
+                payload: { device_id: deviceId, x: payload?.x ?? null, y: payload?.y ?? null },
+            });
+        }, CURSOR_THROTTLE_MS - sinceLast);
+    };
+
+    const publishSelection = (selectionIds: string[]): void => {
+        const channel = channelRef.current;
+        if (!channel) return;
+        selectionQueuedRef.current = selectionIds;
+        const now = Date.now();
+        const sinceLast = now - selectionLastPublishRef.current;
+        if (sinceLast >= SELECTION_THROTTLE_MS) {
+            selectionLastPublishRef.current = now;
+            const ids = selectionQueuedRef.current ?? [];
+            selectionQueuedRef.current = null;
+            const deviceId = getDeviceId();
+            channel.send({
+                type: 'broadcast',
+                event: 'selection',
+                payload: { device_id: deviceId, ids },
+            });
+            return;
+        }
+        if (selectionTimerRef.current != null) return;
+        selectionTimerRef.current = window.setTimeout(() => {
+            selectionTimerRef.current = null;
+            const ch = channelRef.current;
+            if (!ch) return;
+            selectionLastPublishRef.current = Date.now();
+            const ids = selectionQueuedRef.current ?? [];
+            selectionQueuedRef.current = null;
+            const deviceId = getDeviceId();
+            ch.send({
+                type: 'broadcast',
+                event: 'selection',
+                payload: { device_id: deviceId, ids },
+            });
+        }, SELECTION_THROTTLE_MS - sinceLast);
+    };
+
     return {
         // Ghost peers are visual-only; show them alongside whatever's
         // actually on the channel. When ghost-only (no real channel),
@@ -226,5 +408,7 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         // dimming would otherwise make every ghost chip half-faded.
         peers: ghostPeers.length > 0 ? [...peers, ...ghostPeers] : peers,
         connected: connected || ghostPeers.length > 0,
+        publishCursor,
+        publishSelection,
     };
 }

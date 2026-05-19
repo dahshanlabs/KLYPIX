@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useCanvasStore } from './state/canvasStore';
+import { RemoteCursors, RemoteSelectionHalos } from './collab/RemoteCursors';
+import type { CollabPeer } from './collab/useCanvasCollab';
 import { TextItemView } from './items/TextItem';
 import { BoxItemView } from './items/BoxItem';
 import { ImageItemView } from './items/ImageItem';
@@ -44,9 +46,12 @@ interface CanvasRendererProps {
     /** Connect-tool rubber-band preview: item id of the source + current cursor world coords. */
     connectPendingId?: string | null;
     connectHoverWorld?: { x: number; y: number } | null;
+    /** Remote peers' cursors / selections to render as world-coord overlays.
+     *  Empty array (or undefined) → nothing painted; collab UI is opt-in. */
+    collabPeers?: CollabPeer[];
 }
 
-export function CanvasRenderer({ connectPendingId, connectHoverWorld }: CanvasRendererProps = {}) {
+export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeers }: CanvasRendererProps = {}) {
     const { state, dispatch } = useCanvasStore();
     const selectedConnectionSet = useMemo(() => new Set(state.selectedConnectionIds), [state.selectedConnectionIds]);
     // "Enter group" focus mode: ids that are IN the focused container's
@@ -610,6 +615,16 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld }: CanvasRe
                 visible but are inert while this is showing — drag is
                 routed exclusively through the outer handles. */}
             <MultiSelectionBox />
+            {/* Remote collab cursors + selection halos — rendered INSIDE
+                the world-coords transform so they pan/zoom with the canvas.
+                Strokes inverse-scale internally to stay legible. Nothing
+                painted when no peers are providing data. */}
+            {collabPeers && collabPeers.length > 0 && (
+                <>
+                    <RemoteSelectionHalos peers={collabPeers} viewZoom={view.zoom} />
+                    <RemoteCursors peers={collabPeers} viewZoom={view.zoom} />
+                </>
+            )}
         </div>
         {/* Screen-space selection ring overlay. Sits above the transform
             layer with fixed 1-px border + 2-px shadow — consistent at

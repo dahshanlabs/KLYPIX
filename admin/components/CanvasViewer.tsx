@@ -26,6 +26,11 @@ import type {
 interface Props {
     canvas: ParsedCanvas;
     onDownload: () => void;
+    /** Optional: broadcast this viewer's cursor in canvas world coords to
+     *  collaborators. Fires on every pointer move while over the canvas;
+     *  the consuming hook throttles internally. Receives null when the
+     *  cursor leaves the viewer surface. */
+    onCursorMoveWorld?: (world: { x: number; y: number } | null) => void;
 }
 
 interface ViewTransform {
@@ -67,7 +72,7 @@ function isDarkHex(hex: string): boolean {
     return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 < 0.5;
 }
 
-export const CanvasViewer: React.FC<Props> = ({ canvas, onDownload }) => {
+export const CanvasViewer: React.FC<Props> = ({ canvas, onDownload, onCursorMoveWorld }) => {
     const surfaceRef = useRef<HTMLDivElement | null>(null);
     const [view, setView] = useState<ViewTransform>(() => fitInitialView(canvas));
     const [isPanning, setIsPanning] = useState(false);
@@ -186,7 +191,23 @@ export const CanvasViewer: React.FC<Props> = ({ canvas, onDownload }) => {
                     backgroundPosition: `${view.x}px ${view.y}px`,
                 }}
                 onPointerDown={onPointerDown}
-                onPointerMove={onPointerMove}
+                onPointerMove={(e) => {
+                    onPointerMove(e);
+                    // Live-collab cursor broadcast (when consumer wired it).
+                    // Convert client coords to canvas world coords using the
+                    // viewer's own pan/zoom state — symmetrical with desktop.
+                    if (onCursorMoveWorld) {
+                        const rect = surfaceRef.current?.getBoundingClientRect();
+                        if (rect) {
+                            const sx = e.clientX - rect.left;
+                            const sy = e.clientY - rect.top;
+                            const wx = (sx - view.x) / view.zoom;
+                            const wy = (sy - view.y) / view.zoom;
+                            onCursorMoveWorld({ x: wx, y: wy });
+                        }
+                    }
+                }}
+                onPointerLeave={() => { onCursorMoveWorld?.(null); }}
                 onPointerUp={onPointerUp}
                 onPointerCancel={onPointerUp}
             >

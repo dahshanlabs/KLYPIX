@@ -736,6 +736,15 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         displayName: auth.user?.displayName ?? null,
         active: tabActive,
     });
+    // Publish our local selection so peers can render colored halos around
+    // items we have selected. Throttle (10Hz) lives inside publishSelection.
+    useEffect(() => {
+        collab.publishSelection(state.selectedIds);
+        // Only re-fire on selection change, NOT on publishSelection identity
+        // (which is recreated each render but always closes over the latest
+        // channel). Otherwise we'd publish on every render.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [state.selectedIds]);
     const [templatesOpen, setTemplatesOpen] = useState(false);
     const [collectionsOpen, setCollectionsOpen] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
@@ -1542,7 +1551,24 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 surfaceElRef.current?.focus({ preventScroll: true });
                 onPointerDown(e);
             }}
-            onPointerMove={onPointerMove}
+            onPointerMove={(e) => {
+                onPointerMove(e);
+                // Live-collab cursor publish. Convert client coords to
+                // world coords using the same surface rect + view as the
+                // canvas pan/zoom logic. Cheap — the throttle inside
+                // useCanvasCollab coalesces high-rate moves.
+                const rect = surfaceElRef.current?.getBoundingClientRect();
+                if (rect) {
+                    const screenX = e.clientX - rect.left;
+                    const screenY = e.clientY - rect.top;
+                    const world = screenToWorld({ x: screenX, y: screenY }, state.view);
+                    collab.publishCursor(world);
+                }
+            }}
+            onPointerLeave={() => {
+                // Cursor left the surface — tell peers to drop ours.
+                collab.publishCursor(null);
+            }}
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
             onWheel={onWheel}
@@ -1604,7 +1630,11 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
         >
-            <CanvasRenderer connectPendingId={connectPendingId} connectHoverWorld={connectHoverWorld} />
+            <CanvasRenderer
+                connectPendingId={connectPendingId}
+                connectHoverWorld={connectHoverWorld}
+                collabPeers={collab.peers}
+            />
 
             {/* Hidden focus-steal input — offscreen, pointer-inert. Focused
                 once on mount via the effect above to wake the OS keyboard
