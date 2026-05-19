@@ -412,6 +412,9 @@ function PendingInvitationsSection({ blobId }: { blobId: string }) {
 function CollaboratorsListSection({ blobId }: { blobId: string }) {
     const [rows, setRows] = useState<Array<{ user_id: string; role: string; accepted_at: string; email?: string | null; display_name?: string | null; invited_by?: string | null }>>([]);
     const [denied, setDenied] = useState(false);
+    const [removingId, setRemovingId] = useState<string | null>(null);
+    const [tickCounter, setTickCounter] = useState(0);
+    const bumpTick = () => setTickCounter(n => n + 1);
 
     useEffect(() => {
         if (!blobId) return;
@@ -438,7 +441,25 @@ function CollaboratorsListSection({ blobId }: { blobId: string }) {
         void tick();
         const id = window.setInterval(tick, 8_000);
         return () => { cancelled = true; window.clearInterval(id); };
-    }, [blobId]);
+    }, [blobId, tickCounter]);
+
+    const remove = async (userId: string, displayName: string) => {
+        const ok = window.confirm(t('canvas.collab_peer.remove_confirm').replace('{name}', displayName));
+        if (!ok) return;
+        const cloud: any = (window as any).electron?.cloud;
+        if (!cloud?.removeCollaborator) return;
+        setRemovingId(userId);
+        try {
+            await cloud.removeCollaborator({ blobId, userId });
+            // Optimistic remove; next poll will confirm.
+            setRows(prev => prev.filter(r => r.user_id !== userId));
+        } catch (e: any) {
+            window.alert(`${t('canvas.collab_peer.remove_failed')} — ${e?.message || String(e)}`);
+        } finally {
+            setRemovingId(null);
+            bumpTick();
+        }
+    };
 
     if (denied) return null;
     if (rows.length === 0) return null;
@@ -490,6 +511,26 @@ function CollaboratorsListSection({ blobId }: { blobId: string }) {
                             <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', whiteSpace: 'nowrap' }}>
                                 {when}
                             </div>
+                            <button
+                                type="button"
+                                onClick={() => remove(r.user_id, name)}
+                                disabled={removingId === r.user_id}
+                                title={t('canvas.collab_peer.remove')}
+                                style={{
+                                    padding: '4px 8px',
+                                    borderRadius: 5,
+                                    background: 'rgba(239, 68, 68, 0.12)',
+                                    border: '1px solid rgba(239, 68, 68, 0.25)',
+                                    color: '#fca5a5',
+                                    cursor: removingId === r.user_id ? 'not-allowed' : 'pointer',
+                                    opacity: removingId === r.user_id ? 0.5 : 1,
+                                    fontSize: 10,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                }}
+                            >
+                                <X size={11} />
+                            </button>
                         </div>
                     );
                 })}

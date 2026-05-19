@@ -1,10 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Trash2 } from 'lucide-react';
 import { t } from '../../i18n/strings';
 import type { CollabPeer } from './useCanvasCollab';
 
 interface Props {
     peers: CollabPeer[];
     connected: boolean;
+    /** True when the local user owns this canvas — gates the "Remove from
+     *  canvas" action inside the popover. Non-owners just see read-only
+     *  details (server-side RLS would deny the action anyway, but we avoid
+     *  showing buttons that can't work). */
+    selfIsOwner?: boolean;
+    /** Fired when the owner clicks Remove inside a peer popover. The parent
+     *  is responsible for the confirm dialog + IPC call + any follow-up
+     *  refresh (e.g. nudging the collaborators list). Optional — when
+     *  omitted, the Remove button doesn't render even for owners. */
+    onRemovePeer?: (peer: CollabPeer) => void | Promise<void>;
 }
 
 /** Compact avatar strip showing other users in the same canvas. Renders
@@ -12,7 +23,7 @@ interface Props {
  *  visually identical to before. Up to 4 chips inline; overflow becomes
  *  a "+N" pill. Phase 16: click a chip to open a popover with name +
  *  details (replaces the tooltip-only mode from v1). */
-export function CollabPresenceChips({ peers, connected }: Props) {
+export function CollabPresenceChips({ peers, connected, selfIsOwner, onRemovePeer }: Props) {
     const [openId, setOpenId] = useState<string | null>(null);
     // Close-on-outside-click ref. Lives at the strip level so clicking a
     // different chip within the strip still works (we want it to switch
@@ -59,6 +70,8 @@ export function CollabPresenceChips({ peers, connected }: Props) {
                         open={openId === id}
                         onToggle={() => setOpenId(openId === id ? null : id)}
                         onClose={() => setOpenId(null)}
+                        selfIsOwner={!!selfIsOwner}
+                        onRemovePeer={onRemovePeer}
                     />
                 );
             })}
@@ -80,9 +93,11 @@ interface PeerChipProps {
     open: boolean;
     onToggle: () => void;
     onClose: () => void;
+    selfIsOwner: boolean;
+    onRemovePeer?: (peer: CollabPeer) => void | Promise<void>;
 }
 
-function PeerChip({ peer, dim, open, onToggle, onClose }: PeerChipProps) {
+function PeerChip({ peer, dim, open, onToggle, onClose, selfIsOwner, onRemovePeer }: PeerChipProps) {
     const initials = (peer.displayName || '?')
         .split(/\s+/)
         .map(s => s[0])
@@ -106,12 +121,24 @@ function PeerChip({ peer, dim, open, onToggle, onClose }: PeerChipProps) {
             >
                 {initials || '?'}
             </button>
-            {open && <PeerPopover peer={peer} onClose={onClose} />}
+            {open && (
+                <PeerPopover
+                    peer={peer}
+                    onClose={onClose}
+                    selfIsOwner={selfIsOwner}
+                    onRemovePeer={onRemovePeer}
+                />
+            )}
         </div>
     );
 }
 
-function PeerPopover({ peer, onClose }: { peer: CollabPeer; onClose: () => void }) {
+function PeerPopover({ peer, onClose, selfIsOwner, onRemovePeer }: {
+    peer: CollabPeer;
+    onClose: () => void;
+    selfIsOwner: boolean;
+    onRemovePeer?: (peer: CollabPeer) => void | Promise<void>;
+}) {
     // "Last seen": peers carry lastSeen as a presence timestamp (ms). For a
     // currently-connected peer that's basically now; for a peer who just left
     // (channel hasn't flushed yet) it tells us how stale they are.
@@ -119,6 +146,34 @@ function PeerPopover({ peer, onClose }: { peer: CollabPeer; onClose: () => void 
     const seenLabel = ageSec < 10
         ? t('canvas.collab_peer.online_now')
         : t('canvas.collab_peer.last_seen_secs').replace('{n}', String(ageSec));
+
+    // Remove-from-canvas is gated on three conditions:
+    //   - the parent passed a handler
+    //   - the local user is the owner of this canvas
+    //   - the peer is a REAL collaborator (not a dev ghost peer, whose
+    //     userId starts with "ghost_" — `klypix:devCollabGhost` setting)
+    // If any of these is false we hide the action entirely rather than
+    // showing a disabled-looking button.
+    const canRemove = !!onRemovePeer && selfIsOwner && !peer.userId.startsWith('ghost_');
+    const [removing, setRemoving] = useState(false);
+    const handleRemove = async () => {
+        if (!onRemovePeer || removing) return;
+        // Use the OS confirm — small, modal, blocks until answered. We do
+        // NOT have a styled in-app confirm component yet; a plain window.confirm
+        // is honest and dismissible. The parent's handler also does its own
+        // confirm, but doing it here keeps the click→action loop responsive.
+        const ok = window.confirm(
+            t('canvas.collab_peer.remove_confirm').replace('{name}', peer.displayName || 'this user')
+        );
+        if (!ok) return;
+        setRemoving(true);
+        try {
+            await onRemovePeer(peer);
+            onClose();
+        } finally {
+            setRemoving(false);
+        }
+    };
 
     return (
         <div
@@ -157,6 +212,17 @@ function PeerPopover({ peer, onClose }: { peer: CollabPeer; onClose: () => void 
                 </div>
             </div>
             <div className="px-2 py-2 border-t border-white/5 flex gap-2">
+                {canRemove && (
+                    <button
+                        type="button"
+                        onClick={handleRemove}
+                        disabled={removing}
+                        className="flex items-center justify-center gap-1.5 text-[11px] text-red-300 hover:text-red-200 py-1.5 px-3 rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-500/25 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+                    >
+                        <Trash2 size={11} />
+                        {removing ? t('canvas.collab_peer.removing') : t('canvas.collab_peer.remove')}
+                    </button>
+                )}
                 <button
                     type="button"
                     onClick={onClose}

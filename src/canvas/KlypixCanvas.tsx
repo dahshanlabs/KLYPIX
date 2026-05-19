@@ -2691,7 +2691,32 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 {collab.peers.length > 0 && (
                     <>
                         <span className="w-px h-4 bg-white/10 mx-0.5" />
-                        <CollabPresenceChips peers={collab.peers} connected={collab.connected} />
+                        <CollabPresenceChips
+                            peers={collab.peers}
+                            connected={collab.connected}
+                            selfIsOwner={isOwner}
+                            onRemovePeer={async (peer) => {
+                                if (!cloudShare?.blobId) return;
+                                const cloud: any = (window as any).electron?.cloud;
+                                if (!cloud?.removeCollaborator) {
+                                    setToast({ text: tLocale('canvas.collab_peer.remove_failed'), id: Date.now() });
+                                    return;
+                                }
+                                try {
+                                    await cloud.removeCollaborator({ blobId: cloudShare.blobId, userId: peer.userId });
+                                    setToast({
+                                        text: tLocale('canvas.collab_peer.removed').replace('{name}', peer.displayName || ''),
+                                        id: Date.now(),
+                                    });
+                                } catch (e: any) {
+                                    const msg = e?.message || String(e);
+                                    setToast({
+                                        text: tLocale('canvas.collab_peer.remove_failed') + (msg ? ' — ' + msg : ''),
+                                        id: Date.now(),
+                                    });
+                                }
+                            }}
+                        />
                     </>
                 )}
                 {/* Phase 21: canvas chat. Shown only when this canvas is in
