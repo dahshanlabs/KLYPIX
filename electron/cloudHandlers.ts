@@ -257,16 +257,33 @@ export function registerCloudHandlers(ipcMain: IpcMain): void {
     });
 
     // List current collaborators on a canvas. Owner-only view (RLS).
+    //
+    // Phase 17: prefers list_canvas_collaborators(p_blob_id) RPC which joins
+    // auth.users to surface each collaborator's display name + email. Falls
+    // back to the legacy direct SELECT for servers without the RPC.
     ipcMain.handle('canvas-cloud:list-collaborators', async (_e, blobId: string) => {
         await requireUserId();
         const supabase = getSupabase();
-        const { data, error } = await supabase
+        try {
+            const { data, error } = await supabase.rpc('list_canvas_collaborators', { p_blob_id: blobId });
+            if (error) {
+                if (!/function .* does not exist|404/i.test(error.message)) throw error;
+                // RPC missing → fall through
+            } else {
+                return Array.isArray(data) ? data : (data ?? []);
+            }
+        } catch (e: any) {
+            if (!/function .* does not exist|404/i.test(e?.message ?? '')) {
+                throw new Error(`List collaborators (rpc) failed: ${e.message}`);
+            }
+        }
+        const { data: legacyData, error: legacyError } = await supabase
             .from(COLLABORATORS_TABLE)
             .select('user_id, role, accepted_at, invited_by')
             .eq('blob_id', blobId)
             .order('accepted_at', { ascending: false });
-        if (error) throw new Error(`List collaborators failed: ${error.message}`);
-        return data ?? [];
+        if (legacyError) throw new Error(`List collaborators failed: ${legacyError.message}`);
+        return legacyData ?? [];
     });
 
     // Remove a collaborator. Owner-only via RLS (the policy joins through

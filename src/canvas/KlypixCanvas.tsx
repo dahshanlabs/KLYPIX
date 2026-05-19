@@ -61,6 +61,7 @@ import { useCanvasCollab } from './collab/useCanvasCollab';
 import { useOpSync } from './collab/useOpSync';
 import { useAssetSync } from './collab/useAssetSync';
 import { useCollabHealth } from './collab/useCollabHealth';
+import { useCollaboratorWatcher } from './collab/useCollaboratorWatcher';
 import { CollabPresenceChips } from './collab/CollabPresenceChips';
 import { getCloudShare } from './cloud/cloudShareStore';
 import { useAuth } from '../components/AuthProvider';
@@ -762,6 +763,23 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         keyB64: cloudShare?.keyB64 ?? null,
         active: tabActive,
     });
+    // Phase 17: poll for newly-accepted collaborators while we're the owner
+    // of this canvas so we get a toast the moment someone takes our invite.
+    // !invitedBy is the owner-side signal (recipients persist invitedBy when
+    // they accept; owners never set it themselves).
+    const isOwner = !!cloudShare?.blobId && !cloudShare.invitedBy;
+    useCollaboratorWatcher({
+        blobId: cloudShare?.blobId ?? null,
+        enabled: isOwner && tabActive,
+        onNewCollaborator: (row) => {
+            const name = row.display_name || row.email || tLocale('canvas.collab_peer.unknown');
+            setToast({
+                text: tLocale('canvas.collab_collaborator_joined').replace('{name}', name),
+                id: Date.now(),
+            });
+        },
+    });
+
     // Phase 5: surface connection lifecycle for the user. The collab strip
     // already dims on disconnect; this adds a brief banner when a real
     // (debounced > 2.5s) drop happens, and another when it recovers.

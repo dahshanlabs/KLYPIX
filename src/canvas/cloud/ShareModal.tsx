@@ -266,7 +266,103 @@ function ShareReadyBody({ share, copied, onCopy, onUpdate, isNew }: { share: { s
                 </button>
             </div>
             <InviteCollaboratorsSection share={share} />
+            <CollaboratorsListSection blobId={share.blobId} />
         </>
+    );
+}
+
+// ── Phase 17: live collaborators list ─────────────────────────────────────
+// Shows accepted collaborators on this canvas so the inviter can see who's
+// joined. Polls every 8s while the modal is open (cheaper than realtime,
+// fast enough that "I just sent the link" turns into "they accepted" within
+// one cadence). Owner-only — non-owners get RLS-denied and we render
+// nothing for them.
+function CollaboratorsListSection({ blobId }: { blobId: string }) {
+    const [rows, setRows] = useState<Array<{ user_id: string; role: string; accepted_at: string; email?: string | null; display_name?: string | null; invited_by?: string | null }>>([]);
+    const [denied, setDenied] = useState(false);
+
+    useEffect(() => {
+        if (!blobId) return;
+        let cancelled = false;
+        const cloud: any = (window as any).electron?.cloud;
+        if (!cloud?.listCollaborators) return;
+
+        const tick = async () => {
+            if (cancelled) return;
+            try {
+                const result = await cloud.listCollaborators(blobId);
+                if (cancelled) return;
+                setRows(Array.isArray(result) ? result : []);
+                setDenied(false);
+            } catch (e: any) {
+                const msg = e?.message || String(e);
+                if (/not the canvas owner|Not authenticated|CLOUD_AUTH_REQUIRED/i.test(msg)) {
+                    setDenied(true);
+                    cancelled = true;  // stop polling — we'll never be allowed
+                }
+                // Other failures: silent retry on the next tick.
+            }
+        };
+        void tick();
+        const id = window.setInterval(tick, 8_000);
+        return () => { cancelled = true; window.clearInterval(id); };
+    }, [blobId]);
+
+    if (denied) return null;
+    if (rows.length === 0) return null;
+
+    return (
+        <div style={{
+            marginTop: 14,
+            paddingTop: 12,
+            borderTop: '1px solid rgba(255,255,255,0.08)',
+        }}>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Users size={11} />
+                {t('share.collaborators_section').replace('{n}', String(rows.length))}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {rows.map((r) => {
+                    const name = r.display_name || r.email || r.user_id.slice(0, 12);
+                    const subtitle = r.display_name && r.email ? r.email : null;
+                    const when = (() => {
+                        try { return new Date(r.accepted_at).toLocaleDateString(); } catch { return ''; }
+                    })();
+                    return (
+                        <div key={r.user_id} style={{
+                            display: 'flex', alignItems: 'center', gap: 10,
+                            padding: '6px 8px',
+                            borderRadius: 6,
+                            background: 'rgba(255,255,255,0.03)',
+                        }}>
+                            <div style={{
+                                width: 24, height: 24, borderRadius: '50%',
+                                background: '#10b98155',
+                                color: '#10b981',
+                                fontSize: 10, fontWeight: 600,
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                flexShrink: 0,
+                            }}>
+                                {(name || '?').slice(0, 1).toUpperCase()}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.9)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {name}
+                                </div>
+                                {subtitle && (
+                                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        {subtitle}
+                                    </div>
+                                )}
+                            </div>
+                            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', whiteSpace: 'nowrap' }}>
+                                {when}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
     );
 }
 

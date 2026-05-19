@@ -262,6 +262,7 @@ const strings: Strings = {
     'share.expires_in_days': { en: 'Expires in {n} days', ar: 'تنتهي في {n} يوم' },
     'share.e2e': { en: 'End-to-end encrypted — server cannot read your canvas', ar: 'مشفّر طرفًا إلى طرف — لا يستطيع الخادم قراءة لوحتك' },
     'share.invite_section': { en: 'Invite collaborators (Editor access)', ar: 'دعوة متعاونين (صلاحية تحرير)' },
+    'share.collaborators_section': { en: 'Collaborators ({n})', ar: 'المتعاونون ({n})' },
     'share.invite_desc': { en: 'Share-by-URL above is read-only. Invitations grant edit access — recipients sign in, accept the invite, and the canvas appears in their library.', ar: 'الرابط أعلاه للقراءة فقط. تمنح الدعوات صلاحية التحرير — يسجّل المستلمون الدخول، يقبلون الدعوة، وتظهر اللوحة في مكتبتهم.' },
     'share.email_placeholder': { en: 'Email (optional, for your records)', ar: 'البريد الإلكتروني (اختياري، للسجلات)' },
     'share.creating': { en: 'Creating…', ar: 'جارٍ الإنشاء…' },
@@ -435,6 +436,7 @@ const strings: Strings = {
     'canvas.collab_peer.status': { en: 'Status', ar: 'الحالة' },
     'canvas.collab_peer.device': { en: 'Device', ar: 'الجهاز' },
     'canvas.collab_peer.unknown': { en: 'Unknown user', ar: 'مستخدم غير معروف' },
+    'canvas.collab_collaborator_joined': { en: '{name} joined your canvas', ar: 'انضم {name} إلى لوحتك' },
     // Layers panel
     'canvas.layer_content': { en: 'content', ar: 'المحتوى' },
     'canvas.layer_agent': { en: 'agent', ar: 'الوكيل' },
