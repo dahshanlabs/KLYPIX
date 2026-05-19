@@ -59,6 +59,7 @@ import { ShareModal } from './cloud/ShareModal';
 import { Share2 } from 'lucide-react';
 import { useCanvasCollab } from './collab/useCanvasCollab';
 import { useOpSync } from './collab/useOpSync';
+import { useAssetSync } from './collab/useAssetSync';
 import { CollabPresenceChips } from './collab/CollabPresenceChips';
 import { getCloudShare } from './cloud/cloudShareStore';
 import { useAuth } from '../components/AuthProvider';
@@ -742,6 +743,14 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     // send. Inert when the canvas hasn't been shared (no blob id).
     useOpSync({
         blobId: cloudShare?.blobId ?? null,
+        active: tabActive,
+    });
+    // Phase 4: asset sync — encrypts + broadcasts asset bytes for newly
+    // added image/file/video/audio items so peers can render them
+    // without a save+reshare cycle. Uses the canvas's shared AES key.
+    useAssetSync({
+        blobId: cloudShare?.blobId ?? null,
+        keyB64: cloudShare?.keyB64 ?? null,
         active: tabActive,
     });
     // Publish our local selection so peers can render colored halos around
