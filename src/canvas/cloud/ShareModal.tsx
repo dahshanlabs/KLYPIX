@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link2, Copy, Check, AlertCircle, X, Loader2, Cloud, Users } from 'lucide-react';
+import { Link2, Copy, Check, AlertCircle, X, Loader2, Cloud, Users, Mail } from 'lucide-react';
 import { shareCurrentCanvas, type ShareResult } from './shareCurrentCanvas';
 import { getCloudShare } from './cloudShareStore';
 import { useAuth } from '../../components/AuthProvider';
@@ -436,6 +436,27 @@ function InviteCollaboratorsSection({ share }: { share: { blobId: string; keyB64
         }
     };
 
+    // Phase 19: mailto launcher. Opens the user's default email client with
+    // a pre-filled invitation. No backend mailer required — the user owns
+    // the SMTP. Body includes the invite URL + a soft-sell line about KLYPIX.
+    // shell.openExternal on the mailto: URL routes through Electron's main
+    // process which knows how to dispatch to the OS default handler.
+    const sendViaEmail = () => {
+        if (!latest) return;
+        const subject = t('share.email_subject');
+        const body = t('share.email_body').replace('{url}', latest.inviteUrl);
+        const recipient = email.trim();
+        // RFC 2368 mailto — encodeURIComponent handles &, ?, line breaks.
+        const url = `mailto:${encodeURIComponent(recipient)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        const electron: any = (window as any).electron;
+        if (electron?.openExternal) {
+            try { electron.openExternal(url); return; } catch { /* fall through */ }
+        }
+        // Fallback for environments without the openExternal bridge — works
+        // in plain browsers (admin viewer, hot-reload preview, etc).
+        try { window.open(url, '_blank'); } catch { /* swallow */ }
+    };
+
     const expiresDays = latest
         ? Math.max(1, Math.round((new Date(latest.expiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
         : 7;
@@ -537,6 +558,31 @@ function InviteCollaboratorsSection({ share }: { share: { blobId: string; keyB64
                             }}
                         >
                             {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
+                        </button>
+                        {/* Phase 19: send the invite via the user's default email
+                            client. mailto: hand-off avoids requiring a backend
+                            mailer. Highlighted slightly stronger when a recipient
+                            email is filled in — guides the user toward this
+                            action when they've already typed an address. */}
+                        <button
+                            type="button"
+                            onClick={sendViaEmail}
+                            title={t('share.email_send_hint')}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: 5,
+                                padding: '8px 12px',
+                                borderRadius: 6,
+                                background: email.trim() ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255,255,255,0.04)',
+                                color: email.trim() ? '#60a5fa' : 'rgba(255,255,255,0.55)',
+                                border: '1px solid ' + (email.trim() ? 'rgba(59, 130, 246, 0.35)' : 'rgba(255,255,255,0.08)'),
+                                cursor: 'pointer',
+                                fontSize: 11,
+                                fontWeight: 600,
+                                whiteSpace: 'nowrap',
+                                transition: 'all 0.15s',
+                            }}
+                        >
+                            <Mail size={12} /> {t('share.email_send_button')}
                         </button>
                     </div>
                     <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 6 }}>
