@@ -144,6 +144,22 @@ function saveLamport(blobId: string, n: number): void {
     try { localStorage.setItem(lamportKey(blobId), String(n)); } catch { /* no-op */ }
 }
 
+// Phase 7: per-blob high-water mark for server-side ops. Tracks the seq
+// of the last op we successfully pulled/applied so the next backfill
+// only fetches what's new. Separate from lamport because seqs are
+// server-assigned (bigserial) and don't align with the client lamport.
+function seqKey(blobId: string): string { return `klypix:opseq:${blobId}`; }
+function loadSeq(blobId: string): number {
+    try {
+        const raw = localStorage.getItem(seqKey(blobId));
+        const n = raw ? parseInt(raw, 10) : 0;
+        return Number.isFinite(n) ? n : 0;
+    } catch { return 0; }
+}
+function saveSeq(blobId: string, n: number): void {
+    try { localStorage.setItem(seqKey(blobId), String(n)); } catch { /* no-op */ }
+}
+
 const DRAIN_INTERVAL_MS = 50; // 20Hz, well under Realtime's 30/s
 
 // Phase 10: outbound coalesce window. Actions enqueued within this many
@@ -214,9 +230,13 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
         // Drain the offline queue one op at a time so the catch-up burst
         // doesn't trip Realtime's rate limit. Stops early if we disconnect
         // mid-drain (left-over ops stay queued for the next reconnect).
+        // After successful broadcast we also persist to canvas_ops so the
+        // server-side log catches up — without this, an op typed offline
+        // wouldn't be visible to a peer joining via backfill.
         const drainQueue = async (): Promise<void> => {
             if (drainingRef.current) return;
             drainingRef.current = true;
+            const drainedForPersist: QueuedOp[] = [];
             try {
                 while (connectedRef.current) {
                     const cur = loadQueue(blobId);
@@ -233,6 +253,7 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
                         // Successful send — pop the head and persist.
                         cur.shift();
                         saveQueue(blobId, cur);
+                        drainedForPersist.push(head);
                     } catch (err) {
                         console.warn('[opSync] drain send failed, keeping in queue:', err);
                         break;
@@ -241,6 +262,33 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
                 }
             } finally {
                 drainingRef.current = false;
+                // Phase 7: persist the drained batch to canvas_ops so the
+                // server log includes ops that were typed while offline.
+                // Done at the end of drain rather than per-op to keep the
+                // db round-trip count low.
+                if (drainedForPersist.length > 0) {
+                    void persistOpsToServerStandalone(drainedForPersist);
+                }
+            }
+        };
+
+        // Standalone push (used by drainQueue). Mirrors persistOpsToServer
+        // defined below, but available before the flush helper closes over it.
+        const persistOpsToServerStandalone = async (batch: QueuedOp[]): Promise<void> => {
+            const cloudApi: any = (window as any).electron?.cloud;
+            if (!cloudApi?.pushOps || batch.length === 0) return;
+            try {
+                const res = await cloudApi.pushOps({
+                    blobId,
+                    deviceId,
+                    ops: batch.map(q => q.action),
+                });
+                if (res?.seqs && Array.isArray(res.seqs) && res.seqs.length > 0) {
+                    const max = Math.max(...res.seqs as number[]);
+                    if (max > loadSeq(blobId)) saveSeq(blobId, max);
+                }
+            } catch (err) {
+                console.warn('[opSync] drainage pushOps failed:', err);
             }
         };
 
@@ -297,11 +345,58 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
             }
         });
 
+        // Phase 7: late-joiner backfill from canvas_ops. On subscribe we
+        // pull every op with seq > our high-water mark and apply them.
+        // Closes the "joined mid-session, missed the last 60 minutes of
+        // edits" gap that pure-broadcast collab can't solve.
+        const backfillFromServer = async (): Promise<void> => {
+            const cloudApi: any = (window as any).electron?.cloud;
+            if (!cloudApi?.pullOps) return;
+            try {
+                let sinceSeq = loadSeq(blobId);
+                // Loop until we get a short page (the server caps at 500
+                // per call). For most reconnects this is a single round-trip.
+                for (let pages = 0; pages < 50; pages++) {
+                    const rows: Array<{ seq: number; device_id: string; op: any }> = await cloudApi.pullOps({ blobId, sinceSeq });
+                    if (!Array.isArray(rows) || rows.length === 0) break;
+                    for (const row of rows) {
+                        // Skip our own historical ops — they're already in
+                        // our state from the moment we dispatched them.
+                        if (row.device_id === deviceId) {
+                            if (row.seq > sinceSeq) sinceSeq = row.seq;
+                            continue;
+                        }
+                        const action = row.op as CanvasAction;
+                        if (action && typeof action === 'object' && 'type' in action) {
+                            (action as any).__remote = true;
+                            try {
+                                dispatch(action);
+                            } catch (err) {
+                                console.warn('[opSync] backfill apply failed:', err, action);
+                            }
+                        }
+                        if (row.seq > sinceSeq) sinceSeq = row.seq;
+                    }
+                    saveSeq(blobId, sinceSeq);
+                    if (rows.length < 500) break;
+                }
+            } catch (err) {
+                // Most likely: not signed in / RLS blocked / network drop.
+                // Either way, broadcasting still works — backfill is best-effort.
+                console.warn('[opSync] backfill failed (non-fatal):', err);
+            }
+        };
+
         channel.subscribe((status) => {
             if (status === 'SUBSCRIBED') {
                 connectedRef.current = true;
-                // Reconnect catch-up: flush any ops queued while offline.
-                void drainQueue();
+                // Pull-then-drain order: get the server's view of history
+                // first, THEN flush our local queue. This way our queued
+                // ops carry higher lamports than anything we just imported.
+                void (async () => {
+                    await backfillFromServer();
+                    await drainQueue();
+                })();
             } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
                 connectedRef.current = false;
             }
@@ -398,6 +493,33 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
                     for (let j = i; j < batch.length; j++) enqueue(batch[j]);
                     return;
                 }
+            }
+            // Phase 7: persist successfully-broadcast ops to canvas_ops so
+            // future joiners (or this same user reloading later) can
+            // backfill via pullOps. Best-effort — failure logs and moves
+            // on; broadcast already happened so peers got the live update.
+            void persistOpsToServer(batch);
+        };
+
+        const persistOpsToServer = async (batch: QueuedOp[]): Promise<void> => {
+            const cloudApi: any = (window as any).electron?.cloud;
+            if (!cloudApi?.pushOps) return;
+            if (batch.length === 0) return;
+            try {
+                const res = await cloudApi.pushOps({
+                    blobId,
+                    deviceId,
+                    ops: batch.map(q => q.action),
+                });
+                // Server returns the assigned seqs in order. Track the
+                // max as our high-water so backfill on next reconnect
+                // doesn't re-pull our own writes.
+                if (res?.seqs && Array.isArray(res.seqs) && res.seqs.length > 0) {
+                    const max = Math.max(...res.seqs as number[]);
+                    if (max > loadSeq(blobId)) saveSeq(blobId, max);
+                }
+            } catch (err) {
+                console.warn('[opSync] pushOps failed (non-fatal — broadcast succeeded):', err);
             }
         };
 
