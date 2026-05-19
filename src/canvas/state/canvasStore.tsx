@@ -1257,6 +1257,17 @@ function reducerImpl(state: CanvasState, action: CanvasAction): CanvasState {
                 order: newOrder,
             };
         }
+        default: {
+            // Cross-version safety net: a peer running a newer build can
+            // broadcast an action type this build's reducer doesn't know
+            // about. Without this branch, the switch would fall through,
+            // reducer would return undefined, and React's next render
+            // would crash trying to read undefined.items. Returning state
+            // unchanged means "ignore the unknown" — accurate semantically
+            // (we can't apply what we don't understand) and survives
+            // version-skew between collaborators in the field.
+            return state;
+        }
     }
 }
 
