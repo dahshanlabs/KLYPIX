@@ -82,7 +82,23 @@ export interface UseOpSyncArgs {
      *  remote ops (so the local state stays current) but we stop sending
      *  to avoid background tabs spamming the channel. */
     active: boolean;
+    /** Optional: fired when a remote UPDATE or DELETE arrives within
+     *  ~1.5s of a local edit on the same item — used by the UI to
+     *  toast the user that their concurrent edit was overwritten or
+     *  the item was deleted out from under them. */
+    onConflict?: (info: ConflictInfo) => void;
 }
+
+export interface ConflictInfo {
+    kind: 'overwritten' | 'deleted';
+    /** Item id affected. */
+    itemId: string;
+}
+
+// How recent a local edit must be for an inbound op on the same item
+// to count as a conflict. 1500ms covers typical drag bursts; longer
+// would generate false positives for normal sequential editing.
+const CONFLICT_WINDOW_MS = 1500;
 
 // ── Offline op queue (Phase 6) ─────────────────────────────────────
 // Per-blob persisted queue of ops the local user dispatched while the
@@ -142,7 +158,7 @@ const DRAIN_INTERVAL_MS = 50; // 20Hz, well under Realtime's 30/s
  * queue drains at 20Hz so a long offline burst doesn't immediately
  * blow the channel's rate limit.
  */
-export function useOpSync({ blobId, active }: UseOpSyncArgs): void {
+export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
     const { dispatch, subscribeActions } = useCanvasStore();
     const channelRef = useRef<RealtimeChannel | null>(null);
     // Lamport clock — persisted per-blob so it survives reload. On mount
@@ -151,6 +167,11 @@ export function useOpSync({ blobId, active }: UseOpSyncArgs): void {
     const lamportRef = useRef(0);
     const connectedRef = useRef(false);
     const drainingRef = useRef(false);
+    // Recent local edits keyed by item id, used for conflict detection.
+    // Pruned opportunistically; expected size stays small (<20 entries).
+    const recentLocalEditsRef = useRef<Map<string, { at: number; type: 'update' | 'delete' }>>(new Map());
+    const onConflictRef = useRef(onConflict);
+    onConflictRef.current = onConflict;
 
     useEffect(() => {
         if (!blobId) return;
@@ -233,6 +254,24 @@ export function useOpSync({ blobId, active }: UseOpSyncArgs): void {
             }
             const action = p.action as CanvasAction;
             if (!action || typeof action !== 'object' || !('type' in action)) return;
+            // Conflict detection (Phase 9): if this remote op touches an
+            // item the local user edited within CONFLICT_WINDOW_MS, fire
+            // the onConflict callback so the UI can warn them. Done BEFORE
+            // dispatch so the toast describes what's about to be overwritten,
+            // not what already was.
+            const now = Date.now();
+            const recent = recentLocalEditsRef.current;
+            const checkConflict = (itemId: string, remoteKind: 'overwritten' | 'deleted') => {
+                const entry = recent.get(itemId);
+                if (!entry) return;
+                if (now - entry.at > CONFLICT_WINDOW_MS) return;
+                try { onConflictRef.current?.({ kind: remoteKind, itemId }); } catch { /* swallow */ }
+            };
+            if (action.type === 'UPDATE_ITEM') {
+                checkConflict(action.id, 'overwritten');
+            } else if (action.type === 'DELETE_ITEMS') {
+                for (const id of action.ids) checkConflict(id, 'deleted');
+            }
             // Mark + dispatch. The listener below will see __remote and skip.
             (action as any).__remote = true;
             try {
@@ -257,6 +296,20 @@ export function useOpSync({ blobId, active }: UseOpSyncArgs): void {
             if ((action as any).__remote) return;
             if (!SYNCABLE_ACTIONS.has(action.type)) return;
             if (!active) return; // background tab — don't broadcast
+            // Phase 9: record this edit so an incoming remote op on the
+            // same item within CONFLICT_WINDOW_MS can be detected as a
+            // conflict. Opportunistically prune entries past the window
+            // so the map doesn't grow forever.
+            const now = Date.now();
+            const recent = recentLocalEditsRef.current;
+            for (const [k, v] of recent) {
+                if (now - v.at > CONFLICT_WINDOW_MS * 2) recent.delete(k);
+            }
+            if (action.type === 'UPDATE_ITEM') {
+                recent.set(action.id, { at: now, type: 'update' });
+            } else if (action.type === 'DELETE_ITEMS') {
+                for (const id of action.ids) recent.set(id, { at: now, type: 'delete' });
+            }
             const tick = bumpLamport();
             const payload: OpPayload = {
                 device_id: deviceId,

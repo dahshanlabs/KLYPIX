@@ -745,6 +745,14 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     useOpSync({
         blobId: cloudShare?.blobId ?? null,
         active: tabActive,
+        // Phase 9: surface concurrent-edit conflicts so the user knows
+        // when a remote update or delete overlapped their own edit.
+        onConflict: (info) => {
+            const key = info.kind === 'overwritten'
+                ? 'canvas.collab_conflict_overwritten'
+                : 'canvas.collab_conflict_deleted';
+            setToast({ text: tLocale(key), id: Date.now() });
+        },
     });
     // Phase 4: asset sync — encrypts + broadcasts asset bytes for newly
     // added image/file/video/audio items so peers can render them
