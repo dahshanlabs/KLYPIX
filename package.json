@@ -1,6 +1,6 @@
 {
   "name": "klypix",
-  "version": "1.1.0-perf-5",
+  "version": "1.1.0-palette",
   "main": "dist-electron/main.cjs",
   "type": "module",
   "description": "AI-powered quick desktop assistant for Windows",
