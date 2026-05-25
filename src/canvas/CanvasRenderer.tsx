@@ -351,6 +351,13 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeer
         // matches the readable header chrome at extreme zoom-out).
         let screenH: number;
         let renderWidthWorld = it.w;
+        // Phase 22.5: in capsule mode the ring is centered on the
+        // expanded centroid (same pinning as resolveContainerRenderRect),
+        // so the ring teleport at the dot↔capsule threshold disappears.
+        // Expressed as world-coord top-left offsets ANCHOR_DX/DY applied
+        // below when pushing the rect.
+        let anchorDx = 0;
+        let anchorDy = 0;
         // For containers, selection ring follows RENDER MODE — not
         // raw state.collapsed. A container in collapsed-visual mode
         // is rendered as a tab; the ring hugs the tab, not the
@@ -370,6 +377,11 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeer
                 renderWidthWorld = getCollapsedRenderW(it as any, z);
                 const metrics = computeCapsuleRenderMetrics(it as any, z, items, false);
                 screenH = metrics.titleBarH * z;
+                // Centroid pin: shift the ring's world top-left so its
+                // center sits on the expanded centroid (item.x + item.w/2,
+                // item.y + item.h/2). Matches the capsule body below.
+                anchorDx = (it.w - renderWidthWorld) / 2;
+                anchorDy = (it.h - metrics.titleBarH) / 2;
             } else {
                 screenH = it.h * z;
             }
@@ -383,8 +395,8 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeer
         }
         out.push({
             id,
-            x: view.panX + it.x * z,
-            y: view.panY + it.y * z,
+            x: view.panX + (it.x + anchorDx) * z,
+            y: view.panY + (it.y + anchorDy) * z,
             w: renderWidthWorld * z,
             h: screenH,
             // Pass-through item rotation so the selection ring follows

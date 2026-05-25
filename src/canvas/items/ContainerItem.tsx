@@ -266,7 +266,24 @@ export function resolveContainerRenderRect(
     }
     if (mode === 'collapsed' || mode === 'collapsed-visual') {
         const metrics = computeCapsuleRenderMetrics(item, viewZoom, items, false);
-        return { x: item.x, y: item.y, w: metrics.renderW, h: metrics.titleBarH };
+        // Phase 22.5: pin the capsule on the expanded centroid instead of
+        // the expanded top-left. Previously a user-collapsed container that
+        // zoomed past DOT_TRIGGER_SCREEN_PX teleported because:
+        //   - dotted mode rect is centered on the centroid
+        //   - capsule rect was anchored at item.x / item.y (top-left)
+        // The mode flip at the threshold moved the visual content by
+        // (item.w - renderW)/2 horizontally and (item.h - titleBarH)/2
+        // vertically — the up-left jump the external diagnosis caught.
+        // Now all three render modes (expanded, capsule, dotted) share the
+        // SAME centroid = (item.x + item.w/2, item.y + item.h/2), so
+        // crossing any threshold is a pure scale-around-centroid with no
+        // translation component.
+        return {
+            x: item.x + item.w / 2 - metrics.renderW / 2,
+            y: item.y + item.h / 2 - metrics.titleBarH / 2,
+            w: metrics.renderW,
+            h: metrics.titleBarH,
+        };
     }
     return { x: item.x, y: item.y, w: item.w, h: item.h };
 }
