@@ -10,6 +10,7 @@ import {
     moveSelection,
     jumpSelection,
     cycleSecondary,
+    setClipFilter,
 } from './paletteStore';
 import { intentFromKey } from './keyboardModel';
 import { recordHit } from './frecency';
@@ -196,6 +197,51 @@ export function CommandPalette() {
                     )}
                 </div>
 
+                {/* Best-in-class: filter chips when in clip: mode. Lets the
+                    user narrow to a kind subset (text / images / files /
+                    pinned) without typing. Rendered above the result list
+                    so it's visually separate from input + results. */}
+                {snap.exclusiveProvider === 'clip' && (
+                    <div
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            padding: '6px 10px',
+                            borderBottom: '1px solid rgba(255,255,255,0.04)',
+                        }}
+                    >
+                        {([
+                            { id: null, label: t('palette.clip_filter.all') },
+                            { id: 'pinned' as const, label: t('palette.clip_filter.pinned') },
+                            { id: 'text' as const, label: t('palette.clip_filter.text') },
+                            { id: 'image' as const, label: t('palette.clip_filter.images') },
+                            { id: 'files' as const, label: t('palette.clip_filter.files') },
+                        ]).map((chip) => {
+                            const active = snap.clipFilter === chip.id;
+                            return (
+                                <button
+                                    key={String(chip.id)}
+                                    type="button"
+                                    onClick={() => setClipFilter(chip.id)}
+                                    style={{
+                                        fontSize: 10,
+                                        padding: '3px 8px',
+                                        borderRadius: 999,
+                                        border: '1px solid ' + (active ? 'rgba(16,185,129,0.4)' : 'rgba(255,255,255,0.08)'),
+                                        background: active ? 'rgba(16,185,129,0.18)' : 'rgba(255,255,255,0.03)',
+                                        color: active ? '#10b981' : 'rgba(255,255,255,0.55)',
+                                        cursor: 'pointer',
+                                        fontWeight: 500,
+                                    }}
+                                >
+                                    {chip.label}
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+
                 {/* Result list */}
                 <div
                     ref={listRef}
@@ -263,11 +309,18 @@ function ResultRow({
     onHover: () => void;
     onClick: () => void;
 }) {
+    // Best-in-class: native title-attribute tooltip shows the FULL title
+    // + subtitle on hover. Lets users see truncated content (long URLs,
+    // long clipboard text) without a custom hover-preview component.
+    const tooltip = result.subtitle && result.title !== result.subtitle
+        ? `${result.title}\n\n${result.subtitle}`
+        : result.title;
     return (
         <div
             data-palette-row={index}
             onMouseEnter={onHover}
             onClick={onClick}
+            title={tooltip}
             style={{
                 display: 'flex',
                 alignItems: 'center',

@@ -41,6 +41,10 @@ interface PaletteState {
     /** Which secondary action label to show in the footer hint. Cycled
      *  by Tab. Reset to 0 on selection change. */
     secondaryCursor: number;
+    /** Best-in-class clip: filter — narrow ranked list to a kind subset.
+     *  null = no filter (default). 'pinned' / 'text' / 'image' / 'files'.
+     *  Only meaningful when exclusiveProvider === 'clip'. */
+    clipFilter: 'pinned' | 'text' | 'image' | 'files' | null;
 }
 
 const SOURCE_WEIGHT: Record<string, number> = {
@@ -61,6 +65,7 @@ let state: PaletteState = {
     ranked: [],
     selectedIndex: 0,
     secondaryCursor: 0,
+    clipFilter: null,
 };
 
 const listeners = new Set<() => void>();
@@ -84,7 +89,35 @@ function rebuildRanked() {
     for (const id of state.bySource.keys()) {
         weights.set(id, SOURCE_WEIGHT[id] ?? 1.0);
     }
-    const ranked = mergeAndRank(state.bySource, weights);
+    let ranked = mergeAndRank(state.bySource, weights);
+    // Best-in-class clip: filter chips. Filter the ranked list AFTER merge
+    // so the rest of the pipeline doesn't have to know about kind-subsets.
+    // Filter probes the id format we use in clipboardProvider ('clip:<id>',
+    // with sync-rows prefixed 'clip:sync:<uuid>') + the result subtitle's
+    // pin emoji (📌) for pinned filtering.
+    if (state.clipFilter && state.exclusiveProvider === 'clip') {
+        const filter = state.clipFilter;
+        ranked = ranked.filter(r => {
+            if (filter === 'pinned') return r.title.startsWith('📌');
+            // Kind detection: clipboardProvider sets distinct icons by kind.
+            // We can't easily peek at the icon, so we rely on title content
+            // heuristics: image rows are pure 'Image' or have no preview;
+            // file rows show a path or a "<n> files" string.
+            if (filter === 'image') {
+                return r.title === 'Image' || r.title.startsWith('📌 Image');
+            }
+            if (filter === 'files') {
+                return /^[A-Z]:\\|^\/|^\d+ files/.test(r.title.replace(/^📌 /, ''));
+            }
+            if (filter === 'text') {
+                const t = r.title.replace(/^📌 /, '');
+                if (t === 'Image') return false;
+                if (/^[A-Z]:\\|^\/|^\d+ files/.test(t)) return false;
+                return true;
+            }
+            return true;
+        });
+    }
     // Clamp selection to new list size — but try to keep the same RESULT
     // highlighted if it's still present (by id), so users mid-Tab don't
     // get yanked to the top on every keystroke.
@@ -164,6 +197,12 @@ export function jumpSelection(to: 'top' | 'bottom' | number) {
     set({ selectedIndex: next, secondaryCursor: 0 });
 }
 
+export function setClipFilter(filter: PaletteState['clipFilter']) {
+    if (state.clipFilter === filter) return;
+    set({ clipFilter: filter });
+    rebuildRanked();
+}
+
 export function cycleSecondary(delta: 1 | -1) {
     const cur = state.ranked[state.selectedIndex];
     if (!cur) return;
@@ -192,7 +231,11 @@ async function runQuery(rawInput: string) {
             break;
         }
     }
-    set({ exclusiveProvider: exclusiveId, bySource: new Map() });
+    // Reset clip filter when leaving clip: mode (or when no exclusive
+    // provider is routing). Keeps the filter chips visible only when
+    // they're meaningful.
+    const nextClipFilter = exclusiveId === 'clip' ? state.clipFilter : null;
+    set({ exclusiveProvider: exclusiveId, bySource: new Map(), clipFilter: nextClipFilter });
 
     // Empty input → empty-state results from every provider.
     if (rawInput.trim().length === 0 && !exclusiveId) {

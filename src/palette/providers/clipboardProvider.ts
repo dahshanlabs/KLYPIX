@@ -160,6 +160,24 @@ function ageLabel(capturedAt: number): string {
 }
 
 function iconFor(row: ClipboardRow): React.ReactNode {
+    // Best-in-class: for image rows we show the actual thumbnail inline
+    // so the user can recognize what they copied at a glance instead of
+    // a generic Image icon. The icon slot in the palette is 28x28; we
+    // render the image as object-fit:cover at that size so portrait /
+    // landscape / square all degrade gracefully.
+    if (row.kind === 'image' && row.imageDataUrl) {
+        return React.createElement('img', {
+            src: row.imageDataUrl,
+            alt: 'Clipboard image',
+            style: {
+                width: 28,
+                height: 28,
+                objectFit: 'cover',
+                borderRadius: 4,
+                display: 'block',
+            },
+        });
+    }
     if (row.kind === 'image') return React.createElement(ImageIcon, { size: 14 });
     if (row.kind === 'files') return React.createElement(FileText, { size: 14 });
     if (row.kind === 'html') return React.createElement(Code, { size: 14 });

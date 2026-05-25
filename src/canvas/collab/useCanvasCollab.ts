@@ -189,22 +189,41 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
     // list of display names) in the renderer console to inject one or
     // more synthetic peers into the chip strip. Ignored in normal use —
     // no real channel traffic, no telemetry.
+    //
+    // Per-name dismiss state lives in localStorage['klypix:devCollabGhost:hidden']
+    // as a comma-joined list of userIds. The "Hide" button in the peer
+    // popover writes here so the user can dismiss specific ghosts from
+    // the UI without nuking the whole devCollabGhost setting.
+    const [ghostHideTick, setGhostHideTick] = useState(0);
     const ghostPeers: CollabPeer[] = (() => {
         try {
             const raw = localStorage.getItem('klypix:devCollabGhost');
             if (!raw) return [];
+            const hiddenRaw = localStorage.getItem('klypix:devCollabGhost:hidden') || '';
+            const hidden = new Set(hiddenRaw.split(',').filter(Boolean));
             const names = raw === '1' ? ['Ghost Peer'] : raw.split(',').map(s => s.trim()).filter(Boolean);
-            return names.map((name, i) => ({
-                userId: `ghost_${i}`,
-                deviceId: `ghost_${i}_dev`,
-                displayName: name,
-                color: colorForUser(`ghost_${i}`),
-                lastSeen: Date.now(),
-            }));
+            return names
+                .map((name, i) => ({
+                    userId: `ghost_${i}`,
+                    deviceId: `ghost_${i}_dev`,
+                    displayName: name,
+                    color: colorForUser(`ghost_${i}`),
+                    lastSeen: Date.now(),
+                }))
+                .filter(p => !hidden.has(p.userId));
         } catch {
             return [];
         }
     })();
+    // Force re-evaluation of ghostPeers when the dismiss list changes.
+    void ghostHideTick;
+    // Listen for an in-app event so the "Hide" button can trigger a
+    // re-render without needing a full reload.
+    useEffect(() => {
+        const onHide = () => setGhostHideTick((t) => t + 1);
+        window.addEventListener('klypix:devCollabGhost:hidden-changed', onHide);
+        return () => window.removeEventListener('klypix:devCollabGhost:hidden-changed', onHide);
+    }, []);
 
     useEffect(() => {
         // Collab requires: a shared canvas (blob id) + a signed-in user.

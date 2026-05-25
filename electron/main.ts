@@ -18,7 +18,7 @@ process.on('unhandledRejection', (reason: any) => {
 });
 import { registerAuthHandlers, handleDeepLink } from './auth/authGuard';
 import { registerCloudHandlers } from './cloudHandlers';
-import { startClipboardHistory, registerClipboardHistoryIpc } from './clipboardHistory';
+import { startClipboardHistory, registerClipboardHistoryIpc, setForegroundProbe as setClipboardForegroundProbe } from './clipboardHistory';
 import { registerStartAppsIpc } from './startApps';
 import { registerFileSearchIpc } from './fileSearch';
 import { initAutoUpdater } from './updater';
@@ -895,6 +895,19 @@ app.whenReady().then(() => {
     // when no Klypix window is focused so it doesn't burn battery polling
     // when the user isn't using the app.
     registerClipboardHistoryIpc();
+    // Phase 23 best-in-class: source-app detection via the persistent PS
+    // scanner. The probe runs after each clipboard poll tick; result is
+    // cached for the NEXT tick so pushRow stays synchronous.
+    setClipboardForegroundProbe(async () => {
+        try {
+            const lines = await sendPSCommand('GET_FOREGROUND', 2000);
+            if (lines.length === 0) return null;
+            const [title, proc] = lines[0].split('|');
+            return { title: title || '', proc: proc || '' };
+        } catch {
+            return null;
+        }
+    });
     startClipboardHistory();
     // Phase 23 Day 4: Windows Start-menu apps for the palette Apps provider.
     // First call to start-apps:list spawns a one-shot PowerShell; cached

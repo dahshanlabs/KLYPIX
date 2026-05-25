@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Trash2, Crown } from 'lucide-react';
+import { Trash2, Crown, EyeOff } from 'lucide-react';
 import { t } from '../../i18n/strings';
 import type { CollabPeer } from './useCanvasCollab';
 
@@ -163,8 +163,21 @@ function PeerPopover({ peer, onClose, selfIsOwner, onRemovePeer, onMakeOwner }: 
     //     userId starts with "ghost_" — `klypix:devCollabGhost` setting)
     // If any of these is false we hide the action entirely rather than
     // showing a disabled-looking button.
-    const canRemove = !!onRemovePeer && selfIsOwner && !peer.userId.startsWith('ghost_');
-    const canMakeOwner = !!onMakeOwner && selfIsOwner && !peer.userId.startsWith('ghost_');
+    const isGhost = peer.userId.startsWith('ghost_');
+    const canRemove = !!onRemovePeer && selfIsOwner && !isGhost;
+    const canMakeOwner = !!onMakeOwner && selfIsOwner && !isGhost;
+    const handleHideGhost = () => {
+        // Persist this ghost id into the dismiss list; useCanvasCollab
+        // re-filters on the next render via the dispatched event.
+        try {
+            const raw = localStorage.getItem('klypix:devCollabGhost:hidden') || '';
+            const set = new Set(raw.split(',').filter(Boolean));
+            set.add(peer.userId);
+            localStorage.setItem('klypix:devCollabGhost:hidden', Array.from(set).join(','));
+            window.dispatchEvent(new Event('klypix:devCollabGhost:hidden-changed'));
+        } catch { /* quota / no localStorage — fine */ }
+        onClose();
+    };
     const [removing, setRemoving] = useState(false);
     const [transferring, setTransferring] = useState(false);
     const handleRemove = async () => {
@@ -240,6 +253,17 @@ function PeerPopover({ peer, onClose, selfIsOwner, onRemovePeer, onMakeOwner }: 
                 </div>
             </div>
             <div className="px-2 py-2 border-t border-white/5 flex gap-2 flex-wrap">
+                {isGhost && (
+                    <button
+                        type="button"
+                        onClick={handleHideGhost}
+                        className="flex items-center justify-center gap-1.5 text-[11px] text-amber-300 hover:text-amber-200 py-1.5 px-3 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25 transition-colors cursor-pointer"
+                        title={t('canvas.collab_peer.hide_ghost_hint')}
+                    >
+                        <EyeOff size={11} />
+                        {t('canvas.collab_peer.hide_ghost')}
+                    </button>
+                )}
                 {canMakeOwner && (
                     <button
                         type="button"
