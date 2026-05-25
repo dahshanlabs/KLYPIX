@@ -475,6 +475,7 @@ const strings: Strings = {
     'palette.hint.navigate': { en: 'navigate', ar: 'تنقل' },
     'palette.hint.open': { en: 'open', ar: 'فتح' },
     'palette.hint.close': { en: 'close', ar: 'إغلاق' },
+    'palette.open_hint': { en: 'Open command palette (Ctrl+K) — calculator, clipboard, files, web, agent', ar: 'فتح لوحة الأوامر (Ctrl+K) — حاسبة، حافظة، ملفات، ويب، وكيل' },
     // Layers panel
     'canvas.layer_content': { en: 'content', ar: 'المحتوى' },
     'canvas.layer_agent': { en: 'agent', ar: 'الوكيل' },

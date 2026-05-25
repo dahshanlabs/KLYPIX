@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, ArrowDown, ArrowUp, CornerDownLeft, Command } from 'lucide-react';
+import { Search, ArrowDown, ArrowUp, CornerDownLeft } from 'lucide-react';
 import { t, useLocale } from '../i18n/strings';
 import {
     subscribe,
@@ -385,7 +385,7 @@ function Footer({
                 />
             )}
             <div style={{ flex: 1 }} />
-            <Hint icon={<Command size={10} />} label={t('palette.hint.close')} />
+            <Hint icon={<span style={{ fontSize: 9, fontWeight: 700 }}>Esc</span>} label={t('palette.hint.close')} />
         </div>
     );
 }

@@ -66,6 +66,7 @@ import { ModeTabs, type AppTab } from './components/ModeTabs';
 import { CommandPalette } from './palette/CommandPalette';
 import { useGlobalHotkey } from './palette/useGlobalHotkey';
 import { registerAllProviders } from './palette/registerProviders';
+import { toggle as togglePalette } from './palette/paletteStore';
 // Phase 22.5: lazy-load the canvas chunk. KlypixCanvas pulls in the full
 // canvas engine, all 10 item types, interaction handlers, drawing layer,
 // agent, file format, cloud sync, JSZip, XLSX, plus the Gemini-backed
@@ -2626,6 +2627,18 @@ function AppMain() {
                                 )}
                             </button>
                         )}
+                        {/* Phase 23: discoverability pill for the command palette.
+                            Tiny pill labelled "⌘K" (Ctrl+K on Windows) — clickable,
+                            opens the palette. Stays out of the way; Ctrl+K still
+                            works from anywhere via useGlobalHotkey. */}
+                        <button
+                            onClick={togglePalette}
+                            title={t('palette.open_hint')}
+                            className="no-drag flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-mono font-semibold text-white/50 hover:text-white/85 bg-white/5 hover:bg-white/12 border border-white/10 hover:border-white/25 rounded-md transition-all cursor-pointer"
+                        >
+                            <span style={{ fontSize: 9, opacity: 0.7 }}>Ctrl</span>
+                            <span>K</span>
+                        </button>
                         {chat.isTyping || chat.isAnalyzing ? (
                             <button onClick={chat.stopGeneration} className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-all no-drag ml-1" title={t('chat.stop_generation')}><StopIcon size={18} className="fill-current" /></button>
                         ) : (
