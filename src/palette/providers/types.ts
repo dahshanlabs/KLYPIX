@@ -41,6 +41,11 @@ export interface PaletteAction {
     /** When inlineIcon is set, optional accent color for the icon. Defaults
      *  to white/45. Use for destructive/dangerous actions (red). */
     inlineIconAccent?: string;
+    /** Optional toast text shown briefly inside the palette modal after
+     *  the handler resolves successfully. Confirmation that the action
+     *  did the thing — silent success leaves the user unsure whether
+     *  the click registered. Examples: 'Copied', 'Pinned', 'Removed'. */
+    toast?: string;
 }
 
 export interface PaletteResult {

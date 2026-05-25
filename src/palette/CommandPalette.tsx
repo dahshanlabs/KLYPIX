@@ -11,6 +11,7 @@ import {
     jumpSelection,
     cycleSecondary,
     setClipFilter,
+    showToast,
 } from './paletteStore';
 import { intentFromKey } from './keyboardModel';
 import { recordHit } from './frecency';
@@ -136,12 +137,18 @@ export function CommandPalette() {
 
     const runAction = async (action: PaletteAction | undefined, resultId?: string) => {
         if (!action) return;
+        let succeeded = false;
         try {
             await action.handler();
             if (resultId) recordHit(resultId);
+            succeeded = true;
         } catch (err) {
             console.warn('[palette] action failed:', err);
         } finally {
+            // Show the confirmation toast BEFORE closing — when the palette
+            // closes there's no surface to render the toast on. For keepOpen
+            // actions the toast stays visible inside the modal.
+            if (succeeded && action.toast) showToast(action.toast);
             if (!action.keepOpen) close();
         }
     };
@@ -185,9 +192,19 @@ export function CommandPalette() {
         }
     };
 
-    if (!snap.open) return null;
+    // Toast portal renders even when the palette modal is closed — actions
+    // that close-on-success (Copy, Open) need a confirmation surface that
+    // outlives the modal. Auto-clears via the store's setTimeout.
+    const toastPortal = snap.toast
+        ? createPortal(
+              <PaletteToast key={snap.toast.id} text={snap.toast.text} />,
+              document.body,
+          )
+        : null;
 
-    return createPortal(
+    if (!snap.open) return toastPortal;
+
+    return (<>{toastPortal}{createPortal(
         <div
             onMouseDown={onBackdropMouseDown}
             onKeyDown={onKeyDown}
@@ -392,6 +409,34 @@ export function CommandPalette() {
             </div>
         </div>,
         document.body,
+    )}</>);
+}
+
+function PaletteToast({ text }: { text: string }) {
+    return (
+        <div
+            // Centered at top of viewport, well above any other UI. zIndex
+            // 10000 sits above the palette backdrop (9999) so the toast
+            // is visible during the closing animation too.
+            style={{
+                position: 'fixed',
+                top: 24,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 10000,
+                background: 'rgba(16,185,129,0.95)',
+                color: 'white',
+                padding: '8px 16px',
+                borderRadius: 999,
+                fontSize: 12,
+                fontWeight: 500,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                fontFamily: 'inherit',
+                pointerEvents: 'none',
+            }}
+        >
+            {text}
+        </div>
     );
 }
 

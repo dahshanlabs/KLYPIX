@@ -200,6 +200,7 @@ export const calculatorProvider: PaletteProvider = {
             score: 0,                 // perfect rank — always at the top when valid
             primaryAction: {
                 label: 'Copy result',
+                toast: 'Copied result',
                 handler: async () => {
                     try { await navigator.clipboard.writeText(out.display); } catch { /* swallow */ }
                 },

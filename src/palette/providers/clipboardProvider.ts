@@ -275,6 +275,7 @@ function toResult(row: ClipboardRow): PaletteResult {
         detail: detailFor(row),
         primaryAction: {
             label: 'Paste',
+            toast: 'Copied to clipboard',
             handler: async () => {
                 const bridge: any = (window as any).electron?.clipboardHistory;
                 if (!bridge?.copy) return;
@@ -289,6 +290,7 @@ function toResult(row: ClipboardRow): PaletteResult {
                 label: row.pinned ? 'Unpin' : 'Pin',
                 chord: 'Shift+Enter',
                 keepOpen: true,
+                toast: row.pinned ? 'Unpinned' : 'Pinned',
                 // Inline-clickable so users don't need to learn the chord.
                 // Yellow when not yet pinned, gray when already pinned —
                 // matches the conventional "pin is golden" affordance.
@@ -329,6 +331,7 @@ function toResult(row: ClipboardRow): PaletteResult {
             },
             {
                 label: 'Remove from history',
+                toast: 'Removed',
                 inlineIcon: React.createElement(Trash2, { size: 12 }),
                 inlineIconAccent: '#ef4444',
                 // keepOpen so users can clean up multiple rows in a single

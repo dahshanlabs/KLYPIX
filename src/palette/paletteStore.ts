@@ -45,6 +45,10 @@ interface PaletteState {
      *  null = no filter (default). 'pinned' / 'text' / 'image' / 'files'.
      *  Only meaningful when exclusiveProvider === 'clip'. */
     clipFilter: 'pinned' | 'text' | 'image' | 'files' | null;
+    /** Brief confirmation banner shown inside the modal after an action
+     *  resolves successfully. Auto-clears after ~1.6s. id forces React
+     *  reconciliation so back-to-back identical texts still re-animate. */
+    toast: { text: string; id: number } | null;
 }
 
 const SOURCE_WEIGHT: Record<string, number> = {
@@ -66,7 +70,9 @@ let state: PaletteState = {
     selectedIndex: 0,
     secondaryCursor: 0,
     clipFilter: null,
+    toast: null,
 };
+let toastTimer: number | null = null;
 
 const listeners = new Set<() => void>();
 const providers = new Map<string, PaletteProvider>();
@@ -195,6 +201,21 @@ export function jumpSelection(to: 'top' | 'bottom' | number) {
     else if (to === 'bottom') next = max;
     else next = Math.max(0, Math.min(max, to));
     set({ selectedIndex: next, secondaryCursor: 0 });
+}
+
+/** Show a brief confirmation banner inside the palette. Auto-clears after
+ *  ~1.6s. Replacing an existing toast resets the timer. */
+export function showToast(text: string) {
+    if (!text) return;
+    if (toastTimer != null) {
+        window.clearTimeout(toastTimer);
+        toastTimer = null;
+    }
+    set({ toast: { text, id: Date.now() } });
+    toastTimer = window.setTimeout(() => {
+        toastTimer = null;
+        set({ toast: null });
+    }, 1600);
 }
 
 export function setClipFilter(filter: PaletteState['clipFilter']) {
