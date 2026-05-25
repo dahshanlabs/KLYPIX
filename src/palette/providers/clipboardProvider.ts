@@ -19,7 +19,7 @@
 // enough to absorb a typing burst.
 
 import type { PaletteProvider, PaletteResult, PaletteProviderContext } from './types';
-import { Clipboard, Image as ImageIcon, FileText, Pin, Code } from 'lucide-react';
+import { Clipboard, Image as ImageIcon, FileText, Pin, PinOff, Code, Trash2 } from 'lucide-react';
 import React from 'react';
 import { fuzzyFilter } from '../search';
 
@@ -289,6 +289,11 @@ function toResult(row: ClipboardRow): PaletteResult {
                 label: row.pinned ? 'Unpin' : 'Pin',
                 chord: 'Shift+Enter',
                 keepOpen: true,
+                // Inline-clickable so users don't need to learn the chord.
+                // Yellow when not yet pinned, gray when already pinned —
+                // matches the conventional "pin is golden" affordance.
+                inlineIcon: React.createElement(row.pinned ? PinOff : Pin, { size: 12 }),
+                inlineIconAccent: row.pinned ? '#9ca3af' : '#f59e0b',
                 handler: async () => {
                     const bridge: any = (window as any).electron?.clipboardHistory;
                     if (bridge?.pin && !row.id.startsWith('sync:')) {
@@ -321,6 +326,8 @@ function toResult(row: ClipboardRow): PaletteResult {
             },
             {
                 label: 'Remove from history',
+                inlineIcon: React.createElement(Trash2, { size: 12 }),
+                inlineIconAccent: '#ef4444',
                 handler: async () => {
                     const bridge: any = (window as any).electron?.clipboardHistory;
                     if (!bridge?.remove) return;

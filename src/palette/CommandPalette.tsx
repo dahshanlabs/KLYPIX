@@ -16,6 +16,75 @@ import { intentFromKey } from './keyboardModel';
 import { recordHit } from './frecency';
 import type { RankedResult, PaletteAction } from './providers/types';
 
+// Render the inline action icons for a row. Filters secondary actions to
+// just those that opted in via `inlineIcon`, renders each as a small
+// clickable button. Click stops propagation so it doesn't double-fire
+// the row's primary action.
+function InlineActions({
+    actions,
+    onRun,
+    highlighted,
+}: {
+    actions: PaletteAction[];
+    onRun: (action: PaletteAction) => void;
+    highlighted: boolean;
+}) {
+    const inline = actions.filter(a => a.inlineIcon);
+    if (inline.length === 0) return null;
+    return (
+        <div
+            style={{
+                display: 'flex',
+                gap: 4,
+                flexShrink: 0,
+                // Icons always visible but dimmed when row isn't highlighted.
+                // Keeps them discoverable without making the long list noisy.
+                opacity: highlighted ? 1 : 0.35,
+                transition: 'opacity 100ms',
+            }}
+            // Catch clicks here to avoid letting them bubble up to the row.
+            onClick={(e) => e.stopPropagation()}
+        >
+            {inline.map((a, i) => (
+                <button
+                    key={i}
+                    type="button"
+                    onClick={() => onRun(a)}
+                    title={a.label}
+                    aria-label={a.label}
+                    style={{
+                        width: 24,
+                        height: 24,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background: 'rgba(255,255,255,0.04)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: 5,
+                        color: a.inlineIconAccent ?? 'rgba(255,255,255,0.7)',
+                        cursor: 'pointer',
+                        padding: 0,
+                    }}
+                    onMouseEnter={(e) => {
+                        e.currentTarget.style.background = a.inlineIconAccent
+                            ? `${a.inlineIconAccent}22`
+                            : 'rgba(255,255,255,0.10)';
+                        e.currentTarget.style.borderColor = a.inlineIconAccent
+                            ? `${a.inlineIconAccent}55`
+                            : 'rgba(255,255,255,0.18)';
+                    }}
+                    onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                        e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+                    }}
+                >
+                    {a.inlineIcon}
+                </button>
+            ))}
+        </div>
+    );
+}
+
 // Phase 23 — Command Palette UI shell. Renders to a portal at body level so
 // it floats above EVERYTHING (canvas chrome, chat, dialogs). The modal
 // itself is purely a driver — it doesn't know about providers, only about
@@ -300,6 +369,7 @@ export function CommandPalette() {
                                     highlighted={i === snap.selectedIndex}
                                     onHover={() => jumpSelection(i)}
                                     onClick={() => runAction(r.primaryAction, r.id)}
+                                    onRunAction={(a) => runAction(a, r.id)}
                                 />
                             ))
                         )}
@@ -372,12 +442,14 @@ function ResultRow({
     highlighted,
     onHover,
     onClick,
+    onRunAction,
 }: {
     result: RankedResult;
     index: number;
     highlighted: boolean;
     onHover: () => void;
     onClick: () => void;
+    onRunAction: (action: PaletteAction) => void;
 }) {
     // Best-in-class: native title-attribute tooltip shows the FULL title
     // + subtitle on hover. Lets users see truncated content (long URLs,
@@ -449,6 +521,17 @@ function ResultRow({
                     </div>
                 )}
             </div>
+            {/* Inline action icons (Pin, Remove, etc.) — clickable shortcuts
+                that mirror the keyboard chords. Filtered to actions with
+                inlineIcon set so providers control which actions surface
+                here (vs the keyboard-only ones). */}
+            {result.secondaryActions && (
+                <InlineActions
+                    actions={result.secondaryActions}
+                    onRun={onRunAction}
+                    highlighted={highlighted}
+                />
+            )}
             <span
                 style={{
                     fontSize: 9,

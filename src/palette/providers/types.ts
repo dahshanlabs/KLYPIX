@@ -33,6 +33,14 @@ export interface PaletteAction {
      *  actions like "Pin clipboard item" where the user might want to do
      *  it to several rows in sequence. */
     keepOpen?: boolean;
+    /** When set, the action also renders as a clickable icon in the result
+     *  row when that row is highlighted. Providers attach this to the most
+     *  common secondary actions (Pin, Remove) so users don't need to learn
+     *  keyboard chords to do common things. */
+    inlineIcon?: React.ReactNode;
+    /** When inlineIcon is set, optional accent color for the icon. Defaults
+     *  to white/45. Use for destructive/dangerous actions (red). */
+    inlineIconAccent?: string;
 }
 
 export interface PaletteResult {
