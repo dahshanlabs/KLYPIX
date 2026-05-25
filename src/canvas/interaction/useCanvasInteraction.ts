@@ -72,6 +72,14 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
     const dragRef = useRef<DragMode>({ kind: 'none' });
     const surfaceRef = useRef<HTMLDivElement | null>(null);
     const movedRef = useRef(false);
+    // Phase 22.5: forward-ref for commitLiveViewNow. The actual function is
+    // declared further down (it needs dispatch + stateRef), but onPointerDown
+    // (declared earlier) needs to call it. A ref lets us reference the
+    // function before it exists at module load time — populated by the
+    // useEffect below once both are defined. Safe because the wheel-zoom
+    // gesture that needs flushing can't fire before the first render
+    // completes anyway.
+    const commitLiveViewNowRef = useRef<() => void>(() => {});
     // rAF batching for the move drag. Modern pointers fire at 100-240 Hz,
     // and each event used to dispatch one UPDATE_ITEM per dragged item +
     // run snap/auto-grow logic. Capping the work rate at ~60 fps via
@@ -145,6 +153,12 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
 
     const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
         if (!surfaceRef.current) return;
+        // Phase 22.5: flush any in-flight wheel-zoom commit synchronously
+        // so screenToWorld below reads from a state.view that matches the
+        // DOM. Without this, a click landing within the 120ms post-wheel
+        // commit window would compute world coords against the pre-gesture
+        // zoom — items near the cursor would seem to mis-hit.
+        commitLiveViewNowRef.current();
         // User input always wins over an in-flight view animation. Any
         // pointer-down on the canvas kills a running zoom-to-author
         // tween so the view stays wherever it was mid-tween; the user
@@ -1716,27 +1730,29 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
         el.style.transform = `translate(${live.panX}px, ${live.panY}px) scale(${live.zoom})`;
     }, [opts?.worldRef]);
 
+    const commitLiveViewNow = useCallback(() => {
+        if (wheelCommitTimerRef.current != null) {
+            window.clearTimeout(wheelCommitTimerRef.current);
+            wheelCommitTimerRef.current = null;
+        }
+        const live = liveViewRef.current;
+        if (!live) return;
+        const cur = stateRef.current.view;
+        if (cur.zoom !== live.zoom || cur.panX !== live.panX || cur.panY !== live.panY) {
+            dispatch({ type: 'SET_VIEW', view: { panX: live.panX, panY: live.panY, zoom: live.zoom } });
+        }
+        liveViewRef.current = null;
+    }, [dispatch]);
+    // Wire the forward ref so the earlier-declared onPointerDown can flush
+    // a pending wheel commit before its screenToWorld math runs.
+    commitLiveViewNowRef.current = commitLiveViewNow;
+
     const scheduleCommit = useCallback(() => {
         if (wheelCommitTimerRef.current != null) {
             window.clearTimeout(wheelCommitTimerRef.current);
         }
-        wheelCommitTimerRef.current = window.setTimeout(() => {
-            wheelCommitTimerRef.current = null;
-            const live = liveViewRef.current;
-            if (!live) return;
-            // Single commit to React state — the inline style attribute
-            // produced by CanvasRenderer.tsx will match the DOM we've
-            // already painted, so no visual flash on re-render.
-            const cur = stateRef.current.view;
-            const factor = live.zoom / cur.zoom;
-            if (Math.abs(factor - 1) > 1e-6 || cur.panX !== live.panX || cur.panY !== live.panY) {
-                // Use SET_VIEW for a direct atomic update — both pan & zoom
-                // are already computed; ZOOM/PAN would re-derive math.
-                dispatch({ type: 'SET_VIEW', view: { panX: live.panX, panY: live.panY, zoom: live.zoom } });
-            }
-            liveViewRef.current = null;
-        }, WHEEL_COMMIT_MS);
-    }, [dispatch]);
+        wheelCommitTimerRef.current = window.setTimeout(commitLiveViewNow, WHEEL_COMMIT_MS);
+    }, [commitLiveViewNow]);
 
     const onWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
         if (!surfaceRef.current) return;
