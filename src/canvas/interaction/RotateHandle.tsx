@@ -43,6 +43,15 @@ function snap15(deg: number): number {
 
 export function RotateHandle({ itemId, x, y, w, h, rotation = 0 }: Props) {
     const { state, dispatch, pushSnapshot } = useCanvasStore();
+    // Phase 22.5: hide per-item rotation when 2+ entities are selected —
+    // MultiSelectionBox now provides a group rotation handle that rotates
+    // the whole selection around the bbox centroid. Mirrors the same gate
+    // in ResizeHandle.
+    const totalSel =
+        state.selectedIds.length
+        + state.selectedLineIds.length
+        + state.selectedStrokeIds.length;
+    if (totalSel >= 2) return null;
     const surfaceZoom = Math.max(0.01, state.view.zoom);
 
     // Visual constants — all in screen-px, divided by zoom so they render

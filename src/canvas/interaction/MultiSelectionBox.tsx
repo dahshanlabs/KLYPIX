@@ -24,6 +24,11 @@ interface SnapshotItem {
     y: number;
     w: number;
     h: number;
+    /** Item's authored rotation in degrees (TextItem, ImageItem, BoxItem
+     *  expose this; other item types ignore it). Captured at drag start so
+     *  the group rotation can OFFSET each item's rotation by the gesture
+     *  delta without losing whatever angle the item already had. */
+    rotation?: number;
     fontSize?: number;
     borderWidth?: number;
     isContainer: boolean;
@@ -64,9 +69,25 @@ interface DragState {
     snapshot: SnapshotEntry[];
 }
 
+interface RotateDragState {
+    /** Pivot: bbox center captured at drag start. Stays fixed for the
+     *  duration of the gesture so the group rotates around the same world
+     *  point even as items move under it. */
+    pivotX: number;
+    pivotY: number;
+    /** Cursor angle (degrees, atan2 frame) relative to the pivot at the
+     *  pointer-down moment. Subsequent moves compute delta vs this. */
+    startCursorAngle: number;
+    /** Pre-rotation item / line / stroke geometry, used as the base each
+     *  pointer-move rebuilds from. Stops drift caused by rotating already-
+     *  rotated geometry on every frame. */
+    snapshot: SnapshotEntry[];
+}
+
 export function MultiSelectionBox() {
-    const { state, dispatch, commit } = useCanvasStore();
+    const { state, dispatch, commit, pushSnapshot } = useCanvasStore();
     const dragRef = useRef<DragState | null>(null);
+    const rotateDragRef = useRef<RotateDragState | null>(null);
 
     const selectionCount =
         state.selectedIds.length
@@ -125,6 +146,7 @@ export function MultiSelectionBox() {
                 kind: 'item',
                 id,
                 x: it.x, y: it.y, w: it.w, h: it.h,
+                rotation: (it as any).rotation,
                 fontSize: (it as any).fontSize,
                 borderWidth: (it as any).borderWidth,
                 isContainer: it.type === 'container',
@@ -202,6 +224,113 @@ export function MultiSelectionBox() {
         }
     }
 
+    // Phase 22.5: rotate every selected entity around (pivotX, pivotY) by
+    // `deltaDeg` degrees. Geometry rebuilt from the pre-gesture snapshot
+    // each call so accumulated rotations don't drift. Item rotation
+    // properties (text/image/box only) get OFFSET by the delta so their
+    // visual angle stacks with the group rotation; non-rotatable items
+    // (containers, file/code/link/video/audio cards) just move position.
+    function applyRotate(snap: SnapshotEntry[], deltaDeg: number, pivotX: number, pivotY: number) {
+        const rad = (deltaDeg * Math.PI) / 180;
+        const c = Math.cos(rad);
+        const s = Math.sin(rad);
+        const rotPt = (x: number, y: number) => ({
+            x: pivotX + (x - pivotX) * c - (y - pivotY) * s,
+            y: pivotY + (x - pivotX) * s + (y - pivotY) * c,
+        });
+        for (const e of snap) {
+            if (e.parentInSel) continue;
+            if (e.kind === 'item') {
+                // Rotate the item's CENTER around the pivot, then derive
+                // its new top-left by subtracting half-dim. Width/height
+                // stay unchanged (group rotation doesn't scale).
+                const oldCx = e.x + e.w / 2;
+                const oldCy = e.y + e.h / 2;
+                const np = rotPt(oldCx, oldCy);
+                const patch: any = {
+                    x: np.x - e.w / 2,
+                    y: np.y - e.h / 2,
+                };
+                // Items with a rotation property pick up the group delta
+                // additively. Container etc. simply translate — their
+                // bodies don't carry a rotation field.
+                if (typeof e.rotation === 'number' || (!e.isContainer)) {
+                    const base = typeof e.rotation === 'number' ? e.rotation : 0;
+                    patch.rotation = base + deltaDeg;
+                }
+                dispatch({ type: 'UPDATE_ITEM', id: e.id, patch });
+            } else if (e.kind === 'line') {
+                const a = rotPt(e.x1, e.y1);
+                const b = rotPt(e.x2, e.y2);
+                dispatch({
+                    type: 'UPDATE_LINE',
+                    id: e.id,
+                    patch: { x1: a.x, y1: a.y, x2: b.x, y2: b.y },
+                });
+            } else {
+                dispatch({
+                    type: 'UPDATE_STROKE',
+                    id: e.id,
+                    patch: {
+                        points: e.points.map(p => {
+                            const np = rotPt(p.x, p.y);
+                            return { ...p, x: np.x, y: np.y };
+                        }),
+                    },
+                });
+            }
+        }
+    }
+
+    function onRotatePointerDown(e: React.PointerEvent<HTMLDivElement>) {
+        e.stopPropagation();
+        e.preventDefault();
+        try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
+        pushSnapshot();
+        const pivotX = boxX + boxW / 2;
+        const pivotY = boxY + boxH / 2;
+        const z = Math.max(0.0001, view.zoom);
+        const cursorWorldX = (e.clientX - view.panX) / z;
+        const cursorWorldY = (e.clientY - view.panY) / z;
+        const startCursorAngle = (Math.atan2(cursorWorldY - pivotY, cursorWorldX - pivotX) * 180) / Math.PI;
+        rotateDragRef.current = {
+            pivotX, pivotY,
+            startCursorAngle,
+            snapshot: snapshotSelection(),
+        };
+    }
+
+    function onRotatePointerMove(e: React.PointerEvent<HTMLDivElement>) {
+        const d = rotateDragRef.current;
+        if (!d) return;
+        e.stopPropagation();
+        const z = Math.max(0.0001, view.zoom);
+        const cursorWorldX = (e.clientX - view.panX) / z;
+        const cursorWorldY = (e.clientY - view.panY) / z;
+        const angle = (Math.atan2(cursorWorldY - d.pivotY, cursorWorldX - d.pivotX) * 180) / Math.PI;
+        let delta = angle - d.startCursorAngle;
+        // Shift snaps to 15° increments (Figma convention).
+        if (e.shiftKey) {
+            const SNAP = 15;
+            delta = Math.round(delta / SNAP) * SNAP;
+        }
+        applyRotate(d.snapshot, delta, d.pivotX, d.pivotY);
+    }
+
+    function onRotatePointerUp(e: React.PointerEvent<HTMLDivElement>) {
+        const d = rotateDragRef.current;
+        rotateDragRef.current = null;
+        if (!d) return;
+        try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
+        // Same undo-anchoring trick as the scale path: one no-op commit so
+        // the gesture lands as ONE step in the undo stack.
+        if (state.selectedIds.length > 0) {
+            const id = state.selectedIds[0];
+            const it = state.items[id];
+            if (it) commit({ type: 'UPDATE_ITEM', id, patch: { x: it.x } });
+        }
+    }
+
     function onPointerDown(e: React.PointerEvent<HTMLDivElement>, handle: HandlePos) {
         e.stopPropagation();
         e.preventDefault();
@@ -271,6 +400,16 @@ export function MultiSelectionBox() {
     const handleSize = HANDLE_SCREEN_SIZE / Math.max(0.0001, view.zoom);
     const stroke = 1 / Math.max(0.0001, view.zoom);
 
+    // Phase 22.5: rotation-handle metrics. Same screen-px sizing strategy as
+    // the per-item RotateHandle so the chrome feels consistent.
+    const ROT_DIAMETER_SCREEN = 14;
+    const ROT_OFFSET_SCREEN = 22;
+    const rotDiameter = ROT_DIAMETER_SCREEN / Math.max(0.0001, view.zoom);
+    const rotOffset = ROT_OFFSET_SCREEN / Math.max(0.0001, view.zoom);
+    const rotCenterX = boxX + boxW / 2;
+    const rotCenterY = boxY - rotOffset - rotDiameter / 2;
+    const rotIconSz = 9 / Math.max(0.0001, view.zoom);
+
     return (
         <>
             <div
@@ -285,6 +424,58 @@ export function MultiSelectionBox() {
                     boxShadow: `inset 0 0 0 ${stroke}px rgba(16,185,129,0.15)`,
                 }}
             />
+            {/* Phase 22.5: connector line from top-middle of bbox to the
+                group rotation handle so the handle reads as "attached" rather
+                than floating. */}
+            <div
+                style={{
+                    position: 'absolute',
+                    left: rotCenterX - stroke / 2,
+                    top: boxY - rotOffset,
+                    width: stroke,
+                    height: rotOffset,
+                    background: '#10b981',
+                    pointerEvents: 'none',
+                }}
+            />
+            {/* Group rotation handle. Mirrors the per-item RotateHandle UX:
+                Shift = snap to 15°, drag = rotate selection around bbox
+                centroid. Cursor is the standard "grab" so users recognize
+                this as a rotation grip. */}
+            <div
+                onPointerDown={onRotatePointerDown}
+                onPointerMove={onRotatePointerMove}
+                onPointerUp={onRotatePointerUp}
+                style={{
+                    position: 'absolute',
+                    left: rotCenterX - rotDiameter / 2,
+                    top: rotCenterY - rotDiameter / 2,
+                    width: rotDiameter,
+                    height: rotDiameter,
+                    background: '#10b981',
+                    border: `${stroke}px solid #ffffff`,
+                    borderRadius: '50%',
+                    cursor: 'grab',
+                    pointerEvents: 'auto',
+                    zIndex: 13,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'white',
+                }}
+                title="Rotate group (hold Shift to snap to 15°)"
+            >
+                <svg width={rotIconSz} height={rotIconSz} viewBox="0 0 16 16" style={{ pointerEvents: 'none' }}>
+                    <path
+                        d="M8 3 L8 1 L11 4 L8 7 L8 5 A3 3 0 1 0 11 8"
+                        fill="none"
+                        stroke="white"
+                        strokeWidth={1.5 / Math.max(0.0001, view.zoom)}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                    />
+                </svg>
+            </div>
             {ALL_HANDLES.map(h => {
                 const p = handlePos(h);
                 return (
