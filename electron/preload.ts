@@ -342,6 +342,10 @@ contextBridge.exposeInMainWorld('electron', {
             ipcRenderer.invoke('canvas-cloud:remove-collaborator', args),
         transferOwnership: (args: { blobId: string; newOwnerId: string }) =>
             ipcRenderer.invoke('canvas-cloud:transfer-ownership', args),
+        appendMessage: (args: { blobId: string; text: string }) =>
+            ipcRenderer.invoke('canvas-cloud:append-message', args),
+        listMessages: (args: { blobId: string; limit?: number }) =>
+            ipcRenderer.invoke('canvas-cloud:list-messages', args),
         pushOps: (args: { blobId: string; deviceId: string; ops: any[] }) =>
             ipcRenderer.invoke('canvas-cloud:push-ops', args),
         pullOps: (args: { blobId: string; sinceSeq: number }) =>

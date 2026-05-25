@@ -211,6 +211,7 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         if (!blobId || !userId) {
             setPeers([]);
             setConnected(false);
+            setMessages([]);
             return;
         }
 
@@ -226,6 +227,39 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                 const res = await electronAuth?.getAccessToken?.();
                 setRealtimeAuth(res?.token ?? null);
             } catch { /* signed out / IPC missing → leave unauthenticated */ }
+        })();
+
+        // Phase 21+: hydrate persistent DM history. Late joiners now see
+        // the conversation that happened before they opened the canvas;
+        // returning users see their own past messages. Best-effort —
+        // missing table / migration returns [] gracefully.
+        (async () => {
+            const cloud: any = (window as any).electron?.cloud;
+            if (!cloud?.listMessages) return;
+            try {
+                const rows: Array<{ id: string; text: string; created_at: string; author_id: string; author_name: string | null; author_email: string | null }> = await cloud.listMessages({ blobId, limit: 200 });
+                if (!Array.isArray(rows)) return;
+                // Reverse: server returns newest-first; UI wants oldest-first
+                // (most-recent at the bottom).
+                const restored: CollabMessage[] = rows.slice().reverse().map((r) => ({
+                    id: 'srv_' + r.id,
+                    fromUserId: r.author_id,
+                    fromDeviceId: 'server',
+                    fromName: r.author_name || r.author_email || 'User',
+                    color: colorForUser(r.author_id),
+                    text: r.text.slice(0, MESSAGE_MAX_TEXT),
+                    ts: new Date(r.created_at).getTime() || Date.now(),
+                }));
+                setMessages(prev => {
+                    // Merge: keep any locally-buffered messages that aren't
+                    // already in the server list (shouldn't happen on a
+                    // fresh mount, but defensive against a race).
+                    const seen = new Set(restored.map(m => m.id));
+                    const live = prev.filter(m => !seen.has(m.id));
+                    const merged = restored.concat(live);
+                    return merged.length > MESSAGE_BUFFER_MAX ? merged.slice(merged.length - MESSAGE_BUFFER_MAX) : merged;
+                });
+            } catch { /* fall back to ephemeral-only behavior */ }
         })();
 
         // Phase 14: acquire the shared canvas channel via the registry.
@@ -529,6 +563,17 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                 },
             });
         } catch { /* best-effort; UI shows the optimistic copy regardless */ }
+        // Phase 21+: persist to canvas_messages so this message survives
+        // reload and reaches late joiners. Fire-and-forget — the broadcast
+        // already happened so peers got the live update; persistence is
+        // a follow-up for durability. Skips silently when the migration
+        // hasn't been applied (the handler returns gracefully).
+        if (blobId) {
+            const cloud: any = (window as any).electron?.cloud;
+            if (cloud?.appendMessage) {
+                void cloud.appendMessage({ blobId, text: out.text }).catch(() => { /* swallow */ });
+            }
+        }
         return out;
     };
 

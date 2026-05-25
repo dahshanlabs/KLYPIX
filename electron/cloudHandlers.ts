@@ -34,6 +34,7 @@ const TOKENS_TABLE = 'canvas_share_tokens';
 const INVITATIONS_TABLE = 'canvas_invitations';
 const COLLABORATORS_TABLE = 'canvas_collaborators';
 const OPS_TABLE = 'canvas_ops';
+const MESSAGES_TABLE = 'canvas_messages';
 const BUCKET = 'canvases';
 const INVITE_URL_HOST = 'https://klypix.com';
 const INVITE_URL_PATH = '/invite/';
@@ -320,6 +321,54 @@ export function registerCloudHandlers(ipcMain: IpcMain): void {
             throw new Error(error.message);
         }
         return data;
+    });
+
+    // ── Canvas DM persistence ────────────────────────────────────────────
+    // Phase 21+ — message history that survives reload. RLS gates by
+    // canvas membership; client only sees what it can already access via
+    // canvas_collaborators / canvas_blobs.owner_id.
+
+    ipcMain.handle('canvas-cloud:append-message', async (_e, args: { blobId: string; text: string }) => {
+        const userId = await requireUserId();
+        const supabase = getSupabase();
+        const text = (args.text ?? '').trim();
+        if (text.length === 0) return null;
+        // Hard cap server-side too — protects against pathological clients.
+        const capped = text.slice(0, 8000);
+        const { data, error } = await supabase
+            .from(MESSAGES_TABLE)
+            .insert({ blob_id: args.blobId, author_id: userId, text: capped })
+            .select('id, created_at')
+            .single();
+        if (error) {
+            if (/relation .* does not exist|table .* does not exist/i.test(error.message)) {
+                throw new Error(
+                    `canvas_messages table missing. Apply ` +
+                    `supabase/migrations/20260525180000_canvas_messages.sql to your Supabase project.`
+                );
+            }
+            throw new Error(error.message);
+        }
+        return data;
+    });
+
+    ipcMain.handle('canvas-cloud:list-messages', async (_e, args: { blobId: string; limit?: number }) => {
+        await requireUserId();
+        const supabase = getSupabase();
+        try {
+            const { data, error } = await supabase.rpc('list_canvas_messages', {
+                p_blob_id: args.blobId,
+                p_limit: args.limit ?? 200,
+            });
+            if (error) {
+                if (/function .* does not exist|404/i.test(error.message)) return [];
+                throw new Error(error.message);
+            }
+            return Array.isArray(data) ? data : (data ?? []);
+        } catch (e: any) {
+            if (/function .* does not exist|404/i.test(e?.message ?? '')) return [];
+            throw e;
+        }
     });
 
     // ── Sync: ops push/pull + "shared with me" listing ───────────────────
