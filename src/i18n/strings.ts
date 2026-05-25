@@ -485,6 +485,9 @@ const strings: Strings = {
     'palette.clip_filter.text': { en: 'Text', ar: 'نص' },
     'palette.clip_filter.images': { en: 'Images', ar: 'صور' },
     'palette.clip_filter.files': { en: 'Files', ar: 'ملفات' },
+    'palette.clip_filter.clear': { en: 'Clear unpinned', ar: 'مسح غير المثبّت' },
+    'palette.clip_filter.clear_confirm': { en: 'Clear all unpinned clipboard history? Pinned items are kept.', ar: 'مسح كل سجل الحافظة غير المثبّت؟ ستبقى العناصر المثبّتة.' },
+    'palette.clip_filter.clear_hint': { en: 'Removes everything except pinned items', ar: 'يزيل كل شيء عدا العناصر المثبّتة' },
     // Layers panel
     'canvas.layer_content': { en: 'content', ar: 'المحتوى' },
     'canvas.layer_agent': { en: 'agent', ar: 'الوكيل' },

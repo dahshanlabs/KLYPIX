@@ -139,8 +139,8 @@ export function CommandPalette() {
                 role="dialog"
                 aria-label={t('palette.title')}
                 style={{
-                    width: 640,
-                    maxWidth: '90vw',
+                    width: snap.ranked[snap.selectedIndex]?.detail ? 880 : 640,
+                    maxWidth: '92vw',
                     maxHeight: '60vh',
                     display: 'flex',
                     flexDirection: 'column',
@@ -149,6 +149,10 @@ export function CommandPalette() {
                     borderRadius: 12,
                     boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
                     overflow: 'hidden',
+                    // When detail panel is active, the layout widens smoothly
+                    // from 640 → 880 instead of jumping. 120ms feels responsive
+                    // without being distracting on every selection change.
+                    transition: 'width 120ms ease-out',
                 }}
             >
                 {/* Header: search input */}
@@ -239,32 +243,69 @@ export function CommandPalette() {
                                 </button>
                             );
                         })}
+                        <div style={{ flex: 1 }} />
+                        {/* Bulk clear unpinned. Pinned items survive — the
+                            main-process handler explicitly preserves them.
+                            Native confirm gates the destructive action. */}
+                        <button
+                            type="button"
+                            onClick={async () => {
+                                if (!window.confirm(t('palette.clip_filter.clear_confirm'))) return;
+                                const bridge: any = (window as any).electron?.clipboardHistory;
+                                if (bridge?.clear) {
+                                    await bridge.clear();
+                                    setQuery(snap.query);
+                                }
+                            }}
+                            style={{
+                                fontSize: 10,
+                                padding: '3px 8px',
+                                borderRadius: 999,
+                                border: '1px solid rgba(239, 68, 68, 0.25)',
+                                background: 'rgba(239, 68, 68, 0.08)',
+                                color: '#fca5a5',
+                                cursor: 'pointer',
+                                fontWeight: 500,
+                            }}
+                            title={t('palette.clip_filter.clear_hint')}
+                        >
+                            {t('palette.clip_filter.clear')}
+                        </button>
                     </div>
                 )}
 
-                {/* Result list */}
-                <div
-                    ref={listRef}
-                    style={{
-                        flex: 1,
-                        overflowY: 'auto',
-                        padding: 4,
-                        minHeight: 0,
-                    }}
-                >
-                    {snap.ranked.length === 0 ? (
-                        <EmptyState query={snap.query} />
-                    ) : (
-                        snap.ranked.map((r, i) => (
-                            <ResultRow
-                                key={r.id}
-                                result={r}
-                                index={i}
-                                highlighted={i === snap.selectedIndex}
-                                onHover={() => jumpSelection(i)}
-                                onClick={() => runAction(r.primaryAction, r.id)}
-                            />
-                        ))
+                {/* Body: result list + optional detail pane. The detail pane
+                    renders for the highlighted row only when its provider
+                    supplied a detail() factory — image clipboard rows show
+                    full preview, file rows show parent path tree, etc. */}
+                <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+                    <div
+                        ref={listRef}
+                        style={{
+                            flex: snap.ranked[snap.selectedIndex]?.detail ? '0 0 480px' : 1,
+                            overflowY: 'auto',
+                            padding: 4,
+                            minHeight: 0,
+                            borderRight: snap.ranked[snap.selectedIndex]?.detail ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                        }}
+                    >
+                        {snap.ranked.length === 0 ? (
+                            <EmptyState query={snap.query} />
+                        ) : (
+                            snap.ranked.map((r, i) => (
+                                <ResultRow
+                                    key={r.id}
+                                    result={r}
+                                    index={i}
+                                    highlighted={i === snap.selectedIndex}
+                                    onHover={() => jumpSelection(i)}
+                                    onClick={() => runAction(r.primaryAction, r.id)}
+                                />
+                            ))
+                        )}
+                    </div>
+                    {snap.ranked[snap.selectedIndex]?.detail && (
+                        <DetailPane result={snap.ranked[snap.selectedIndex]} />
                     )}
                 </div>
 
@@ -276,6 +317,35 @@ export function CommandPalette() {
             </div>
         </div>,
         document.body,
+    );
+}
+
+function DetailPane({ result }: { result: RankedResult }) {
+    // Provider supplied detail() — call it to render the preview content.
+    // Wrapped in error boundary semantics via try/catch so a bad provider
+    // doesn't break the whole palette.
+    let content: React.ReactNode = null;
+    try {
+        content = result.detail?.();
+    } catch {
+        content = null;
+    }
+    return (
+        <div
+            style={{
+                flex: 1,
+                minWidth: 0,
+                overflow: 'auto',
+                padding: 16,
+                background: 'rgba(255,255,255,0.015)',
+            }}
+        >
+            {content ?? (
+                <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11, textAlign: 'center', marginTop: 40 }}>
+                    No preview
+                </div>
+            )}
+        </div>
     );
 }
 

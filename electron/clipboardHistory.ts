@@ -143,6 +143,50 @@ async function refreshForeground(): Promise<void> {
     } catch { /* swallow */ }
 }
 
+// Friendly-name map: PowerShell `Get-Process` returns the .exe stem (e.g.
+// 'Code', 'chrome', 'msedge'). Map common ones to recognizable names.
+// Anything not in the map gets a default capitalize-first-letter.
+const PROCESS_FRIENDLY_NAME: Record<string, string> = {
+    code: 'VS Code',
+    cursor: 'Cursor',
+    windsurf: 'Windsurf',
+    chrome: 'Chrome',
+    msedge: 'Edge',
+    firefox: 'Firefox',
+    brave: 'Brave',
+    opera: 'Opera',
+    notepad: 'Notepad',
+    notepadplusplus: 'Notepad++',
+    explorer: 'File Explorer',
+    winword: 'Word',
+    excel: 'Excel',
+    powerpnt: 'PowerPoint',
+    outlook: 'Outlook',
+    teams: 'Teams',
+    slack: 'Slack',
+    discord: 'Discord',
+    figma: 'Figma',
+    photoshop: 'Photoshop',
+    illustrator: 'Illustrator',
+    spotify: 'Spotify',
+    obsidian: 'Obsidian',
+    notion: 'Notion',
+    zoom: 'Zoom',
+    terminal: 'Terminal',
+    windowsterminal: 'Windows Terminal',
+    powershell: 'PowerShell',
+    cmd: 'Command Prompt',
+    'wt': 'Windows Terminal',
+};
+
+function friendlyAppName(proc: string): string {
+    const key = proc.toLowerCase().replace(/\.exe$/, '');
+    if (PROCESS_FRIENDLY_NAME[key]) return PROCESS_FRIENDLY_NAME[key];
+    // Fallback: PS already capitalizes most process names. If lowercase
+    // (e.g. 'chrome'), title-case the first letter for display.
+    return proc.charAt(0).toUpperCase() + proc.slice(1);
+}
+
 function detectSourceApp(): string | undefined {
     const win = BrowserWindow.getFocusedWindow();
     if (win && !win.isDestroyed()) {
@@ -154,13 +198,8 @@ function detectSourceApp(): string | undefined {
         //     the more common workflow.
         return 'Klypix';
     }
-    // Non-Klypix foreground at copy time. Return the cached process name
-    // (refreshed on every poll tick).
     if (cachedForegroundProcess) {
-        // Capitalize first letter for display; PS returns the raw process
-        // name like 'Code' or 'chrome'.
-        const p = cachedForegroundProcess;
-        return p.charAt(0).toUpperCase() + p.slice(1);
+        return friendlyAppName(cachedForegroundProcess);
     }
     return undefined;
 }

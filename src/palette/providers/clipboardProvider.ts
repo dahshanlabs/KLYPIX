@@ -184,6 +184,85 @@ function iconFor(row: ClipboardRow): React.ReactNode {
     return React.createElement(Clipboard, { size: 14 });
 }
 
+function detailFor(row: ClipboardRow): (() => React.ReactNode) | undefined {
+    // Image rows: render the full image scaled-to-fit.
+    if (row.kind === 'image' && row.imageDataUrl) {
+        return () => React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 12, height: '100%' } },
+            React.createElement('div', {
+                style: {
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: 'rgba(0,0,0,0.3)',
+                    borderRadius: 8,
+                    padding: 8,
+                    minHeight: 0,
+                },
+            },
+                React.createElement('img', {
+                    src: row.imageDataUrl,
+                    alt: 'Clipboard image preview',
+                    style: { maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' },
+                }),
+            ),
+            React.createElement('div', { style: { fontSize: 11, color: 'rgba(255,255,255,0.55)' } },
+                React.createElement('div', null, `Image · ${ageLabel(row.capturedAt)}`),
+                row.sourceApp ? React.createElement('div', null, `Source: ${row.sourceApp}`) : null,
+            ),
+        );
+    }
+    // File rows: list the paths in a monospace block.
+    if (row.kind === 'files' && row.filePaths && row.filePaths.length > 0) {
+        return () => React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+            React.createElement('div', { style: { fontSize: 11, color: 'rgba(255,255,255,0.55)' } },
+                `${row.filePaths!.length} file${row.filePaths!.length === 1 ? '' : 's'} · ${ageLabel(row.capturedAt)}`,
+            ),
+            React.createElement('div', {
+                style: {
+                    fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+                    fontSize: 11,
+                    color: 'rgba(255,255,255,0.85)',
+                    background: 'rgba(0,0,0,0.3)',
+                    borderRadius: 6,
+                    padding: '8px 10px',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                    maxHeight: 240,
+                    overflow: 'auto',
+                },
+            }, row.filePaths!.join('\n')),
+        );
+    }
+    // Text / HTML rows: detail panel only for content > 80 chars
+    // (anything shorter fully fits in the title).
+    if ((row.kind === 'text' || row.kind === 'html') && row.text && row.text.length > 80) {
+        return () => React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, height: '100%' } },
+            React.createElement('div', { style: { fontSize: 11, color: 'rgba(255,255,255,0.55)' } },
+                `${row.kind === 'html' ? 'HTML' : 'Text'} · ${row.text!.length} chars · ${ageLabel(row.capturedAt)}` +
+                (row.sourceApp ? ` · ${row.sourceApp}` : ''),
+            ),
+            React.createElement('div', {
+                style: {
+                    flex: 1,
+                    fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    color: 'rgba(255,255,255,0.88)',
+                    background: 'rgba(0,0,0,0.25)',
+                    borderRadius: 6,
+                    padding: '10px 12px',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    overflow: 'auto',
+                    minHeight: 0,
+                },
+            }, row.text),
+        );
+    }
+    return undefined;
+}
+
 function toResult(row: ClipboardRow): PaletteResult {
     const sourceBadge = row.sourceApp ? ` · ${row.sourceApp}` : '';
     const syncBadge = row.fromSync ? ' · ☁ synced' : '';
@@ -193,6 +272,7 @@ function toResult(row: ClipboardRow): PaletteResult {
         subtitle: `${ageLabel(row.capturedAt)}${sourceBadge}${syncBadge}`,
         accent: row.fromSync ? '#a855f7' : (row.pinned ? '#f59e0b' : '#06b6d4'),
         icon: iconFor(row),
+        detail: detailFor(row),
         primaryAction: {
             label: 'Paste',
             handler: async () => {

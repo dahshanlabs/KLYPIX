@@ -62,6 +62,13 @@ export interface PaletteResult {
     /** When truthy, the result is rendered with a "loading" state — used
      *  by streaming providers (AI, web fetch) to show in-flight rows. */
     pending?: boolean;
+    /** Best-in-class detail pane: when the row is highlighted, render
+     *  this content in the right-side preview panel. Providers fill it
+     *  for rows whose UX benefits from a larger view: image clipboard
+     *  rows (full preview), file rows (parent path tree), text rows
+     *  with long body (full text). Returning null = no detail panel for
+     *  this row (palette collapses the panel area). */
+    detail?: () => React.ReactNode;
 }
 
 export interface PaletteProviderContext {
