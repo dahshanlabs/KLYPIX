@@ -143,6 +143,14 @@ contextBridge.exposeInMainWorld('electron', {
     executeAction: (intent: any) => ipcRenderer.invoke('eye:execute-action', intent),
     readClipboard: () => ipcRenderer.invoke('read-clipboard'),
     getClipboardFormats: () => ipcRenderer.invoke('get-clipboard-formats'),
+    // Phase 23: clipboard history (palette provider data source)
+    clipboardHistory: {
+        list: () => ipcRenderer.invoke('clipboard-history:list'),
+        copy: (id: string) => ipcRenderer.invoke('clipboard-history:copy', id),
+        pin: (id: string, pinned: boolean) => ipcRenderer.invoke('clipboard-history:pin', { id, pinned }),
+        remove: (id: string) => ipcRenderer.invoke('clipboard-history:remove', id),
+        clear: () => ipcRenderer.invoke('clipboard-history:clear'),
+    },
     readFileBytes: (filePath: string) => ipcRenderer.invoke('read-file-bytes', { filePath }),
     // ── Encrypted API Key Storage ────────────────────────────────────────
     apiKey: {

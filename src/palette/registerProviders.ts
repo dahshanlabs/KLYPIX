@@ -13,6 +13,7 @@
 import { register, refresh } from './paletteStore';
 import { calculatorProvider, resetCalcScope } from './providers/calculatorProvider';
 import { klypixSearchProvider } from './providers/klypixSearchProvider';
+import { clipboardProvider } from './providers/clipboardProvider';
 
 let registered = false;
 
@@ -22,6 +23,7 @@ export function registerAllProviders(): () => void {
     const disposers = [
         register(calculatorProvider),
         register(klypixSearchProvider),
+        register(clipboardProvider),
     ];
     // Re-run query so any provider that was just registered gets a chance
     // to populate the visible list without the user retyping.

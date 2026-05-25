@@ -18,6 +18,7 @@ process.on('unhandledRejection', (reason: any) => {
 });
 import { registerAuthHandlers, handleDeepLink } from './auth/authGuard';
 import { registerCloudHandlers } from './cloudHandlers';
+import { startClipboardHistory, registerClipboardHistoryIpc } from './clipboardHistory';
 import { initAutoUpdater } from './updater';
 import { storeApiKey, getApiKey, clearApiKey } from './auth/tokenStore';
 // Imports below MUST stay at top level. TypeScript compiles each `import`
@@ -887,6 +888,12 @@ app.whenReady().then(() => {
     registerAuthHandlers(() => mainWindow);
     // Register canvas-cloud:* IPC handlers (encrypted blob upload/download).
     registerCloudHandlers(ipcMain);
+    // Phase 23: clipboard history poller + IPC. Polls clipboard ~once per
+    // second, persists to userData/clipboard-history.json. Throttles to 5s
+    // when no Klypix window is focused so it doesn't burn battery polling
+    // when the user isn't using the app.
+    registerClipboardHistoryIpc();
+    startClipboardHistory();
     // Initialize MCP servers (auto-connect enabled ones)
     mcpManager.initialize().catch(err =>
         console.error('[Main] MCP initialization error:', err)
