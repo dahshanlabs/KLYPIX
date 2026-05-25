@@ -156,6 +156,12 @@ contextBridge.exposeInMainWorld('electron', {
         list: () => ipcRenderer.invoke('start-apps:list'),
         launch: (appId: string) => ipcRenderer.invoke('start-apps:launch', appId),
     },
+    // Phase 23 Day 5: file search across Desktop / Documents / Downloads
+    fileSearch: {
+        query: (query: string) => ipcRenderer.invoke('file-search:query', { query }),
+        open: (filePath: string) => ipcRenderer.invoke('file-search:open', filePath),
+        reveal: (filePath: string) => ipcRenderer.invoke('file-search:reveal', filePath),
+    },
     readFileBytes: (filePath: string) => ipcRenderer.invoke('read-file-bytes', { filePath }),
     // ── Encrypted API Key Storage ────────────────────────────────────────
     apiKey: {

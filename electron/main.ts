@@ -20,6 +20,7 @@ import { registerAuthHandlers, handleDeepLink } from './auth/authGuard';
 import { registerCloudHandlers } from './cloudHandlers';
 import { startClipboardHistory, registerClipboardHistoryIpc } from './clipboardHistory';
 import { registerStartAppsIpc } from './startApps';
+import { registerFileSearchIpc } from './fileSearch';
 import { initAutoUpdater } from './updater';
 import { storeApiKey, getApiKey, clearApiKey } from './auth/tokenStore';
 // Imports below MUST stay at top level. TypeScript compiles each `import`
@@ -900,6 +901,9 @@ app.whenReady().then(() => {
     // for one hour. Doesn't block boot — only fires when the palette
     // actually queries.
     registerStartAppsIpc();
+    // Phase 23 Day 5: file-search IPC for the palette Files provider.
+    // Lazy: only fires when the palette actually queries (length >= 2).
+    registerFileSearchIpc();
     // Initialize MCP servers (auto-connect enabled ones)
     mcpManager.initialize().catch(err =>
         console.error('[Main] MCP initialization error:', err)

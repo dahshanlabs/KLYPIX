@@ -16,6 +16,9 @@ import { klypixSearchProvider } from './providers/klypixSearchProvider';
 import { clipboardProvider } from './providers/clipboardProvider';
 import { snippetProvider } from './providers/snippetProvider';
 import { appsProvider } from './providers/appsProvider';
+import { filesProvider } from './providers/filesProvider';
+import { webProvider } from './providers/webProvider';
+import { aiProvider } from './providers/aiProvider';
 import { installSnippetWatcher } from './snippets';
 
 let registered = false;
@@ -29,6 +32,9 @@ export function registerAllProviders(): () => void {
         register(clipboardProvider),
         register(snippetProvider),
         register(appsProvider),
+        register(filesProvider),
+        register(webProvider),
+        register(aiProvider),
         // Snippet keystroke watcher — installs ONCE here so it's tied to
         // palette providers lifecycle. Returns its own teardown which the
         // dispose loop calls on unmount.

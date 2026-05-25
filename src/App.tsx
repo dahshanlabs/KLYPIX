@@ -969,17 +969,33 @@ function AppMain() {
             if (!tool) return;
             try { void navigator.clipboard.writeText(`/use ${tool}`); } catch { /* swallow */ }
         };
+        const onAskAgent = (ev: Event) => {
+            const question = (ev as CustomEvent).detail?.question;
+            if (typeof question !== 'string' || !question.trim()) return;
+            // Route to the agent path with current screenshot + window
+            // context (same shape as the "Run with Agent" button below).
+            // We don't have a screenshot ready in the palette tick, so
+            // pass null — the agent loop's first turn will capture one
+            // if the model profile asks for vision.
+            try {
+                claudeAgent.startAgent(question, null, windowCtx.activeWindowContext);
+            } catch (err) {
+                console.warn('[palette] askAgent dispatch failed:', err);
+            }
+        };
         window.addEventListener('klypix:palette-open-canvas', onOpenCanvas);
         window.addEventListener('klypix:palette-open-pinned-chat', onOpenPinned);
         window.addEventListener('klypix:palette-resume-chat', onResumeChat);
         window.addEventListener('klypix:palette-prefill-tool', onPrefillTool);
+        window.addEventListener('klypix:palette-ask-agent', onAskAgent);
         return () => {
             window.removeEventListener('klypix:palette-open-canvas', onOpenCanvas);
             window.removeEventListener('klypix:palette-open-pinned-chat', onOpenPinned);
             window.removeEventListener('klypix:palette-resume-chat', onResumeChat);
             window.removeEventListener('klypix:palette-prefill-tool', onPrefillTool);
+            window.removeEventListener('klypix:palette-ask-agent', onAskAgent);
         };
-    }, [pinnedChats]);
+    }, [pinnedChats, claudeAgent, windowCtx]);
 
     const suggestions = useSuggestions({
         isDeepFileMode: deepMode.isDeepFileMode,
