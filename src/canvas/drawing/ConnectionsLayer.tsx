@@ -96,6 +96,107 @@ interface Props {
 
 export const ConnectionsLayer = React.memo(ConnectionsLayerImpl);
 
+// Per-connection memoized renderer. Splits the per-connection geometry +
+// SVG work out of the inner `.map(...)` so a typing or dragging burst
+// that only changes ONE item's geometry doesn't recompute paths for the
+// OTHER connections in the canvas. Custom comparator does shallow rect
+// equality (rect.x/y/w/h primitives) so per-render rect-object
+// allocations in the parent don't break the bailout.
+interface ConnectionPathProps {
+    c: Connection;
+    aRect: Rect;
+    bRect: Rect;
+    connScale: number;
+    isSelected: boolean;
+    onPickConnection?: (id: string, additive: boolean) => void;
+}
+
+function rectEq(a: Rect, b: Rect): boolean {
+    return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+}
+
+const ConnectionPath = React.memo(function ConnectionPath({
+    c, aRect, bRect, connScale, isSelected, onPickConnection,
+}: ConnectionPathProps) {
+    const rel = styleForConnection(c);
+    const hasExplicitColor = !!c.color && c.color !== '#10b981';
+    const stroke = hasExplicitColor ? c.color : rel.color;
+    const dashed = c.style === 'dashed' || rel.dashed;
+    const dashPattern = dashed ? '8 4' : undefined;
+    const baseWidth = (c.width || 2) + rel.widthBoost;
+    const width = baseWidth * connScale + (isSelected ? 1.5 : 0);
+    const hasArrowEnd = !!c.arrowHead;
+    const path = bezierBetween(aRect, bRect, hasArrowEnd, width);
+    const mid = midpoint(aRect, bRect, hasArrowEnd, width);
+    const arrowMarker = !hasArrowEnd ? undefined : 'klpx-arrow';
+    return (
+        <g>
+            <path
+                d={path}
+                data-canvas-connection={c.id}
+                stroke="transparent"
+                strokeWidth={Math.max(12, (c.width || 2) + 10)}
+                fill="none"
+                pointerEvents={onPickConnection ? 'stroke' : 'none'}
+                onPointerDown={(e) => {
+                    if (!onPickConnection) return;
+                    if (e.button === 2) {
+                        onPickConnection(c.id, false);
+                        return;
+                    }
+                    e.stopPropagation();
+                    onPickConnection(c.id, e.shiftKey);
+                }}
+                style={{ cursor: onPickConnection ? 'pointer' : 'default' }}
+            >
+                {rel.label ? <title>{rel.label}{c.label ? ` — ${c.label}` : ''}</title> : null}
+            </path>
+            <path
+                d={path}
+                stroke={stroke}
+                strokeWidth={width}
+                strokeDasharray={dashPattern}
+                fill="none"
+                opacity={isSelected ? 1 : 0.8}
+                markerEnd={arrowMarker ? `url(#${arrowMarker})` : undefined}
+                pointerEvents="none"
+            />
+            {rel.midpointIcon && (
+                <g pointerEvents="none" transform={`translate(${mid.x}, ${mid.y})`}>
+                    <circle
+                        r={Math.max(3, 9 * connScale)}
+                        fill="#0a0a0f"
+                        stroke={stroke}
+                        strokeWidth={1.5}
+                        opacity={isSelected ? 1 : 0.88}
+                    />
+                    <text
+                        y={Math.max(1.5, 3.5 * connScale)}
+                        textAnchor="middle"
+                        fontSize={Math.max(5, 10 * connScale)}
+                        fill={stroke}
+                        fontWeight={600}
+                        fontFamily="system-ui, sans-serif"
+                    >{rel.midpointIcon}</text>
+                </g>
+            )}
+        </g>
+    );
+}, (prev, next) => {
+    // Bail out re-render when nothing actually changed for THIS connection.
+    // The connection object reference changes on any UPDATE_CONNECTION; the
+    // rects change only when the endpoint items change. So a drag on an
+    // unrelated item leaves both prev and next rects intact → memo bails.
+    return (
+        prev.c === next.c &&
+        prev.connScale === next.connScale &&
+        prev.isSelected === next.isSelected &&
+        prev.onPickConnection === next.onPickConnection &&
+        rectEq(prev.aRect, next.aRect) &&
+        rectEq(prev.bRect, next.bRect)
+    );
+});
+
 function ConnectionsLayerImpl({ connections, items, hiddenIds, selectedIds, onPickConnection, previewFromId, previewToWorld, previewWidth, previewColor, viewZoom, zoomCollapsedIds, userOverrideExpandedIds }: Props) {
     // Rect resolver: for containers, ask resolveContainerRenderRect
     // (so the arrow anchors to the capsule / dot / frame the user
@@ -173,104 +274,21 @@ function ConnectionsLayerImpl({ connections, items, hiddenIds, selectedIds, onPi
                 const a = items[c.fromId];
                 const b = items[c.toId];
                 if (!a || !b) return null;
-                // Skip connections touching hidden items (e.g. inside a
-                // collapsed container) — otherwise arrows dangle in empty
-                // space where the items used to be.
                 if (hiddenIds && (hiddenIds.has(c.fromId) || hiddenIds.has(c.toId))) return null;
                 const aRect = rectOf(a);
                 const bRect = rectOf(b);
                 const isSelected = selectedIds?.has(c.id) ?? false;
-                const rel = styleForConnection(c);
-                // Stroke color: explicit c.color wins (user-customized connection),
-                // otherwise fall back to relationship color. Selection is shown
-                // via the +1.5 width boost and opacity=1 below — we intentionally
-                // DON'T override the color here, so palette picks are visible
-                // while the connection stays selected.
-                const hasExplicitColor = !!c.color && c.color !== '#10b981';
-                const stroke = hasExplicitColor ? c.color : rel.color;
-                // Dash pattern: the user's explicit dashed style wins; otherwise
-                // the relationship's own dashing decides. (Plain solid
-                // connections inherit relationship dashing for free.)
-                const dashed = c.style === 'dashed' || rel.dashed;
-                const dashPattern = dashed ? '8 4' : undefined;
                 const connScale = sharedContainerScale(a, b, items);
-                // Authored width + style boost scaled by the shared
-                // container. isSelected adds a flat +1.5 AFTER scaling
-                // so the selection highlight stays visible even at
-                // heavily-shrunk group scales.
-                const baseWidth = (c.width || 2) + rel.widthBoost;
-                const width = baseWidth * connScale + (isSelected ? 1.5 : 0);
-                // Path geometry uses the SAME width the visible stroke
-                // renders at, so the apex-offset stays in sync with the
-                // actual stroke (apex sits at rect edge regardless of
-                // line thickness).
-                const hasArrowEnd = !!c.arrowHead;
-                const path = bezierBetween(aRect, bRect, hasArrowEnd, width);
-                const mid = midpoint(aRect, bRect, hasArrowEnd, width);
-                // Arrow marker inherits the path's stroke color via the
-                // context-stroke marker. Prior behavior locked user-colored
-                // connections to an emerald arrowhead regardless of the
-                // line color, which was visibly wrong.
-                const arrowMarker = !hasArrowEnd ? undefined : 'klpx-arrow';
                 return (
-                    <g key={c.id}>
-                        {/* Invisible wide stroke for click targeting — makes
-                            the arrow easier to click without visually thickening it.
-                            data-canvas-connection lets the surface onContextMenu
-                            identify connections (items use data-canvas-item). */}
-                        <path
-                            d={path}
-                            data-canvas-connection={c.id}
-                            stroke="transparent"
-                            strokeWidth={Math.max(12, (c.width || 2) + 10)}
-                            fill="none"
-                            pointerEvents={onPickConnection ? 'stroke' : 'none'}
-                            onPointerDown={(e) => {
-                                if (!onPickConnection) return;
-                                // Right-click: select this connection but let
-                                // the event bubble to the surface so the
-                                // canvas context menu opens at the cursor.
-                                if (e.button === 2) {
-                                    onPickConnection(c.id, false);
-                                    return;
-                                }
-                                e.stopPropagation();
-                                onPickConnection(c.id, e.shiftKey);
-                            }}
-                            style={{ cursor: onPickConnection ? 'pointer' : 'default' }}
-                        >
-                            {rel.label ? <title>{rel.label}{c.label ? ` — ${c.label}` : ''}</title> : null}
-                        </path>
-                        <path
-                            d={path}
-                            stroke={stroke}
-                            strokeWidth={width}
-                            strokeDasharray={dashPattern}
-                            fill="none"
-                            opacity={isSelected ? 1 : 0.8}
-                            markerEnd={arrowMarker ? `url(#${arrowMarker})` : undefined}
-                            pointerEvents="none"
-                        />
-                        {rel.midpointIcon && (
-                            <g pointerEvents="none" transform={`translate(${mid.x}, ${mid.y})`}>
-                                <circle
-                                    r={Math.max(3, 9 * connScale)}
-                                    fill="#0a0a0f"
-                                    stroke={stroke}
-                                    strokeWidth={1.5}
-                                    opacity={isSelected ? 1 : 0.88}
-                                />
-                                <text
-                                    y={Math.max(1.5, 3.5 * connScale)}
-                                    textAnchor="middle"
-                                    fontSize={Math.max(5, 10 * connScale)}
-                                    fill={stroke}
-                                    fontWeight={600}
-                                    fontFamily="system-ui, sans-serif"
-                                >{rel.midpointIcon}</text>
-                            </g>
-                        )}
-                    </g>
+                    <ConnectionPath
+                        key={c.id}
+                        c={c}
+                        aRect={aRect}
+                        bRect={bRect}
+                        connScale={connScale}
+                        isSelected={isSelected}
+                        onPickConnection={onPickConnection}
+                    />
                 );
             })}
             {hasPreview && previewFrom && previewToWorld && (
