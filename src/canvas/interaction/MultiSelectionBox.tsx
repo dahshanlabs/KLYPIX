@@ -182,6 +182,9 @@ export function MultiSelectionBox() {
 
     function applyScale(snap: SnapshotEntry[], factor: number, ax: number, ay: number) {
         if (!isFinite(factor) || factor <= 0.01) return;
+        // Phase 22.5: collect item patches for one bulk dispatch (see same
+        // pattern in applyRotate).
+        const itemPatches: Array<{ id: string; patch: any }> = [];
         for (const e of snap) {
             if (e.parentInSel) continue;
             if (e.kind === 'item') {
@@ -194,7 +197,7 @@ export function MultiSelectionBox() {
                     if (typeof e.fontSize === 'number') patch.fontSize = Math.max(1, e.fontSize * factor);
                     if (typeof e.borderWidth === 'number') patch.borderWidth = Math.max(0.5, e.borderWidth * factor);
                 }
-                dispatch({ type: 'UPDATE_ITEM', id: e.id, patch });
+                itemPatches.push({ id: e.id, patch });
             } else if (e.kind === 'line') {
                 dispatch({
                     type: 'UPDATE_LINE',
@@ -222,6 +225,13 @@ export function MultiSelectionBox() {
                 });
             }
         }
+        // Flush item patches in one bulk dispatch.
+        if (itemPatches.length === 1) {
+            const u = itemPatches[0];
+            dispatch({ type: 'UPDATE_ITEM', id: u.id, patch: u.patch });
+        } else if (itemPatches.length > 1) {
+            dispatch({ type: 'UPDATE_ITEMS_BULK', updates: itemPatches });
+        }
     }
 
     // Phase 22.5: rotate every selected entity around (pivotX, pivotY) by
@@ -238,12 +248,13 @@ export function MultiSelectionBox() {
             x: pivotX + (x - pivotX) * c - (y - pivotY) * s,
             y: pivotY + (x - pivotX) * s + (y - pivotY) * c,
         });
+        // Phase 22.5: collect item patches for one bulk dispatch per frame
+        // instead of N dispatches. Lines/strokes still dispatch individually
+        // (separate action types, lower count in practice).
+        const itemPatches: Array<{ id: string; patch: any }> = [];
         for (const e of snap) {
             if (e.parentInSel) continue;
             if (e.kind === 'item') {
-                // Rotate the item's CENTER around the pivot, then derive
-                // its new top-left by subtracting half-dim. Width/height
-                // stay unchanged (group rotation doesn't scale).
                 const oldCx = e.x + e.w / 2;
                 const oldCy = e.y + e.h / 2;
                 const np = rotPt(oldCx, oldCy);
@@ -251,14 +262,11 @@ export function MultiSelectionBox() {
                     x: np.x - e.w / 2,
                     y: np.y - e.h / 2,
                 };
-                // Items with a rotation property pick up the group delta
-                // additively. Container etc. simply translate — their
-                // bodies don't carry a rotation field.
                 if (typeof e.rotation === 'number' || (!e.isContainer)) {
                     const base = typeof e.rotation === 'number' ? e.rotation : 0;
                     patch.rotation = base + deltaDeg;
                 }
-                dispatch({ type: 'UPDATE_ITEM', id: e.id, patch });
+                itemPatches.push({ id: e.id, patch });
             } else if (e.kind === 'line') {
                 const a = rotPt(e.x1, e.y1);
                 const b = rotPt(e.x2, e.y2);
@@ -279,6 +287,16 @@ export function MultiSelectionBox() {
                     },
                 });
             }
+        }
+        // Flush all item patches in one bulk dispatch — the reducer runs
+        // ONE shallow-copy of state.items instead of N. Big win when the
+        // selection has many items (rotating a 10-item group goes from
+        // 10× O(N_total) to 1× O(N_total) of object-copy work per frame).
+        if (itemPatches.length === 1) {
+            const u = itemPatches[0];
+            dispatch({ type: 'UPDATE_ITEM', id: u.id, patch: u.patch });
+        } else if (itemPatches.length > 1) {
+            dispatch({ type: 'UPDATE_ITEMS_BULK', updates: itemPatches });
         }
     }
 

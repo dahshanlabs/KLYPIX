@@ -38,6 +38,7 @@ import type { CanvasAction } from '../state/canvasStore';
 const SYNCABLE_ACTIONS = new Set<CanvasAction['type']>([
     'ADD_ITEM',
     'UPDATE_ITEM',
+    'UPDATE_ITEMS_BULK',
     'DELETE_ITEMS',
     'ADD_CONNECTION',
     'UPDATE_CONNECTION',
@@ -159,6 +160,14 @@ const FLUSH_WINDOW_MS = 50;
 // cares about the final value; intermediate states are visual noise.
 const COALESCE_KEYS: Partial<Record<CanvasAction['type'], (a: CanvasAction) => string>> = {
     UPDATE_ITEM: (a) => `UPDATE_ITEM:${(a as { type: 'UPDATE_ITEM'; id: string }).id}`,
+    // UPDATE_ITEMS_BULK: each frame of a multi-drag/multi-rotate emits one
+    // of these covering the same N items. Coalescing key is the SORTED set
+    // of ids it touches — so successive frames replace each other in the
+    // outbound buffer just like UPDATE_ITEM does per-id.
+    UPDATE_ITEMS_BULK: (a) => {
+        const upd = (a as { type: 'UPDATE_ITEMS_BULK'; updates: Array<{ id: string }> }).updates;
+        return 'UPDATE_ITEMS_BULK:' + upd.map(u => u.id).sort().join(',');
+    },
     UPDATE_LINE: (a) => `UPDATE_LINE:${(a as { type: 'UPDATE_LINE'; id: string }).id}`,
     UPDATE_STROKE: (a) => `UPDATE_STROKE:${(a as { type: 'UPDATE_STROKE'; id: string }).id}`,
     UPDATE_CONNECTION: (a) => `UPDATE_CONNECTION:${(a as { type: 'UPDATE_CONNECTION'; id: string }).id}`,

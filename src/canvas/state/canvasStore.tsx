@@ -274,6 +274,13 @@ export type CanvasAction =
     | { type: 'ZOOM'; factor: number; cx: number; cy: number } // cx/cy in SCREEN-space canvas coords
     | { type: 'ADD_ITEM'; item: CanvasItem }
     | { type: 'UPDATE_ITEM'; id: string; patch: Partial<CanvasItem> }
+    // Phase 22.5: batched item update for multi-drag / multi-rotate paths.
+    // Each per-pointermove frame used to dispatch N UPDATE_ITEM actions
+    // (one per dragged item) — each forcing `{...state.items}` rebuild
+    // O(N_total) — so a multi-select drag on a busy canvas paid
+    // 4 × N_total object copies per frame. This action does ONE rebuild
+    // per frame regardless of how many items are patched.
+    | { type: 'UPDATE_ITEMS_BULK'; updates: Array<{ id: string; patch: Partial<CanvasItem> }> }
     | { type: 'DELETE_ITEMS'; ids: string[] }
     | { type: 'SELECT'; ids: string[]; additive?: boolean }
     | { type: 'CLEAR_SELECTION' }
@@ -516,6 +523,22 @@ function reducerImpl(state: CanvasState, action: CanvasAction): CanvasState {
                 ...state,
                 items: { ...state.items, [action.id]: { ...existing, ...action.patch } as CanvasItem },
             };
+        }
+
+        case 'UPDATE_ITEMS_BULK': {
+            if (action.updates.length === 0) return state;
+            // One shallow-copy of items, mutate in place, return new object.
+            // O(N_total + N_updated) instead of O(N_total × N_updated).
+            const nextItems = { ...state.items };
+            let anyChanged = false;
+            for (const u of action.updates) {
+                const existing = nextItems[u.id];
+                if (!existing) continue;
+                nextItems[u.id] = { ...existing, ...u.patch } as CanvasItem;
+                anyChanged = true;
+            }
+            if (!anyChanged) return state;
+            return { ...state, items: nextItems };
         }
 
         case 'DELETE_ITEMS': {

@@ -1024,10 +1024,26 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
                     : { dx: rawDx, dy: rawDy, guides: [] as SnapGuide[] };
                 const { dx, dy, guides } = snap;
                 setSnapGuides(guides);
+                // Phase 22.5: batch into one UPDATE_ITEMS_BULK so the
+                // reducer rebuilds state.items ONCE per frame instead of
+                // N times. For a 4-item multi-drag on a 50-item canvas
+                // that drops per-frame copy work from 200 to 50 — the
+                // change you can feel in the lag the user reported.
+                const bulkUpdates: Array<{ id: string; patch: Partial<CanvasItem> }> = [];
                 for (const id of drag2.ids) {
                     const orig = drag2.originals[id];
                     if (!orig) continue;
-                    dispatch({ type: 'UPDATE_ITEM', id, patch: { x: orig.x + dx, y: orig.y + dy } });
+                    bulkUpdates.push({ id, patch: { x: orig.x + dx, y: orig.y + dy } });
+                }
+                if (bulkUpdates.length === 1) {
+                    // Single-item drag stays on the legacy path so any
+                    // downstream consumers expecting per-id UPDATE_ITEM
+                    // semantics (e.g. integrations, side-effect listeners)
+                    // see no behavioural change for the 1-item case.
+                    const u = bulkUpdates[0];
+                    dispatch({ type: 'UPDATE_ITEM', id: u.id, patch: u.patch });
+                } else if (bulkUpdates.length > 1) {
+                    dispatch({ type: 'UPDATE_ITEMS_BULK', updates: bulkUpdates });
                 }
                 // Lines: reset to original coords + translate by dx/dy.
                 // Resetting first (instead of accumulating delta-from-last-
