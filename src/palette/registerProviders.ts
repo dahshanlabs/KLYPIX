@@ -22,11 +22,12 @@ import { aiProvider } from './providers/aiProvider';
 import { installSnippetWatcher } from './snippets';
 
 let registered = false;
+let activeDisposers: Array<() => void> = [];
 
 export function registerAllProviders(): () => void {
     if (registered) return () => {};
     registered = true;
-    const disposers = [
+    activeDisposers = [
         register(calculatorProvider),
         register(klypixSearchProvider),
         register(clipboardProvider),
@@ -44,8 +45,43 @@ export function registerAllProviders(): () => void {
     // to populate the visible list without the user retyping.
     refresh();
     return () => {
-        for (const d of disposers) d();
+        for (const d of activeDisposers) d();
+        activeDisposers = [];
         resetCalcScope();
         registered = false;
     };
+}
+
+// Vite HMR: when ANY provider file hot-reloads, this module re-evaluates.
+// We dispose the old providers and re-register the new ones so the
+// updated objects (with new keepOpen flags, new icons, etc.) take effect
+// without requiring a full Ctrl+R reload. The hot.accept hooks below
+// invalidate THIS module whenever a downstream provider changes.
+// Vite HMR types live behind `vite/client`; cast to any so we don't
+// have to thread the reference comment + tsconfig change.
+const hot = (import.meta as any).hot;
+if (hot) {
+    hot.dispose(() => {
+        for (const d of activeDisposers) d();
+        activeDisposers = [];
+        registered = false;
+    });
+    // Accept hot-reloads from each provider file so a change there
+    // bubbles back here and re-runs registerAllProviders next.
+    hot.accept([
+        './providers/calculatorProvider',
+        './providers/klypixSearchProvider',
+        './providers/clipboardProvider',
+        './providers/snippetProvider',
+        './providers/appsProvider',
+        './providers/filesProvider',
+        './providers/webProvider',
+        './providers/aiProvider',
+    ], () => {
+        // Dispose stale registrations, then re-register fresh ones.
+        for (const d of activeDisposers) d();
+        activeDisposers = [];
+        registered = false;
+        registerAllProviders();
+    });
 }
