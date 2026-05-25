@@ -46,6 +46,38 @@ export default defineConfig({
                     if (id.includes('@google/generative-ai')) {
                         return 'vendor-gemini';
                     }
+                    // Phase 23 backlog #5: carve the previously-monolithic
+                    // 'vendor-misc' (~1.6MB) into named chunks per consumer
+                    // domain. Most of these are canvas-only deps that ride
+                    // the lazy KlypixCanvas chunk anyway — naming them
+                    // makes the network waterfall + cache invalidation
+                    // story explicit.
+                    if (id.includes('/xlsx/') || id.includes('xlsx-')) {
+                        // ~800KB. Used by canvas dropHandler + canvas agent.
+                        return 'vendor-xlsx';
+                    }
+                    if (id.includes('/jszip/')) {
+                        return 'vendor-jszip';
+                    }
+                    if (id.includes('/mathjs/')) {
+                        // Palette calculator. Already lazy via dynamic
+                        // import in calculatorProvider; named chunk so it
+                        // shows up clearly in the build report.
+                        return 'vendor-mathjs';
+                    }
+                    if (id.includes('/fuse.js/') || id.includes('fuse.js/dist')) {
+                        return 'vendor-fuse';
+                    }
+                    if (id.includes('/perfect-freehand/')) {
+                        return 'vendor-freehand';
+                    }
+                    if (id.includes('/pdfjs-dist/')) {
+                        return 'vendor-pdfjs';
+                    }
+                    // Anthropic SDK — only lazy-loaded via claudeAdapter.
+                    if (id.includes('@anthropic-ai/')) {
+                        return 'vendor-anthropic';
+                    }
                     // Everything else node_modules → a single vendor chunk.
                     return 'vendor-misc';
                 },
