@@ -73,6 +73,18 @@ interface Props {
 const DEFAULT_ALL: HandlePos[] = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
 
 export function ResizeHandle(props: Props) {
+    const { state } = useCanvasStore();
+    // Phase 22.5: when 2+ entities are selected, hide per-item resize
+    // handles entirely. The outer MultiSelectionBox provides group-level
+    // handles. Previously the per-item handles stayed visible but inert
+    // (the onPointerDown early-returns) — that left a visual mess of
+    // dozens of small handles when a user selected several items at once,
+    // and confused them about which surface was actually draggable.
+    const totalSel =
+        state.selectedIds.length
+        + state.selectedLineIds.length
+        + state.selectedStrokeIds.length;
+    if (totalSel >= 2) return null;
     const handles = props.handles || DEFAULT_ALL;
     return (
         <>
