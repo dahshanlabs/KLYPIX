@@ -59,7 +59,18 @@ import { AgentSettings } from './components/AgentSettings';
 import { AgentRobot } from './components/AgentRobot';
 import { KlypixMascot } from './components/KlypixMascot';
 import { ModeTabs, type AppTab } from './components/ModeTabs';
-import { KlypixCanvas } from './canvas/KlypixCanvas';
+// Phase 22.5: lazy-load the canvas chunk. KlypixCanvas pulls in the full
+// canvas engine, all 10 item types, interaction handlers, drawing layer,
+// agent, file format, cloud sync, JSZip, XLSX, plus the Gemini-backed
+// canvas-agent / autoTag / OCR — roughly 1.0–1.5 MB of JS for users who
+// stay in chat mode. Splitting it means cold start for chat-only sessions
+// no longer parses any of that code. Once the user enters canvas mode the
+// chunk downloads + caches; from that point on the always-mount semantics
+// from CLAUDE.md still apply (we keep it rendered for the rest of the
+// session so multi-canvas tab state survives chat↔canvas switches).
+const KlypixCanvas = lazy(() =>
+    import('./canvas/KlypixCanvas').then((m) => ({ default: m.KlypixCanvas }))
+);
 import { t, useLocale, translateActionLabel } from './i18n/strings';
 
 // ── Context-aware prompt system ──────────────────────────────────────────────
@@ -739,6 +750,23 @@ function AppMain() {
 
     // Top-level tab: Chat (current app) vs Canvas (.any workspace)
     const [activeTab, setActiveTab] = useState<AppTab>('chat');
+
+    // Phase 22.5: defer mounting KlypixCanvas (a lazy chunk) until the user
+    // first visits Canvas mode OR has a pending hand-off from chat. Once
+    // mounted, it stays mounted for the rest of the session — the
+    // always-mount semantics from CLAUDE.md kick in from the FIRST visit
+    // onward (preserves multi-canvas tab state, prevents the autosave
+    // restore dialog from re-firing). Avoids parsing ~1+MB of canvas JS
+    // for chat-only sessions.
+    const [hasVisitedCanvas, setHasVisitedCanvas] = useState<boolean>(() => {
+        // Edge case: if a hand-off queue from chat is already present on
+        // boot (e.g. previous session crashed mid-handoff), mount canvas
+        // eagerly so the drain effect can run.
+        try { return !!localStorage.getItem('klypix:pendingCanvasItems'); } catch { return false; }
+    });
+    useEffect(() => {
+        if (activeTab === 'canvas') setHasVisitedCanvas(true);
+    }, [activeTab]);
 
     // Chat→Canvas hand-off. Pushes the response content into a localStorage
     // queue keyed `klypix:pendingCanvasItems`, then flips the app tab to
@@ -1939,13 +1967,23 @@ function AppMain() {
         >
             <div className="glass isolate w-full h-full rounded-2xl flex flex-col drag relative pb-10" style={{ overflow: 'clip' }}>
 
-                {/* Canvas overlay — always mounted so multi-canvas tab state (items,
-                    undo stack, open tabs) survives Chat↔Canvas switches. KlypixCanvas
-                    toggles its own visibility via appVisible and propagates that to
-                    each inner CanvasSurface's tabActive so global side effects
-                    (autosave restore dialog, focus claim) only fire when canvas is
-                    actually shown. */}
-                <KlypixCanvas appVisible={activeTab === 'canvas'} />
+                {/* Canvas overlay — always mounted (from the first visit onward)
+                    so multi-canvas tab state (items, undo stack, open tabs)
+                    survives Chat↔Canvas switches. KlypixCanvas toggles its own
+                    visibility via appVisible and propagates that to each inner
+                    CanvasSurface's tabActive so global side effects (autosave
+                    restore dialog, focus claim) only fire when canvas is actually
+                    shown.
+
+                    Phase 22.5: the component itself is React.lazy — chunk only
+                    downloads when hasVisitedCanvas flips true (first canvas visit
+                    or chat→canvas hand-off). The Suspense fallback renders
+                    nothing because by the time the user can see the canvas
+                    area, the chunk has already loaded. Keep the always-mounted
+                    rendering once we cross the threshold. */}
+                <Suspense fallback={null}>
+                    {hasVisitedCanvas && <KlypixCanvas appVisible={activeTab === 'canvas'} />}
+                </Suspense>
 
                 {/* Sandbox approval — floats above both chat and canvas so the
                     Allow/Deny card is reachable from either view. Renders null
