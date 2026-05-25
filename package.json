@@ -37,6 +37,7 @@
     "lucide-react": "^0.473.0",
     "mammoth": "^1.11.0",
     "marked": "^17.0.3",
+    "mathjs": "^14.9.1",
     "officeparser": "^6.0.4",
     "pdf-parse": "^2.4.5",
     "pdfjs-dist": "^2.16.105",

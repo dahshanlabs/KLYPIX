@@ -334,6 +334,25 @@ interface CanvasSurfaceProps {
 
 function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath, openLauncherOnMount, onLauncherDismissed, onCloseCanvas }: CanvasSurfaceProps = {}) {
     const { state, dispatch, commit, pushSnapshot, undo } = useCanvasStore();
+
+    // Phase 23: when this tab is active, register a canvas-items reader with
+    // the palette so Ctrl+K can search the items on screen. Uses a global
+    // window hook so we don't import from the palette chunk (would defeat
+    // the lazy KlypixCanvas split — palette stays a tiny separate chunk).
+    useEffect(() => {
+        if (!tabActive) return;
+        const reg = (window as any).klypixPaletteRegisterCanvas;
+        if (typeof reg !== 'function') return;
+        reg(() => ({
+            items: Object.values(state.items).map((it: any) => ({
+                id: it.id,
+                type: it.type,
+                content: typeof it.content === 'string' ? it.content : undefined,
+                title: typeof it.title === 'string' ? it.title : undefined,
+            })),
+        }));
+        return () => { reg(null); };
+    }, [tabActive, state.items]);
     // Banner shown when a drag auto-grew a parent because a child overflowed.
     // Lets the user pick: deparent (Yes), keep + extend (No), or revert
     // the drag entirely (Cancel). Auto-times-out to "No" after 5 s.

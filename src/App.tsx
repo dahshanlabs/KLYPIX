@@ -65,6 +65,7 @@ import { ModeTabs, type AppTab } from './components/ModeTabs';
 // palette opens empty until Day 2's Calculator + Klypix Search land.
 import { CommandPalette } from './palette/CommandPalette';
 import { useGlobalHotkey } from './palette/useGlobalHotkey';
+import { registerAllProviders } from './palette/registerProviders';
 // Phase 22.5: lazy-load the canvas chunk. KlypixCanvas pulls in the full
 // canvas engine, all 10 item types, interaction handlers, drawing layer,
 // agent, file format, cloud sync, JSZip, XLSX, plus the Gemini-backed
@@ -692,10 +693,14 @@ export default function App() {
 
 // ── AppMain (all hooks live here, only mounts when authenticated) ─────────────
 function AppMain() {
-    // Phase 23: install the global Ctrl+K hotkey. The palette modal mounts
-    // at the bottom of this component's tree so it portals above all other
-    // UI when open.
+    // Phase 23: install the global Ctrl+K hotkey + register palette providers.
+    // The palette modal mounts at the bottom of this component's tree so it
+    // portals above all other UI when open.
     useGlobalHotkey();
+    useEffect(() => {
+        const dispose = registerAllProviders();
+        return dispose;
+    }, []);
     // Onboarding state
     const [showOnboarding, setShowOnboarding] = useState(!isOnboardingComplete());
 
@@ -926,6 +931,55 @@ function AppMain() {
         currentChatId,
         setCurrentChatId,
     });
+
+    // Phase 23: wire palette → app event handlers. Each provider dispatches
+    // a CustomEvent rather than importing app state directly — keeps the
+    // palette chunk decoupled from chat/canvas internals.
+    useEffect(() => {
+        const onOpenCanvas = (e: Event) => {
+            const filePath = (e as CustomEvent).detail?.filePath;
+            if (!filePath) return;
+            setActiveTab('canvas');
+            // Queue the open via the same pendingCanvasItems shim used
+            // for chat→canvas hand-offs: the canvas surface drains it
+            // once its restore dialog has settled.
+            try {
+                localStorage.setItem('klypix:palette:pendingOpenCanvas', filePath);
+                window.dispatchEvent(new CustomEvent('klypix:palette:drain-open'));
+            } catch { /* quota */ }
+        };
+        const onOpenPinned = (ev: Event) => {
+            const id = (ev as CustomEvent).detail?.id;
+            if (!id) return;
+            const chat = pinnedChats.pinnedChats.find(p => p.id === id);
+            if (chat) pinnedChats.handleLoadPinnedChat(chat);
+        };
+        const onResumeChat = (ev: Event) => {
+            // Prefill chat input with the historical query so the user
+            // can re-run it. We don't have direct access to the input
+            // ref from here without bigger refactor — fall back to
+            // clipboard so users can paste.
+            const q = (ev as CustomEvent).detail?.query;
+            if (typeof q === 'string' && q.length > 0) {
+                try { void navigator.clipboard.writeText(q); } catch { /* swallow */ }
+            }
+        };
+        const onPrefillTool = (ev: Event) => {
+            const tool = (ev as CustomEvent).detail?.tool;
+            if (!tool) return;
+            try { void navigator.clipboard.writeText(`/use ${tool}`); } catch { /* swallow */ }
+        };
+        window.addEventListener('klypix:palette-open-canvas', onOpenCanvas);
+        window.addEventListener('klypix:palette-open-pinned-chat', onOpenPinned);
+        window.addEventListener('klypix:palette-resume-chat', onResumeChat);
+        window.addEventListener('klypix:palette-prefill-tool', onPrefillTool);
+        return () => {
+            window.removeEventListener('klypix:palette-open-canvas', onOpenCanvas);
+            window.removeEventListener('klypix:palette-open-pinned-chat', onOpenPinned);
+            window.removeEventListener('klypix:palette-resume-chat', onResumeChat);
+            window.removeEventListener('klypix:palette-prefill-tool', onPrefillTool);
+        };
+    }, [pinnedChats]);
 
     const suggestions = useSuggestions({
         isDeepFileMode: deepMode.isDeepFileMode,
