@@ -637,15 +637,15 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeer
                 visible but are inert while this is showing — drag is
                 routed exclusively through the outer handles. */}
             <MultiSelectionBox />
-            {/* Remote collab cursors + selection halos — rendered INSIDE
-                the world-coords transform so they pan/zoom with the canvas.
-                Strokes inverse-scale internally to stay legible. Nothing
-                painted when no peers are providing data. */}
+            {/* Remote collab selection halos — rendered INSIDE the world-
+                coords transform so the rectangles pan/zoom with the items
+                they outline. Nothing painted when no peers are providing
+                data. Cursors moved to the screen-space overlay layer
+                below — they're anchored in world coords but PROJECTED
+                each render so size and badge don't ride the parent
+                transform (which caused on-zoom detach). */}
             {collabPeers && collabPeers.length > 0 && (
-                <>
-                    <RemoteSelectionHalos peers={collabPeers} viewZoom={view.zoom} />
-                    <RemoteCursors peers={collabPeers} viewZoom={view.zoom} />
-                </>
+                <RemoteSelectionHalos peers={collabPeers} viewZoom={view.zoom} />
             )}
         </div>
         {/* Screen-space selection ring overlay. Sits above the transform
@@ -674,6 +674,18 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeer
                 />
             ))}
         </div>
+        {/* Remote peer cursors — screen-space layer. Anchor stored in world
+            coords; projected via worldToScreen(view) each render so zoom +
+            pan reproject from the same {zoom,panX,panY} source the per-item
+            rings above use. Living outside the world transform means the
+            arrow + name pill stay fixed screen size with no inverse-scale
+            clamp, and the position can't be desynced by the parent's CSS
+            transform. zIndex above the rings so the cursor reads on top. */}
+        {collabPeers && collabPeers.length > 0 && (
+            <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 1000 }}>
+                <RemoteCursors peers={collabPeers} view={view} />
+            </div>
+        )}
         {/* Drawing resize handles — only when exactly ONE drawing is
             selected. Multi-select shows rings only; single select adds
             the 8 interactive handles for scale / stretch. Items already

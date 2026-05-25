@@ -1744,7 +1744,24 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
         const el = opts?.worldRef?.current;
         if (!live || !el) return;
         el.style.transform = `translate(${live.panX}px, ${live.panY}px) scale(${live.zoom})`;
-    }, [opts?.worldRef]);
+        // Commit React state on the same rAF tick that wrote the DOM
+        // transform. Without this, screen-space overlays (per-item
+        // selection rings, remote peer cursors) keep reading the OLD
+        // {panX, panY, zoom} from React state and visibly detach from
+        // their items mid-gesture — the ring sits floating in empty
+        // space while the item rides the live world transform. The old
+        // 120ms scheduleCommit debounce left a window long enough to be
+        // perceptible on short wheel/touchpad gestures.
+        //
+        // Cost: one SET_VIEW dispatch per rAF (≤60Hz) during the
+        // gesture instead of one per gesture-end. Acceptable because
+        // wheel events are already coalesced into one rAF tick, so we
+        // don't multiply dispatches by event count.
+        const cur = stateRef.current.view;
+        if (cur.zoom !== live.zoom || cur.panX !== live.panX || cur.panY !== live.panY) {
+            dispatch({ type: 'SET_VIEW', view: { panX: live.panX, panY: live.panY, zoom: live.zoom } });
+        }
+    }, [opts?.worldRef, dispatch]);
 
     const commitLiveViewNow = useCallback(() => {
         if (wheelCommitTimerRef.current != null) {

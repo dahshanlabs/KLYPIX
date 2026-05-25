@@ -1,21 +1,27 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { CollabPeer } from './useCanvasCollab';
 import { useCanvasStore } from '../state/canvasStore';
+import { worldToScreen } from '../CanvasEngine';
+import type { ViewState } from '../items/types';
 
 interface Props {
     peers: CollabPeer[];
-    /** Current view zoom — cursor + label scale with the canvas so they
-     *  stay readable across zoom levels. We render the actual SVG at
-     *  fixed screen size by inverse-scaling here; the parent wrapper
-     *  (CanvasRenderer's world layer) handles pan/zoom positioning. */
-    viewZoom: number;
+    /** Full viewport state — used to project each peer's world-space cursor
+     *  to screen coords every render via worldToScreen(). Single source of
+     *  truth for {zoom, panX, panY}; no separately-stored screen offset. */
+    view: ViewState;
 }
 
-/** A single SVG cursor arrow at world (cursorX, cursorY) with a name label.
+/** A single SVG cursor arrow whose ANCHOR is stored in world coords and
+ *  projected to screen space on every render via worldToScreen(view).
+ *  Lives in the screen-space overlay layer (sibling of the selection-ring
+ *  overlay), so it does NOT inherit the canvas's CSS transform — zoom
+ *  reprojection happens through the projection helper, not via a parent
+ *  transform.
+ *
  *  Uses a smoothed-position ref so the cursor lerps between received
- *  positions instead of teleporting at the 30Hz broadcast rate — looks
- *  more alive without bumping the network rate. */
-function PeerCursor({ peer, viewZoom }: { peer: CollabPeer; viewZoom: number }) {
+ *  positions instead of teleporting at the 30Hz broadcast rate. */
+function PeerCursor({ peer, view }: { peer: CollabPeer; view: ViewState }) {
     const targetX = peer.cursorX!;
     const targetY = peer.cursorY!;
     const [pos, setPos] = useState({ x: targetX, y: targetY });
@@ -52,13 +58,18 @@ function PeerCursor({ peer, viewZoom }: { peer: CollabPeer; viewZoom: number }) 
         };
     }, [targetX, targetY]);
 
-    // Inverse-scale by viewZoom so the cursor stays a constant size on
-    // screen regardless of canvas zoom. Clamp to [0.5, 4] world-units
-    // per screen-px so it stays usable at the extremes.
-    const inv = 1 / Math.max(0.25, Math.min(4, viewZoom));
-    const ARROW_SIZE = 16 * inv;
-    const PADDING = 4 * inv;
-    const LABEL_FONT = 11 * inv;
+    // Project world → screen via the shared helper. Single source of truth
+    // for {zoom, panX, panY} — same projection the per-item selection rings
+    // use, so the cursor and ring layers can't disagree on where world
+    // coords land on screen.
+    const screen = worldToScreen(pos, view);
+
+    // Screen-space chrome — fixed pixels, no inverse-scale clamp. Living
+    // outside the world transform means we don't have to counter-scale to
+    // stay readable.
+    const ARROW_SIZE = 16;
+    const PADDING = 4;
+    const LABEL_FONT = 11;
 
     // Phase 15: dev-only debug badge — flip on with
     // localStorage['klypix:debugCursor'] = '1' to see the raw world coord
@@ -70,8 +81,8 @@ function PeerCursor({ peer, viewZoom }: { peer: CollabPeer; viewZoom: number }) 
         <div
             style={{
                 position: 'absolute',
-                left: pos.x,
-                top: pos.y,
+                left: screen.x,
+                top: screen.y,
                 pointerEvents: 'none',
                 // Don't transition — the lerp loop handles the smoothing.
                 // CSS transitions on left/top would fight the rAF updates.
@@ -127,13 +138,13 @@ function PeerCursor({ peer, viewZoom }: { peer: CollabPeer; viewZoom: number }) 
 /** Render every peer's cursor that's currently fresh (has cursorX/Y +
  *  cursorAt within the stale window — the hook filters those out before
  *  exposing them to us, so any peer here with cursor coords is current). */
-export function RemoteCursors({ peers, viewZoom }: Props) {
+export function RemoteCursors({ peers, view }: Props) {
     const cursored = peers.filter(p => p.cursorX != null && p.cursorY != null);
     if (cursored.length === 0) return null;
     return (
         <>
             {cursored.map(p => (
-                <PeerCursor key={`${p.userId}::${p.deviceId}`} peer={p} viewZoom={viewZoom} />
+                <PeerCursor key={`${p.userId}::${p.deviceId}`} peer={p} view={view} />
             ))}
         </>
     );
