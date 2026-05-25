@@ -200,16 +200,93 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
         // from where the previous session left off.
         lamportRef.current = Math.max(lamportRef.current, loadLamport(blobId));
 
+        // Phase 22.5: debounced persistence to take synchronous localStorage
+        // writes off the keystroke hot path. Each UPDATE_ITEM previously
+        // bumped lamport AND (if offline) re-serialized the entire op queue
+        // — 1–5 ms of main-thread blocking I/O PER KEYSTROKE. On battery the
+        // disk slows further; typing felt visibly laggy.
+        //
+        // Now we keep both in memory and flush at most every 500 ms.
+        // Worst-case loss on hard crash: 500 ms of lamport progression
+        // (self-heals on first inbound remote op via the existing
+        // `if (p.lamport > lamportRef.current)` clamp) + up to ~5–10 chars
+        // of queued work — acceptable tradeoff for ~50 ms/sec of main
+        // thread reclaimed. The beforeunload handler flushes synchronously
+        // so normal window close still persists everything.
+        const PERSIST_DEBOUNCE_MS = 500;
+
+        // Lamport debounce. lamportRef itself stays authoritative in memory.
+        let lamportSaveTimer: number | null = null;
+        let lamportDirty = false;
+        const scheduleLamportSave = () => {
+            lamportDirty = true;
+            if (lamportSaveTimer != null) return;
+            lamportSaveTimer = window.setTimeout(() => {
+                lamportSaveTimer = null;
+                if (lamportDirty) {
+                    saveLamport(blobId, lamportRef.current);
+                    lamportDirty = false;
+                }
+            }, PERSIST_DEBOUNCE_MS);
+        };
+        const flushLamportNow = () => {
+            if (lamportSaveTimer != null) {
+                window.clearTimeout(lamportSaveTimer);
+                lamportSaveTimer = null;
+            }
+            if (lamportDirty) {
+                saveLamport(blobId, lamportRef.current);
+                lamportDirty = false;
+            }
+        };
+
+        // Offline queue cache. Single load on mount; every enqueue/drain
+        // mutates the in-memory array and schedules a debounced flush.
+        // Persisted form on disk catches up at most PERSIST_DEBOUNCE_MS late.
+        const queueCache: QueuedOp[] = loadQueue(blobId);
+        let queueSaveTimer: number | null = null;
+        let queueDirty = false;
+        const scheduleQueueSave = () => {
+            queueDirty = true;
+            if (queueSaveTimer != null) return;
+            queueSaveTimer = window.setTimeout(() => {
+                queueSaveTimer = null;
+                if (queueDirty) {
+                    saveQueue(blobId, queueCache);
+                    queueDirty = false;
+                }
+            }, PERSIST_DEBOUNCE_MS);
+        };
+        const flushQueueNow = () => {
+            if (queueSaveTimer != null) {
+                window.clearTimeout(queueSaveTimer);
+                queueSaveTimer = null;
+            }
+            if (queueDirty) {
+                saveQueue(blobId, queueCache);
+                queueDirty = false;
+            }
+        };
+
+        // Synchronous flush on page-hide / unload so a tab close doesn't
+        // strand pending writes. The pagehide event fires reliably across
+        // all unmount paths Electron uses (window close, app quit, F5).
+        const beforeUnload = () => {
+            flushLamportNow();
+            flushQueueNow();
+        };
+        window.addEventListener('pagehide', beforeUnload);
+        window.addEventListener('beforeunload', beforeUnload);
+
         const bumpLamport = (): number => {
             lamportRef.current += 1;
-            saveLamport(blobId, lamportRef.current);
+            scheduleLamportSave();
             return lamportRef.current;
         };
 
         const enqueue = (q: QueuedOp): void => {
-            const cur = loadQueue(blobId);
-            cur.push(q);
-            saveQueue(blobId, cur);
+            queueCache.push(q);
+            scheduleQueueSave();
         };
 
         // Drain the offline queue one op at a time so the catch-up burst
@@ -224,9 +301,11 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
             const drainedForPersist: QueuedOp[] = [];
             try {
                 while (connectedRef.current) {
-                    const cur = loadQueue(blobId);
-                    if (cur.length === 0) break;
-                    const head = cur[0];
+                    // Read + mutate the in-memory cache directly — no more
+                    // per-op localStorage round-trip. The debounced save
+                    // covers durability.
+                    if (queueCache.length === 0) break;
+                    const head = queueCache[0];
                     const channel = channelRef.current;
                     if (!channel) break;
                     try {
@@ -235,9 +314,9 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
                             event: 'op',
                             payload: { device_id: deviceId, lamport: head.lamport, action: head.action } satisfies OpPayload,
                         });
-                        // Successful send — pop the head and persist.
-                        cur.shift();
-                        saveQueue(blobId, cur);
+                        // Successful send — pop the head and schedule a save.
+                        queueCache.shift();
+                        scheduleQueueSave();
                         drainedForPersist.push(head);
                     } catch (err) {
                         console.warn('[opSync] drain send failed, keeping in queue:', err);
@@ -323,11 +402,12 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
             if (!p || typeof p.device_id !== 'string') return;
             if (p.device_id === deviceId) return; // self-echo guard
             // Bump our lamport beyond what we've seen so subsequent local
-            // sends carry a higher tick. Persist immediately so a crash
-            // doesn't roll back to an older tick on reload.
+            // sends carry a higher tick. Schedule a debounced save so the
+            // 500ms persistence cadence applies here too — a crash inside
+            // the window self-heals on the next remote op clamp anyway.
             if (typeof p.lamport === 'number' && p.lamport > lamportRef.current) {
                 lamportRef.current = p.lamport;
-                saveLamport(blobId, lamportRef.current);
+                scheduleLamportSave();
             }
             const action = p.action as CanvasAction;
             if (!action || typeof action !== 'object' || !('type' in action)) return;
@@ -527,6 +607,8 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
         return () => {
             cancelled = true;
             unsubscribe();
+            window.removeEventListener('pagehide', beforeUnload);
+            window.removeEventListener('beforeunload', beforeUnload);
             channelRef.current = null;
             connectedRef.current = false;
             // Best-effort flush of any pending outbound buffer to the
@@ -539,6 +621,11 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
             for (const q of outboundBuffer) enqueue(q);
             outboundBuffer.length = 0;
             outboundIndex.clear();
+            // Phase 22.5: flush both debounced caches synchronously so a
+            // blob switch or unmount doesn't strand lamport/queue progress
+            // in the pending-write window.
+            flushLamportNow();
+            flushQueueNow();
             // Release our refCount on the shared channel — the registry
             // tears the channel down when refCount hits 0.
             acquired.release();
