@@ -302,6 +302,9 @@ function toResult(row: ClipboardRow): PaletteResult {
                     // Propagate to cross-device sync if opt-in is enabled.
                     await syncPinChange(row, !row.pinned);
                     listCache = null;
+                    // Force re-pull so the Pin/PinOff icon morphs immediately.
+                    const { refresh } = await import('../paletteStore');
+                    refresh();
                 },
             },
             {
@@ -328,11 +331,21 @@ function toResult(row: ClipboardRow): PaletteResult {
                 label: 'Remove from history',
                 inlineIcon: React.createElement(Trash2, { size: 12 }),
                 inlineIconAccent: '#ef4444',
+                // keepOpen so users can clean up multiple rows in a single
+                // palette session without having to reopen. The list rebuilds
+                // on every paletteStore refresh so the deleted row vanishes
+                // immediately after the action handler resolves.
+                keepOpen: true,
                 handler: async () => {
                     const bridge: any = (window as any).electron?.clipboardHistory;
                     if (!bridge?.remove) return;
                     await bridge.remove(row.id);
                     listCache = null;
+                    // Force a re-pull so the deleted row drops out of the
+                    // visible list immediately. Without this the cached
+                    // list stays for up to 800ms before the next fetch.
+                    const { refresh } = await import('../paletteStore');
+                    refresh();
                 },
             },
         ],

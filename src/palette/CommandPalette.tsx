@@ -210,7 +210,12 @@ export function CommandPalette() {
                 style={{
                     width: snap.ranked[snap.selectedIndex]?.detail ? 880 : 640,
                     maxWidth: '92vw',
-                    maxHeight: '60vh',
+                    // Phase 23 polish: FIXED height instead of max-height so
+                    // the modal doesn't visually jump as the result count
+                    // changes. 60vh capped at 520px so on small screens we
+                    // don't stretch awkwardly tall. Body content scrolls
+                    // inside the fixed container.
+                    height: 'min(60vh, 520px)',
                     display: 'flex',
                     flexDirection: 'column',
                     background: '#0e0e14',
