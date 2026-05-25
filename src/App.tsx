@@ -59,6 +59,12 @@ import { AgentSettings } from './components/AgentSettings';
 import { AgentRobot } from './components/AgentRobot';
 import { KlypixMascot } from './components/KlypixMascot';
 import { ModeTabs, type AppTab } from './components/ModeTabs';
+// Phase 23 — global command palette. Mounted once at the app root; opens on
+// Ctrl+K (or Cmd+K) from anywhere. Providers register themselves when their
+// chunks load — Day 1 ships the infrastructure with zero providers, so the
+// palette opens empty until Day 2's Calculator + Klypix Search land.
+import { CommandPalette } from './palette/CommandPalette';
+import { useGlobalHotkey } from './palette/useGlobalHotkey';
 // Phase 22.5: lazy-load the canvas chunk. KlypixCanvas pulls in the full
 // canvas engine, all 10 item types, interaction handlers, drawing layer,
 // agent, file format, cloud sync, JSZip, XLSX, plus the Gemini-backed
@@ -686,6 +692,10 @@ export default function App() {
 
 // ── AppMain (all hooks live here, only mounts when authenticated) ─────────────
 function AppMain() {
+    // Phase 23: install the global Ctrl+K hotkey. The palette modal mounts
+    // at the bottom of this component's tree so it portals above all other
+    // UI when open.
+    useGlobalHotkey();
     // Onboarding state
     const [showOnboarding, setShowOnboarding] = useState(!isOnboardingComplete());
 
@@ -1984,6 +1994,11 @@ function AppMain() {
                 <Suspense fallback={null}>
                     {hasVisitedCanvas && <KlypixCanvas appVisible={activeTab === 'canvas'} />}
                 </Suspense>
+
+                {/* Phase 23: global command palette. Portals to body when open
+                    so it floats above EVERYTHING. The hotkey hook installed
+                    near the top of AppMain handles Ctrl+K to toggle it. */}
+                <CommandPalette />
 
                 {/* Sandbox approval — floats above both chat and canvas so the
                     Allow/Deny card is reachable from either view. Renders null

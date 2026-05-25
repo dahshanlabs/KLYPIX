@@ -1,0 +1,414 @@
+import React, { useEffect, useRef, useSyncExternalStore } from 'react';
+import { createPortal } from 'react-dom';
+import { Search, ArrowDown, ArrowUp, CornerDownLeft, Command } from 'lucide-react';
+import { t, useLocale } from '../i18n/strings';
+import {
+    subscribe,
+    getSnapshot,
+    close,
+    setQuery,
+    moveSelection,
+    jumpSelection,
+    cycleSecondary,
+} from './paletteStore';
+import { intentFromKey } from './keyboardModel';
+import { recordHit } from './frecency';
+import type { RankedResult, PaletteAction } from './providers/types';
+
+// Phase 23 — Command Palette UI shell. Renders to a portal at body level so
+// it floats above EVERYTHING (canvas chrome, chat, dialogs). The modal
+// itself is purely a driver — it doesn't know about providers, only about
+// the ranked result list the store hands it.
+//
+// Layout:
+//   ┌──────────────────────────────────────────────────┐
+//   │ 🔍  search input                                  │  ← header
+//   ├──────────────────────────────────────────────────┤
+//   │ ▸ Result row (highlighted)                        │
+//   │   subtitle                                        │
+//   │   Result row                                      │
+//   │   ...                                             │  ← scrollable list
+//   ├──────────────────────────────────────────────────┤
+//   │ ↑↓ navigate · ↵ open · Tab actions · Esc close   │  ← footer hints
+//   └──────────────────────────────────────────────────┘
+//
+// Sizing: 640px wide, max-height 60vh, centered top-third of viewport.
+// Same proportions as Raycast / Linear / Cmd+K palettes for muscle memory.
+
+export function CommandPalette() {
+    useLocale();
+    const snap = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+    const inputRef = useRef<HTMLInputElement>(null);
+    const listRef = useRef<HTMLDivElement>(null);
+
+    // Focus the input every time the palette opens. Skipping requestAnimationFrame
+    // here because by the time React renders us, the DOM is ready — and any
+    // delay creates a flash of "input not yet focused" the user can see.
+    useEffect(() => {
+        if (snap.open) {
+            inputRef.current?.focus();
+            inputRef.current?.select();
+        }
+    }, [snap.open]);
+
+    // Scroll the highlighted row into view as selection changes.
+    useEffect(() => {
+        if (!snap.open) return;
+        const el = listRef.current?.querySelector<HTMLElement>(`[data-palette-row="${snap.selectedIndex}"]`);
+        if (el) el.scrollIntoView({ block: 'nearest' });
+    }, [snap.selectedIndex, snap.open]);
+
+    // Click-outside to close. Captures at the backdrop, NOT on the modal
+    // body, so clicks inside still work.
+    const onBackdropMouseDown = (e: React.MouseEvent) => {
+        if (e.target === e.currentTarget) close();
+    };
+
+    const runAction = async (action: PaletteAction | undefined, resultId?: string) => {
+        if (!action) return;
+        try {
+            await action.handler();
+            if (resultId) recordHit(resultId);
+        } catch (err) {
+            console.warn('[palette] action failed:', err);
+        } finally {
+            if (!action.keepOpen) close();
+        }
+    };
+
+    const onKeyDown = (e: React.KeyboardEvent) => {
+        const intent = intentFromKey(e);
+        if (!intent) return;  // letters go to the input
+        e.preventDefault();
+        e.stopPropagation();
+        const cur = snap.ranked[snap.selectedIndex];
+        switch (intent.kind) {
+            case 'close': close(); return;
+            case 'move': moveSelection(intent.delta); return;
+            case 'jump':
+                jumpSelection(intent.to);
+                return;
+            case 'primary':
+                if (cur) void runAction(cur.primaryAction, cur.id);
+                return;
+            case 'cycle-secondary':
+                cycleSecondary(intent.delta);
+                return;
+            case 'secondary':
+                if (cur?.secondaryActions?.[intent.index]) {
+                    void runAction(cur.secondaryActions[intent.index], cur.id);
+                }
+                return;
+            case 'send-to-chat':
+                // Convention: secondary index 1 is "send to chat". If a
+                // provider didn't declare it, silently no-op so the chord
+                // doesn't accidentally trigger something unrelated.
+                if (cur?.secondaryActions?.[1]) {
+                    void runAction(cur.secondaryActions[1], cur.id);
+                }
+                return;
+            case 'send-to-canvas':
+                if (cur?.secondaryActions?.[2]) {
+                    void runAction(cur.secondaryActions[2], cur.id);
+                }
+                return;
+        }
+    };
+
+    if (!snap.open) return null;
+
+    return createPortal(
+        <div
+            onMouseDown={onBackdropMouseDown}
+            onKeyDown={onKeyDown}
+            style={{
+                position: 'fixed',
+                inset: 0,
+                zIndex: 9999,
+                background: 'rgba(0,0,0,0.35)',
+                backdropFilter: 'blur(2px)',
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'center',
+                paddingTop: '15vh',
+            }}
+            data-palette-root="1"
+        >
+            <div
+                role="dialog"
+                aria-label={t('palette.title')}
+                style={{
+                    width: 640,
+                    maxWidth: '90vw',
+                    maxHeight: '60vh',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    background: '#0e0e14',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: 12,
+                    boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+                    overflow: 'hidden',
+                }}
+            >
+                {/* Header: search input */}
+                <div
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: '12px 14px',
+                        borderBottom: '1px solid rgba(255,255,255,0.06)',
+                    }}
+                >
+                    <Search size={16} style={{ color: 'rgba(255,255,255,0.45)', flexShrink: 0 }} />
+                    <input
+                        ref={inputRef}
+                        value={snap.query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        placeholder={t('palette.placeholder')}
+                        style={{
+                            flex: 1,
+                            background: 'transparent',
+                            border: 'none',
+                            outline: 'none',
+                            color: 'white',
+                            fontSize: 14,
+                            fontFamily: 'inherit',
+                        }}
+                        spellCheck={false}
+                        autoComplete="off"
+                    />
+                    {snap.exclusiveProvider && (
+                        <span
+                            style={{
+                                fontSize: 10,
+                                padding: '2px 8px',
+                                borderRadius: 4,
+                                background: 'rgba(16,185,129,0.15)',
+                                color: '#10b981',
+                                fontWeight: 600,
+                                textTransform: 'uppercase',
+                                letterSpacing: 0.5,
+                            }}
+                        >
+                            {snap.exclusiveProvider}
+                        </span>
+                    )}
+                </div>
+
+                {/* Result list */}
+                <div
+                    ref={listRef}
+                    style={{
+                        flex: 1,
+                        overflowY: 'auto',
+                        padding: 4,
+                        minHeight: 0,
+                    }}
+                >
+                    {snap.ranked.length === 0 ? (
+                        <EmptyState query={snap.query} />
+                    ) : (
+                        snap.ranked.map((r, i) => (
+                            <ResultRow
+                                key={r.id}
+                                result={r}
+                                index={i}
+                                highlighted={i === snap.selectedIndex}
+                                onHover={() => jumpSelection(i)}
+                                onClick={() => runAction(r.primaryAction, r.id)}
+                            />
+                        ))
+                    )}
+                </div>
+
+                {/* Footer hint strip */}
+                <Footer
+                    current={snap.ranked[snap.selectedIndex]}
+                    secondaryCursor={snap.secondaryCursor}
+                />
+            </div>
+        </div>,
+        document.body,
+    );
+}
+
+function EmptyState({ query }: { query: string }) {
+    return (
+        <div
+            style={{
+                padding: '40px 20px',
+                textAlign: 'center',
+                color: 'rgba(255,255,255,0.35)',
+                fontSize: 13,
+            }}
+        >
+            {query
+                ? t('palette.empty_with_query').replace('{q}', query)
+                : t('palette.empty_no_query')}
+        </div>
+    );
+}
+
+function ResultRow({
+    result,
+    index,
+    highlighted,
+    onHover,
+    onClick,
+}: {
+    result: RankedResult;
+    index: number;
+    highlighted: boolean;
+    onHover: () => void;
+    onClick: () => void;
+}) {
+    return (
+        <div
+            data-palette-row={index}
+            onMouseEnter={onHover}
+            onClick={onClick}
+            style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '8px 10px',
+                borderRadius: 6,
+                cursor: 'pointer',
+                background: highlighted ? 'rgba(16,185,129,0.12)' : 'transparent',
+                border: highlighted
+                    ? '1px solid rgba(16,185,129,0.25)'
+                    : '1px solid transparent',
+                transition: 'background 60ms, border-color 60ms',
+            }}
+        >
+            <div
+                style={{
+                    width: 28,
+                    height: 28,
+                    flexShrink: 0,
+                    borderRadius: 6,
+                    background: result.accent
+                        ? `${result.accent}22`
+                        : 'rgba(255,255,255,0.05)',
+                    color: result.accent ?? 'rgba(255,255,255,0.6)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                }}
+            >
+                {result.icon ?? <DotIcon />}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                    style={{
+                        fontSize: 13,
+                        color: 'rgba(255,255,255,0.92)',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                    }}
+                >
+                    {result.title}
+                </div>
+                {result.subtitle && (
+                    <div
+                        style={{
+                            fontSize: 11,
+                            color: 'rgba(255,255,255,0.4)',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            marginTop: 1,
+                        }}
+                    >
+                        {result.subtitle}
+                    </div>
+                )}
+            </div>
+            <span
+                style={{
+                    fontSize: 9,
+                    color: 'rgba(255,255,255,0.3)',
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.5,
+                    flexShrink: 0,
+                }}
+            >
+                {result.source}
+            </span>
+        </div>
+    );
+}
+
+function DotIcon() {
+    return (
+        <span
+            style={{
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: 'currentColor',
+                display: 'block',
+            }}
+        />
+    );
+}
+
+function Footer({
+    current,
+    secondaryCursor,
+}: {
+    current: RankedResult | undefined;
+    secondaryCursor: number;
+}) {
+    const cur = current?.secondaryActions?.[secondaryCursor];
+    return (
+        <div
+            style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 14,
+                padding: '8px 14px',
+                fontSize: 10,
+                color: 'rgba(255,255,255,0.4)',
+                borderTop: '1px solid rgba(255,255,255,0.06)',
+                background: 'rgba(255,255,255,0.02)',
+            }}
+        >
+            <Hint icon={<><ArrowUp size={10} /><ArrowDown size={10} /></>} label={t('palette.hint.navigate')} />
+            <Hint icon={<CornerDownLeft size={10} />} label={current?.primaryAction.label ?? t('palette.hint.open')} />
+            {cur && (
+                <Hint
+                    icon={<span style={{ fontSize: 9, fontWeight: 700 }}>Tab</span>}
+                    label={cur.label + (cur.chord ? ` (${cur.chord})` : '')}
+                />
+            )}
+            <div style={{ flex: 1 }} />
+            <Hint icon={<Command size={10} />} label={t('palette.hint.close')} />
+        </div>
+    );
+}
+
+function Hint({ icon, label }: { icon: React.ReactNode; label: string }) {
+    return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span
+                style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 2,
+                    padding: '1px 4px',
+                    borderRadius: 3,
+                    background: 'rgba(255,255,255,0.08)',
+                    color: 'rgba(255,255,255,0.7)',
+                    minWidth: 18,
+                    justifyContent: 'center',
+                }}
+            >
+                {icon}
+            </span>
+            <span>{label}</span>
+        </div>
+    );
+}

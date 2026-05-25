@@ -460,6 +460,14 @@ const strings: Strings = {
     'canvas.chat.empty_has_peers': { en: 'Say hi! Messages are visible to everyone currently on this canvas.', ar: 'ابدأ المحادثة! الرسائل مرئية للمتصلين الآن على هذه اللوحة.' },
     'canvas.chat.placeholder': { en: 'Message peers on this canvas…', ar: 'راسل المتعاونين على هذه اللوحة…' },
     'canvas.chat.send': { en: 'Send', ar: 'إرسال' },
+    // Phase 23 — Command Palette
+    'palette.title': { en: 'Command Palette', ar: 'لوحة الأوامر' },
+    'palette.placeholder': { en: 'Search canvases, items, chats, agents… or type =, clip:, ?', ar: 'ابحث في اللوحات والعناصر والمحادثات والوكلاء… أو اكتب ‎=‎ أو ‎clip:‎ أو ‎?‎' },
+    'palette.empty_no_query': { en: 'Type to search. Press Ctrl+K anywhere to open this.', ar: 'اكتب للبحث. اضغط Ctrl+K في أي مكان لفتح هذه اللوحة.' },
+    'palette.empty_with_query': { en: 'No matches for "{q}"', ar: 'لا توجد نتائج لـ "{q}"' },
+    'palette.hint.navigate': { en: 'navigate', ar: 'تنقل' },
+    'palette.hint.open': { en: 'open', ar: 'فتح' },
+    'palette.hint.close': { en: 'close', ar: 'إغلاق' },
     // Layers panel
     'canvas.layer_content': { en: 'content', ar: 'المحتوى' },
     'canvas.layer_agent': { en: 'agent', ar: 'الوكيل' },
