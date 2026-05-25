@@ -55,6 +55,11 @@ export interface UseCanvasInteractionOptions {
     // deparent the child instead of keeping the grown frame. Always called
     // after the grow is committed (so a "No" choice = no further work).
     onChildOverflow?: (info: { parentId: string; childIds: string[] }) => void;
+    /** Phase 22.5: ref to the world-transform DOM div. When provided, the
+     *  wheel handler updates the transform directly via ref + rAF and
+     *  commits to React state only on gesture-end. Without this, wheel
+     *  events dispatch ZOOM/PAN per event — the pre-perf-2 behavior. */
+    worldRef?: React.MutableRefObject<HTMLDivElement | null>;
 }
 
 export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
@@ -1686,28 +1691,101 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
         setSnapGuides([]);
     }, [dispatch, marqueeRect]);
 
+    // Phase 22.5: ref-based zoom/pan to take wheel-driven view transforms
+    // off the React reconcile path. External diagnosis measured zoom at
+    // ~8.6fps (vs 30fps target) with a ~233ms hard stall, root cause
+    // identified as one ZOOM dispatch per wheel event => one full React
+    // render per event. Fix: while a gesture is active, update the world
+    // div's `style.transform` directly via the worldRef, coalesce updates
+    // to one rAF tick, and commit a single ZOOM/PAN to React state only
+    // after wheel events stop arriving for ~120ms.
+    //
+    // Falls back to the per-event dispatch behavior when worldRef is
+    // absent (e.g. older callers that haven't been updated).
+    const liveViewRef = useRef<{ panX: number; panY: number; zoom: number } | null>(null);
+    const wheelRafRef = useRef<number | null>(null);
+    const wheelCommitTimerRef = useRef<number | null>(null);
+    const ZOOM_MIN = 0.02;
+    const ZOOM_MAX = 4;
+    const WHEEL_COMMIT_MS = 120;
+
+    const flushLiveTransform = useCallback(() => {
+        const live = liveViewRef.current;
+        const el = opts?.worldRef?.current;
+        if (!live || !el) return;
+        el.style.transform = `translate(${live.panX}px, ${live.panY}px) scale(${live.zoom})`;
+    }, [opts?.worldRef]);
+
+    const scheduleCommit = useCallback(() => {
+        if (wheelCommitTimerRef.current != null) {
+            window.clearTimeout(wheelCommitTimerRef.current);
+        }
+        wheelCommitTimerRef.current = window.setTimeout(() => {
+            wheelCommitTimerRef.current = null;
+            const live = liveViewRef.current;
+            if (!live) return;
+            // Single commit to React state — the inline style attribute
+            // produced by CanvasRenderer.tsx will match the DOM we've
+            // already painted, so no visual flash on re-render.
+            const cur = stateRef.current.view;
+            const factor = live.zoom / cur.zoom;
+            if (Math.abs(factor - 1) > 1e-6 || cur.panX !== live.panX || cur.panY !== live.panY) {
+                // Use SET_VIEW for a direct atomic update — both pan & zoom
+                // are already computed; ZOOM/PAN would re-derive math.
+                dispatch({ type: 'SET_VIEW', view: { panX: live.panX, panY: live.panY, zoom: live.zoom } });
+            }
+            liveViewRef.current = null;
+        }, WHEEL_COMMIT_MS);
+    }, [dispatch]);
+
     const onWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
         if (!surfaceRef.current) return;
-        // Any user-initiated pan/zoom cancels an active auto-zoom
-        // tween. User input always wins.
         cancelActiveAnimation();
-        // Ctrl+wheel = zoom (pinch on trackpad fires as ctrl+wheel in Chromium).
-        // Plain wheel = pan.
         const rect = surfaceRef.current.getBoundingClientRect();
         const cx = e.clientX - rect.left;
         const cy = e.clientY - rect.top;
-        if (e.ctrlKey || e.metaKey) {
-            // Zoom sensitivity: lower coefficient = finer control per wheel
-            // tick. 0.0015 gave ~14% per 120-delta mouse click which felt
-            // too coarse for fine positioning; 0.0008 gives ~8% so overview
-            // traversal takes more scrolls but individual zoom steps land
-            // where you aim.
-            const factor = Math.exp(-e.deltaY * 0.0008);
-            dispatch({ type: 'ZOOM', factor, cx, cy });
-        } else {
-            dispatch({ type: 'PAN', dx: -e.deltaX, dy: -e.deltaY });
+        const hasWorldRef = !!opts?.worldRef?.current;
+
+        // Slow path: no ref provided → fall back to old behavior so this
+        // refactor doesn't break callers that haven't passed worldRef.
+        if (!hasWorldRef) {
+            if (e.ctrlKey || e.metaKey) {
+                const factor = Math.exp(-e.deltaY * 0.0008);
+                dispatch({ type: 'ZOOM', factor, cx, cy });
+            } else {
+                dispatch({ type: 'PAN', dx: -e.deltaX, dy: -e.deltaY });
+            }
+            return;
         }
-    }, [dispatch]);
+
+        // Fast path: accumulate into liveViewRef, schedule a rAF flush,
+        // schedule the debounced commit. Initialize live state from current
+        // React state on first wheel event of a gesture.
+        if (!liveViewRef.current) {
+            liveViewRef.current = { ...stateRef.current.view };
+        }
+        const live = liveViewRef.current;
+
+        if (e.ctrlKey || e.metaKey) {
+            const factor = Math.exp(-e.deltaY * 0.0008);
+            const nextZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, live.zoom * factor));
+            const actual = nextZoom / live.zoom;
+            live.panX = cx - (cx - live.panX) * actual;
+            live.panY = cy - (cy - live.panY) * actual;
+            live.zoom = nextZoom;
+        } else {
+            live.panX += -e.deltaX;
+            live.panY += -e.deltaY;
+        }
+
+        if (wheelRafRef.current == null) {
+            wheelRafRef.current = requestAnimationFrame(() => {
+                wheelRafRef.current = null;
+                flushLiveTransform();
+            });
+        }
+        scheduleCommit();
+    }, [dispatch, opts?.worldRef, flushLiveTransform, scheduleCommit]);
 
     return {
         setSurfaceRef,

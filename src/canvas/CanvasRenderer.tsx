@@ -49,9 +49,17 @@ interface CanvasRendererProps {
     /** Remote peers' cursors / selections to render as world-coord overlays.
      *  Empty array (or undefined) → nothing painted; collab UI is opt-in. */
     collabPeers?: CollabPeer[];
+    /** Phase 22.5: ref to the world-transform DOM div. Lets the wheel
+     *  handler in useCanvasInteraction update the transform attribute
+     *  directly via element.style.transform during a zoom gesture —
+     *  bypassing React entirely until the gesture settles. Pan/zoom
+     *  through React state still works (the inline style attribute
+     *  remains the source of truth on each render); ref updates just
+     *  let us SKIP renders mid-gesture. */
+    worldRef?: React.MutableRefObject<HTMLDivElement | null>;
 }
 
-export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeers }: CanvasRendererProps = {}) {
+export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeers, worldRef }: CanvasRendererProps = {}) {
     const { state, dispatch } = useCanvasStore();
     const selectedConnectionSet = useMemo(() => new Set(state.selectedConnectionIds), [state.selectedConnectionIds]);
     // "Enter group" focus mode: ids that are IN the focused container's
@@ -431,6 +439,8 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeer
     return (
         <>
         <div
+            ref={worldRef}
+            data-canvas-world="1"
             className="absolute inset-0 origin-top-left"
             style={{
                 transform: `translate(${view.panX}px, ${view.panY}px) scale(${view.zoom})`,

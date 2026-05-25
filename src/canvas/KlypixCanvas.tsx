@@ -341,11 +341,18 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         parentId: string;
         childIds: string[];
     } | null>(null);
+    // Phase 22.5: ref to the world-transform DOM element inside CanvasRenderer.
+    // useCanvasInteraction's wheel handler writes `style.transform` here
+    // directly during a zoom/pan gesture; CanvasRenderer keeps re-rendering
+    // the inline transform from state, but we coalesce + skip those renders
+    // until the gesture settles (~120ms after the last wheel event).
+    const worldRef = useRef<HTMLDivElement | null>(null);
     const {
         setSurfaceRef, onPointerDown, onPointerMove, onPointerUp, onWheel,
         marqueeRect, connectPendingId, connectHoverWorld, spaceHeld, snapGuides, toast: hintToast, cancelConnect,
     } = useCanvasInteraction({
         onChildOverflow: (info) => setDeparentPrompt(info),
+        worldRef,
     });
     // Auto-dismiss the deparent banner ~5 s after it appears. Same effect
     // as clicking "No" — the auto-grow is already committed, so doing
@@ -1728,6 +1735,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 connectPendingId={connectPendingId}
                 connectHoverWorld={connectHoverWorld}
                 collabPeers={collab.peers}
+                worldRef={worldRef}
             />
 
             {/* Hidden focus-steal input — offscreen, pointer-inert. Focused
