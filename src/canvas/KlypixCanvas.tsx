@@ -81,7 +81,8 @@ import { useGridSettings, hexToRgba, gridAlphaFor, isDarkBackground, defaultText
 import { CanvasSettingsPopover } from './interaction/CanvasSettingsPopover';
 import { createAudioTranscribeController, type VoiceStatus } from './interaction/audioTranscribe';
 import { setDictateIntoHandler } from './interaction/voiceBridge';
-import { Search as SearchIcon, List, Layers, Play, Mic, History as HistoryIcon, Stamp as StampIcon, Filter as FilterIcon, FilePlus as LinkPlusIcon, Maximize2 as FitIcon, Loader2, Square as StopIcon } from 'lucide-react';
+import { Search as SearchIcon, List, Layers, Play, Mic, History as HistoryIcon, Stamp as StampIcon, Filter as FilterIcon, FilePlus as LinkPlusIcon, Maximize2 as FitIcon, Loader2, Square as StopIcon, Clipboard as ClipboardIcon } from 'lucide-react';
+import { openWithPrefix as openPaletteWithPrefix } from './../palette/paletteStore';
 import { newId } from './items/types';
 import type { CanvasItem, ContainerItem, TextItem, StyleRun } from './items/types';
 import { applyStyleToRange, getSelectionStyle, type ItemTextDefaults } from './items/styleRuns';
@@ -2789,6 +2790,10 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                     </button>
                 )}
                 <span className="w-px h-4 bg-white/10 mx-0.5" />
+                {/* Phase 23: one-click clipboard history. Opens the palette
+                    routed to clip: so the user gets to past copies without
+                    learning the prefix syntax. */}
+                <FileOpButton label={tLocale('canvas_top.clipboard_history')} onClick={() => openPaletteWithPrefix('clip:')}><ClipboardIcon size={13} /></FileOpButton>
                 <FileOpButton label={tLocale('canvas_top.search_short')} onClick={() => setSearchOpen(true)}><SearchIcon size={13} /></FileOpButton>
                 <FileOpButton label={tLocale('canvas_top.outline')} onClick={() => setOutlineOpen(v => !v)}><List size={13} /></FileOpButton>
                 <FileOpButton label={tLocale('canvas_top.layers')} onClick={() => setLayersOpen(v => !v)}><Layers size={13} /></FileOpButton>

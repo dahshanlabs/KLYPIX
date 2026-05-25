@@ -131,6 +131,15 @@ export function toggle() {
     state.open ? close() : open();
 }
 
+/** Open the palette pre-filtered to a specific provider's prefix.
+ *  Used by toolbar buttons (Clipboard, Apps, etc.) that want to give the
+ *  user a one-click entry to a single source instead of asking them to
+ *  type the prefix manually. */
+export function openWithPrefix(prefix: string) {
+    set({ open: true, query: prefix });
+    runQuery(prefix);
+}
+
 export function setQuery(q: string) {
     set({ query: q });
     runQuery(q);

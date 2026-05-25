@@ -371,6 +371,7 @@ const strings: Strings = {
     'canvas_top.share_canvas': { en: 'Share canvas', ar: 'مشاركة اللوحة' },
     'canvas_top.shared_by': { en: 'Shared by', ar: 'مشاركة من' },
     'canvas_top.chat': { en: 'Canvas chat', ar: 'دردشة اللوحة' },
+    'canvas_top.clipboard_history': { en: 'Clipboard history', ar: 'سجل الحافظة' },
     'canvas_top.save_first_share': { en: 'Save first, then share', ar: 'احفظ أولًا ثم شارك' },
     'canvas_top.search_short': { en: 'Search (Ctrl+F)', ar: 'بحث (Ctrl+F)' },
     'canvas_top.present': { en: 'Present', ar: 'عرض' },
@@ -476,6 +477,7 @@ const strings: Strings = {
     'palette.hint.open': { en: 'open', ar: 'فتح' },
     'palette.hint.close': { en: 'close', ar: 'إغلاق' },
     'palette.open_hint': { en: 'Open command palette (Ctrl+K) — calculator, clipboard, files, web, agent', ar: 'فتح لوحة الأوامر (Ctrl+K) — حاسبة، حافظة، ملفات، ويب، وكيل' },
+    'palette.clipboard_hint': { en: 'Clipboard history — text, images, files you\'ve copied recently', ar: 'سجل الحافظة — النصوص والصور والملفات التي نسختها مؤخرًا' },
     // Layers panel
     'canvas.layer_content': { en: 'content', ar: 'المحتوى' },
     'canvas.layer_agent': { en: 'agent', ar: 'الوكيل' },

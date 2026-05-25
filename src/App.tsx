@@ -7,7 +7,7 @@ import {
     Archive, Bookmark, Trash2, Download, RefreshCw, Shield, ShieldOff,
     Eraser, ChevronUp, ChevronDown, Globe, FileText, Paperclip, User,
     MessageCircle, Camera, Scissors, Home, Zap, AlertTriangle, Brain,
-    LayoutGrid, Key, Eye, EyeOff, ExternalLink,
+    LayoutGrid, Key, Eye, EyeOff, ExternalLink, Clipboard as ClipboardIcon,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -66,7 +66,7 @@ import { ModeTabs, type AppTab } from './components/ModeTabs';
 import { CommandPalette } from './palette/CommandPalette';
 import { useGlobalHotkey } from './palette/useGlobalHotkey';
 import { registerAllProviders } from './palette/registerProviders';
-import { toggle as togglePalette } from './palette/paletteStore';
+import { toggle as togglePalette, openWithPrefix as openPaletteWithPrefix } from './palette/paletteStore';
 // Phase 22.5: lazy-load the canvas chunk. KlypixCanvas pulls in the full
 // canvas engine, all 10 item types, interaction handlers, drawing layer,
 // agent, file format, cloud sync, JSZip, XLSX, plus the Gemini-backed
@@ -2627,10 +2627,21 @@ function AppMain() {
                                 )}
                             </button>
                         )}
+                        {/* Phase 23: dedicated clipboard-history button.
+                            One-click entry into the palette's clip: provider
+                            so users don't have to learn the prefix syntax to
+                            access their history. */}
+                        <button
+                            onClick={() => openPaletteWithPrefix('clip:')}
+                            title={t('palette.clipboard_hint')}
+                            className="no-drag p-1.5 text-white/50 hover:text-white/85 bg-white/5 hover:bg-white/12 border border-white/10 hover:border-white/25 rounded-md transition-all cursor-pointer"
+                        >
+                            <ClipboardIcon size={14} />
+                        </button>
                         {/* Phase 23: discoverability pill for the command palette.
-                            Tiny pill labelled "⌘K" (Ctrl+K on Windows) — clickable,
-                            opens the palette. Stays out of the way; Ctrl+K still
-                            works from anywhere via useGlobalHotkey. */}
+                            Tiny pill labelled "Ctrl K" — clickable, opens the
+                            palette. Stays out of the way; Ctrl+K still works
+                            from anywhere via useGlobalHotkey. */}
                         <button
                             onClick={togglePalette}
                             title={t('palette.open_hint')}
