@@ -14,6 +14,9 @@ import { register, refresh } from './paletteStore';
 import { calculatorProvider, resetCalcScope } from './providers/calculatorProvider';
 import { klypixSearchProvider } from './providers/klypixSearchProvider';
 import { clipboardProvider } from './providers/clipboardProvider';
+import { snippetProvider } from './providers/snippetProvider';
+import { appsProvider } from './providers/appsProvider';
+import { installSnippetWatcher } from './snippets';
 
 let registered = false;
 
@@ -24,6 +27,12 @@ export function registerAllProviders(): () => void {
         register(calculatorProvider),
         register(klypixSearchProvider),
         register(clipboardProvider),
+        register(snippetProvider),
+        register(appsProvider),
+        // Snippet keystroke watcher — installs ONCE here so it's tied to
+        // palette providers lifecycle. Returns its own teardown which the
+        // dispose loop calls on unmount.
+        installSnippetWatcher(),
     ];
     // Re-run query so any provider that was just registered gets a chance
     // to populate the visible list without the user retyping.

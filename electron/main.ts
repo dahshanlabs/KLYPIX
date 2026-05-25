@@ -19,6 +19,7 @@ process.on('unhandledRejection', (reason: any) => {
 import { registerAuthHandlers, handleDeepLink } from './auth/authGuard';
 import { registerCloudHandlers } from './cloudHandlers';
 import { startClipboardHistory, registerClipboardHistoryIpc } from './clipboardHistory';
+import { registerStartAppsIpc } from './startApps';
 import { initAutoUpdater } from './updater';
 import { storeApiKey, getApiKey, clearApiKey } from './auth/tokenStore';
 // Imports below MUST stay at top level. TypeScript compiles each `import`
@@ -894,6 +895,11 @@ app.whenReady().then(() => {
     // when the user isn't using the app.
     registerClipboardHistoryIpc();
     startClipboardHistory();
+    // Phase 23 Day 4: Windows Start-menu apps for the palette Apps provider.
+    // First call to start-apps:list spawns a one-shot PowerShell; cached
+    // for one hour. Doesn't block boot — only fires when the palette
+    // actually queries.
+    registerStartAppsIpc();
     // Initialize MCP servers (auto-connect enabled ones)
     mcpManager.initialize().catch(err =>
         console.error('[Main] MCP initialization error:', err)

@@ -151,6 +151,11 @@ contextBridge.exposeInMainWorld('electron', {
         remove: (id: string) => ipcRenderer.invoke('clipboard-history:remove', id),
         clear: () => ipcRenderer.invoke('clipboard-history:clear'),
     },
+    // Phase 23 Day 4: Windows Start menu apps (palette Apps provider)
+    startApps: {
+        list: () => ipcRenderer.invoke('start-apps:list'),
+        launch: (appId: string) => ipcRenderer.invoke('start-apps:launch', appId),
+    },
     readFileBytes: (filePath: string) => ipcRenderer.invoke('read-file-bytes', { filePath }),
     // ── Encrypted API Key Storage ────────────────────────────────────────
     apiKey: {
