@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Trash2, Crown } from 'lucide-react';
 import { t } from '../../i18n/strings';
 import type { CollabPeer } from './useCanvasCollab';
 
@@ -16,6 +16,11 @@ interface Props {
      *  refresh (e.g. nudging the collaborators list). Optional — when
      *  omitted, the Remove button doesn't render even for owners. */
     onRemovePeer?: (peer: CollabPeer) => void | Promise<void>;
+    /** Fired when the owner clicks "Make owner" inside a peer popover.
+     *  Optional — without it, the Crown button doesn't render. The peer
+     *  must already be a real collaborator (not a ghost) for the action
+     *  to make sense. */
+    onMakeOwner?: (peer: CollabPeer) => void | Promise<void>;
 }
 
 /** Compact avatar strip showing other users in the same canvas. Renders
@@ -23,7 +28,7 @@ interface Props {
  *  visually identical to before. Up to 4 chips inline; overflow becomes
  *  a "+N" pill. Phase 16: click a chip to open a popover with name +
  *  details (replaces the tooltip-only mode from v1). */
-export function CollabPresenceChips({ peers, connected, selfIsOwner, onRemovePeer }: Props) {
+export function CollabPresenceChips({ peers, connected, selfIsOwner, onRemovePeer, onMakeOwner }: Props) {
     const [openId, setOpenId] = useState<string | null>(null);
     // Close-on-outside-click ref. Lives at the strip level so clicking a
     // different chip within the strip still works (we want it to switch
@@ -72,6 +77,7 @@ export function CollabPresenceChips({ peers, connected, selfIsOwner, onRemovePee
                         onClose={() => setOpenId(null)}
                         selfIsOwner={!!selfIsOwner}
                         onRemovePeer={onRemovePeer}
+                        onMakeOwner={onMakeOwner}
                     />
                 );
             })}
@@ -95,9 +101,10 @@ interface PeerChipProps {
     onClose: () => void;
     selfIsOwner: boolean;
     onRemovePeer?: (peer: CollabPeer) => void | Promise<void>;
+    onMakeOwner?: (peer: CollabPeer) => void | Promise<void>;
 }
 
-function PeerChip({ peer, dim, open, onToggle, onClose, selfIsOwner, onRemovePeer }: PeerChipProps) {
+function PeerChip({ peer, dim, open, onToggle, onClose, selfIsOwner, onRemovePeer, onMakeOwner }: PeerChipProps) {
     const initials = (peer.displayName || '?')
         .split(/\s+/)
         .map(s => s[0])
@@ -127,17 +134,19 @@ function PeerChip({ peer, dim, open, onToggle, onClose, selfIsOwner, onRemovePee
                     onClose={onClose}
                     selfIsOwner={selfIsOwner}
                     onRemovePeer={onRemovePeer}
+                    onMakeOwner={onMakeOwner}
                 />
             )}
         </div>
     );
 }
 
-function PeerPopover({ peer, onClose, selfIsOwner, onRemovePeer }: {
+function PeerPopover({ peer, onClose, selfIsOwner, onRemovePeer, onMakeOwner }: {
     peer: CollabPeer;
     onClose: () => void;
     selfIsOwner: boolean;
     onRemovePeer?: (peer: CollabPeer) => void | Promise<void>;
+    onMakeOwner?: (peer: CollabPeer) => void | Promise<void>;
 }) {
     // "Last seen": peers carry lastSeen as a presence timestamp (ms). For a
     // currently-connected peer that's basically now; for a peer who just left
@@ -155,7 +164,9 @@ function PeerPopover({ peer, onClose, selfIsOwner, onRemovePeer }: {
     // If any of these is false we hide the action entirely rather than
     // showing a disabled-looking button.
     const canRemove = !!onRemovePeer && selfIsOwner && !peer.userId.startsWith('ghost_');
+    const canMakeOwner = !!onMakeOwner && selfIsOwner && !peer.userId.startsWith('ghost_');
     const [removing, setRemoving] = useState(false);
+    const [transferring, setTransferring] = useState(false);
     const handleRemove = async () => {
         if (!onRemovePeer || removing) return;
         // Use the OS confirm — small, modal, blocks until answered. We do
@@ -172,6 +183,23 @@ function PeerPopover({ peer, onClose, selfIsOwner, onRemovePeer }: {
             onClose();
         } finally {
             setRemoving(false);
+        }
+    };
+    const handleMakeOwner = async () => {
+        if (!onMakeOwner || transferring) return;
+        // Ownership transfer is irreversible from the loser's side — confirm
+        // twice. First the "are you sure" confirm; the parent's handler
+        // re-validates against current state before firing the IPC.
+        const ok = window.confirm(
+            t('canvas.collab_peer.transfer_confirm').replace('{name}', peer.displayName || 'this user')
+        );
+        if (!ok) return;
+        setTransferring(true);
+        try {
+            await onMakeOwner(peer);
+            onClose();
+        } finally {
+            setTransferring(false);
         }
     };
 
@@ -211,7 +239,18 @@ function PeerPopover({ peer, onClose, selfIsOwner, onRemovePeer }: {
                     <span className="text-white/60 font-mono text-[10px]">{peer.deviceId.slice(0, 12)}</span>
                 </div>
             </div>
-            <div className="px-2 py-2 border-t border-white/5 flex gap-2">
+            <div className="px-2 py-2 border-t border-white/5 flex gap-2 flex-wrap">
+                {canMakeOwner && (
+                    <button
+                        type="button"
+                        onClick={handleMakeOwner}
+                        disabled={transferring}
+                        className="flex items-center justify-center gap-1.5 text-[11px] text-amber-300 hover:text-amber-200 py-1.5 px-3 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+                    >
+                        <Crown size={11} />
+                        {transferring ? t('canvas.collab_peer.transferring') : t('canvas.collab_peer.make_owner')}
+                    </button>
+                )}
                 {canRemove && (
                     <button
                         type="button"

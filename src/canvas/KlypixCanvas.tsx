@@ -2743,6 +2743,27 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                                     });
                                 }
                             }}
+                            onMakeOwner={async (peer) => {
+                                if (!cloudShare?.blobId) return;
+                                const cloud: any = (window as any).electron?.cloud;
+                                if (!cloud?.transferOwnership) {
+                                    setToast({ text: tLocale('canvas.collab_peer.transfer_failed'), id: Date.now() });
+                                    return;
+                                }
+                                try {
+                                    await cloud.transferOwnership({ blobId: cloudShare.blobId, newOwnerId: peer.userId });
+                                    setToast({
+                                        text: tLocale('canvas.collab_peer.transferred').replace('{name}', peer.displayName || ''),
+                                        id: Date.now(),
+                                    });
+                                } catch (e: any) {
+                                    const msg = e?.message || String(e);
+                                    setToast({
+                                        text: tLocale('canvas.collab_peer.transfer_failed') + (msg ? ' — ' + msg : ''),
+                                        id: Date.now(),
+                                    });
+                                }
+                            }}
                         />
                     </>
                 )}

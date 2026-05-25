@@ -299,6 +299,29 @@ export function registerCloudHandlers(ipcMain: IpcMain): void {
         if (error) throw new Error(`Remove collaborator failed: ${error.message}`);
     });
 
+    // Transfer ownership of a canvas to one of the existing collaborators.
+    // Owner-only — the RPC enforces ownership internally via auth.uid().
+    // The old owner becomes a collaborator on the same canvas so they
+    // don't lose access mid-transfer.
+    ipcMain.handle('canvas-cloud:transfer-ownership', async (_e, args: { blobId: string; newOwnerId: string }) => {
+        await requireUserId();
+        const supabase = getSupabase();
+        const { data, error } = await supabase.rpc('transfer_canvas_ownership', {
+            p_blob_id: args.blobId,
+            p_new_owner_id: args.newOwnerId,
+        });
+        if (error) {
+            if (/function .* does not exist|404/i.test(error.message)) {
+                throw new Error(
+                    `transfer_canvas_ownership RPC missing. ` +
+                    `Apply supabase/migrations/20260525170000_ownership_transfer.sql to your Supabase project.`
+                );
+            }
+            throw new Error(error.message);
+        }
+        return data;
+    });
+
     // ── Sync: ops push/pull + "shared with me" listing ───────────────────
 
     // Push a batch of ops generated locally. Server assigns the seq numbers
