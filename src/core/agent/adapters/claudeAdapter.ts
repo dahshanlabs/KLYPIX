@@ -1,8 +1,20 @@
-import Anthropic from '@anthropic-ai/sdk';
 import type { ModelAdapter, MessageComplete, ToolDefinition, ModelMessage } from '../modelAdapter';
 
+// Phase 22.5: lazy-load the Anthropic SDK. The static `import Anthropic from
+// '@anthropic-ai/sdk'` used to pull ~150KB into the main bundle even for chat-only
+// sessions that never invoke agent mode. Dynamic import keeps it as its own
+// Vite chunk that only downloads when stream() is first called.
 export function createClaudeAdapter(apiKey: string, modelId: string): ModelAdapter {
-  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
+  let clientPromise: Promise<any> | null = null;
+  const getClient = () => {
+    if (!clientPromise) {
+      clientPromise = import('@anthropic-ai/sdk').then((mod) => {
+        const Anthropic = mod.default;
+        return new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
+      });
+    }
+    return clientPromise;
+  };
 
   return {
     provider: 'claude',
@@ -12,6 +24,7 @@ export function createClaudeAdapter(apiKey: string, modelId: string): ModelAdapt
       let textCallback: ((delta: string) => void) | null = null;
 
       const streamPromise = (async () => {
+        const client = await getClient();
         const stream = client.messages.stream({
           model: modelId,
           max_tokens: opts.maxTokens || 4096,
@@ -20,7 +33,7 @@ export function createClaudeAdapter(apiKey: string, modelId: string): ModelAdapt
           messages: opts.messages as any,
         });
 
-        stream.on('text', (delta) => {
+        stream.on('text', (delta: string) => {
           if (textCallback) textCallback(delta);
         });
 
