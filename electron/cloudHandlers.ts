@@ -352,6 +352,73 @@ export function registerCloudHandlers(ipcMain: IpcMain): void {
         return data;
     });
 
+    // ── Clipboard sync ──────────────────────────────────────────────────
+    // Phase 23 follow-up. Owner-only via RLS. Opt-in from the renderer
+    // (Settings toggle); pinned items only.
+
+    ipcMain.handle('clipboard-sync:push', async (_e, args: {
+        kind: 'text' | 'image' | 'files' | 'html';
+        text?: string;
+        imageDataUrl?: string;
+        filePaths?: string[];
+        sourceApp?: string;
+    }) => {
+        const userId = await requireUserId();
+        const supabase = getSupabase();
+        const { data, error } = await supabase
+            .from('clipboard_sync')
+            .insert({
+                user_id: userId,
+                kind: args.kind,
+                text: args.text ?? null,
+                image_data_url: args.imageDataUrl ?? null,
+                file_paths: args.filePaths ?? null,
+                source_app: args.sourceApp ?? null,
+            })
+            .select('id')
+            .single();
+        if (error) {
+            if (/relation .* does not exist/i.test(error.message)) {
+                throw new Error(
+                    `clipboard_sync table missing. Apply ` +
+                    `supabase/migrations/20260525190000_clipboard_sync.sql.`
+                );
+            }
+            throw new Error(error.message);
+        }
+        return data;
+    });
+
+    ipcMain.handle('clipboard-sync:pull', async () => {
+        await requireUserId();
+        const supabase = getSupabase();
+        try {
+            const { data, error } = await supabase
+                .from('clipboard_sync')
+                .select('id, kind, text, image_data_url, file_paths, source_app, captured_at')
+                .gt('expires_at', new Date().toISOString())
+                .order('captured_at', { ascending: false })
+                .limit(100);
+            if (error) {
+                if (/relation .* does not exist/i.test(error.message)) return [];
+                throw new Error(error.message);
+            }
+            return data ?? [];
+        } catch (e: any) {
+            if (/relation .* does not exist/i.test(e?.message ?? '')) return [];
+            throw e;
+        }
+    });
+
+    ipcMain.handle('clipboard-sync:remove', async (_e, id: string) => {
+        await requireUserId();
+        const supabase = getSupabase();
+        const { error } = await supabase.from('clipboard_sync').delete().eq('id', id);
+        if (error && !/relation .* does not exist/i.test(error.message)) {
+            throw new Error(error.message);
+        }
+    });
+
     ipcMain.handle('canvas-cloud:list-messages', async (_e, args: { blobId: string; limit?: number }) => {
         await requireUserId();
         const supabase = getSupabase();

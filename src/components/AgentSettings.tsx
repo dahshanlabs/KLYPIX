@@ -206,6 +206,10 @@ export const AgentSettings: React.FC = () => {
           prompted to install Linux. */}
       <PowerUserRow />
 
+      {/* Cross-device clipboard sync — pinned items only, opt-in. Synced
+          via Supabase under the user's account. */}
+      <ClipboardSyncRow />
+
       {savedMsg && <p className="text-xs text-emerald-400">{savedMsg}</p>}
 
       {/* Eval Harness — gated behind a details toggle so it stays out of the way */}
@@ -249,6 +253,29 @@ const PowerUserRow: React.FC = () => {
         />
       </label>
       <p className="text-[10px] text-gray-500 leading-relaxed">{t('settings.power_user.hint')}</p>
+    </div>
+  );
+};
+
+const ClipboardSyncRow: React.FC = () => {
+  useLocale();
+  const [on, setOn] = useState(() => localStorage.getItem('klypix:palette:clipboardSync:v1') === '1');
+  return (
+    <div className="space-y-1">
+      <label className="flex items-center justify-between cursor-pointer">
+        <span className="text-xs text-gray-400">{t('settings.clipboard_sync')}</span>
+        <input
+          type="checkbox"
+          checked={on}
+          onChange={(e) => {
+            const next = e.target.checked;
+            setOn(next);
+            localStorage.setItem('klypix:palette:clipboardSync:v1', next ? '1' : '0');
+          }}
+          className="w-3.5 h-3.5 accent-emerald-500"
+        />
+      </label>
+      <p className="text-[10px] text-gray-500 leading-relaxed">{t('settings.clipboard_sync.hint')}</p>
     </div>
   );
 };

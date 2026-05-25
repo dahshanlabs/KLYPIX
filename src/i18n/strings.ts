@@ -45,6 +45,8 @@ const strings: Strings = {
     'settings.language.arabic': { en: 'العربية', ar: 'العربية' },
     'settings.power_user': { en: 'Power User Mode', ar: 'وضع المستخدم المتقدم' },
     'settings.power_user.hint': { en: 'Show advanced banners (WSL2 sandbox setup, etc.)', ar: 'إظهار اللوحات المتقدمة (إعداد WSL2 ونحوه)' },
+    'settings.clipboard_sync': { en: 'Cross-device clipboard sync', ar: 'مزامنة الحافظة عبر الأجهزة' },
+    'settings.clipboard_sync.hint': { en: 'Sync pinned clipboard items across your devices via Supabase. Pinned items only — never the full history.', ar: 'مزامنة عناصر الحافظة المثبتة عبر أجهزتك عن طريق Supabase. العناصر المثبتة فقط — وليس كامل السجل.' },
     'settings.account': { en: 'Account', ar: 'الحساب' },
     'settings.signout': { en: 'Sign Out', ar: 'تسجيل الخروج' },
     'settings.signin_cta_body': { en: 'You\'re using KLYPIX in trial mode. Sign in to enable cloud canvas sync, collaboration, and your full agent budget.', ar: 'أنت تستخدم KLYPIX في وضع التجربة. سجّل الدخول لتفعيل مزامنة اللوحات السحابية والتعاون وميزانية الوكيل الكاملة.' },

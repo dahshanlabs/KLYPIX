@@ -346,6 +346,11 @@ contextBridge.exposeInMainWorld('electron', {
             ipcRenderer.invoke('canvas-cloud:append-message', args),
         listMessages: (args: { blobId: string; limit?: number }) =>
             ipcRenderer.invoke('canvas-cloud:list-messages', args),
+        // Cross-device clipboard sync (opt-in via Settings)
+        clipboardSyncPush: (args: { kind: string; text?: string; imageDataUrl?: string; filePaths?: string[]; sourceApp?: string }) =>
+            ipcRenderer.invoke('clipboard-sync:push', args),
+        clipboardSyncPull: () => ipcRenderer.invoke('clipboard-sync:pull'),
+        clipboardSyncRemove: (id: string) => ipcRenderer.invoke('clipboard-sync:remove', id),
         pushOps: (args: { blobId: string; deviceId: string; ops: any[] }) =>
             ipcRenderer.invoke('canvas-cloud:push-ops', args),
         pullOps: (args: { blobId: string; sinceSeq: number }) =>
