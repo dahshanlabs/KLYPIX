@@ -777,23 +777,35 @@ export function useCanvasKeyboardShortcuts(active: boolean, cbs: ShortcutCallbac
             } else if ((e.ctrlKey || e.metaKey) && k === 'g' && !e.shiftKey) {
                 e.preventDefault();
                 cbs.onGroup?.();
-            } else if ((e.ctrlKey || e.metaKey) && (e.key === ']' || e.key === '[')) {
+            } else if ((e.ctrlKey || e.metaKey) && (e.code === 'BracketRight' || e.code === 'BracketLeft')) {
                 // Z-order shortcuts (Figma convention):
                 //   Ctrl+]        Bring Forward
                 //   Ctrl+[        Send Backward
                 //   Ctrl+Shift+]  Bring to Front
                 //   Ctrl+Shift+[  Send to Back
-                // Reorder operates on item selection only — connections live
-                // in their own render layer and lines/strokes don't have a
-                // sibling-aware z-order yet.
-                if (state.selectedIds.length === 0) return;
+                // Gate on physical e.code, not e.key — with Shift held,
+                // e.key resolves to '}' / '{' (and to other glyphs on
+                // non-US layouts entirely), so the legacy `e.key === ']'`
+                // check silently dropped every Bring-to-Front / Send-to-Back
+                // press regardless of selection size.
+                if (
+                    state.selectedIds.length === 0
+                    && state.selectedLineIds.length === 0
+                    && state.selectedStrokeIds.length === 0
+                ) return;
                 e.preventDefault();
-                const front = e.key === ']';
+                const front = e.code === 'BracketRight';
                 const big = e.shiftKey;
                 const mode = big
                     ? (front ? 'front' : 'back')
                     : (front ? 'forward' : 'backward');
-                commit({ type: 'REORDER_ITEMS', ids: state.selectedIds, mode });
+                commit({
+                    type: 'REORDER_ITEMS',
+                    ids: state.selectedIds,
+                    lineIds: state.selectedLineIds,
+                    strokeIds: state.selectedStrokeIds,
+                    mode,
+                });
             }
         };
         window.addEventListener('keydown', handler);

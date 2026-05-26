@@ -196,82 +196,72 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeer
         return out;
     }, [strokes, hiddenByCollapse, tabModeContainers]);
 
-    // Sort so containers render first (behind children), then cull by viewport.
-    const sortedOrder = useMemo(() => {
-        // Walk the parent chain to count container ancestors. Matches
-        // containerDepth() in ContainerItem but inlined to avoid a
-        // cross-module call inside a hot sort comparator.
-        const containerDepthOf = (id: string): number => {
-            let d = 0;
-            let cur = items[id];
-            const seen = new Set<string>();
-            while (cur?.parentId && !seen.has(cur.parentId)) {
-                seen.add(cur.parentId);
-                const p = items[cur.parentId];
-                if (!p) break;
-                if (p.type === 'container') d++;
-                cur = p;
-            }
-            return d;
-        };
-        return order
-            .slice()
-            .sort((a, b) => {
-                const ta = items[a]?.type === 'container' ? 0 : 1;
-                const tb = items[b]?.type === 'container' ? 0 : 1;
-                if (ta !== tb) return ta - tb;
-                // Among containers: render parents before their nested
-                // children so the child's frame paints ON TOP of the
-                // parent's (previously a later-created outer group would
-                // render after its children, painting over them and
-                // hiding the sky-blue depth-1 border under the emerald
-                // depth-0 frame). Non-containers keep their original
-                // stable insertion order.
-                if (ta === 0) return containerDepthOf(a) - containerDepthOf(b);
-                return 0;
-            });
-    }, [order, items]);
-
-    // v3 unified render order: containers first (depth-sorted as a frame
-    // backdrop), then non-container items + drawings (lines + pen strokes)
-    // interleaved by zKey. This is what allows the Arrange menu to send a
-    // stroke behind a box — pre-v3, drawings were a single layer on top of
-    // every item, so "send to back" couldn't actually move them down.
-    //
-    // Caveat: when a CONTAINER is reordered, its descendants' zKeys aren't
-    // updated to follow it. Their old zKeys may sort them between unrelated
-    // siblings of the moved container. Same limitation existed pre-v3 (the
-    // old state.order shuffle had the same blind spot for nested children),
-    // so this isn't a regression — just a known edge case to fix when the
-    // need arises.
+    // v4 hierarchical render order. Each parent's children paint as one
+    // contiguous z-band slotted at the parent's own zKey, with the
+    // container's frame BEFORE its descendants and its header AFTER. The
+    // result: "Bring to Front" / "Send to Back" on any entity actually
+    // moves the whole visual unit relative to its siblings —
+    //   - bringing a non-container item above a group's zKey paints it
+    //     over the group's frame AND header (pre-v4 the header lived in
+    //     a fixed top layer and always covered every item);
+    //   - bringing a group to front moves its frame, descendants, and
+    //     header forward together (pre-v4 the frame was pinned to a
+    //     backdrop layer, so reordering the container had no visible
+    //     effect when nothing else was a container).
+    // Children of a collapsed/hidden container still render-skip via
+    // hiddenByCollapse at JSX time; the walk visits them but they no-op.
     const renderList = useMemo(() => {
-        type Kind = 'item' | 'line' | 'stroke';
+        type Kind = 'item' | 'line' | 'stroke' | 'container-body' | 'container-header';
         interface Entry { kind: Kind; id: string }
-        const containerEntries: Entry[] = [];
-        const nonContainerWithKeys: Array<{ entry: Entry; zKey: string }> = [];
+        interface Sortable { kind: 'item' | 'line' | 'stroke'; id: string; zKey: string }
 
-        for (const id of sortedOrder) {
-            const it = items[id];
-            if (!it) continue;
-            if (it.type === 'container') {
-                containerEntries.push({ kind: 'item', id });
-            } else {
-                nonContainerWithKeys.push({ entry: { kind: 'item', id }, zKey: it.zKey ?? '' });
-            }
+        const byParent = new Map<string | null, Sortable[]>();
+        const push = (parentId: string | null, s: Sortable) => {
+            let arr = byParent.get(parentId);
+            if (!arr) { arr = []; byParent.set(parentId, arr); }
+            arr.push(s);
+        };
+        for (const [id, it] of Object.entries(items)) {
+            push(it.parentId ?? null, { kind: 'item', id, zKey: it.zKey ?? '' });
         }
         for (const [id, ln] of Object.entries(visibleLines)) {
-            nonContainerWithKeys.push({ entry: { kind: 'line', id }, zKey: ln.zKey ?? '' });
+            push(ln.parentId ?? null, { kind: 'line', id, zKey: ln.zKey ?? '' });
         }
         for (const [id, st] of Object.entries(visibleStrokes)) {
-            nonContainerWithKeys.push({ entry: { kind: 'stroke', id }, zKey: st.zKey ?? '' });
+            push(st.parentId ?? null, { kind: 'stroke', id, zKey: st.zKey ?? '' });
         }
-        // Stable-ish lex sort by zKey. Pre-migration entries (no zKey) sort
-        // first as the empty string, which puts them at the bottom of the
-        // stack — conservative fallback, no worse than today's behavior.
-        nonContainerWithKeys.sort((a, b) => (a.zKey < b.zKey ? -1 : a.zKey > b.zKey ? 1 : 0));
+        // Sort each sibling bucket by zKey. Pre-migration entries (no zKey)
+        // sort first as the empty string — puts them at the bottom of their
+        // bucket, matching pre-v4 fallback behavior.
+        for (const arr of byParent.values()) {
+            arr.sort((a, b) => (a.zKey < b.zKey ? -1 : a.zKey > b.zKey ? 1 : 0));
+        }
 
-        return [...containerEntries, ...nonContainerWithKeys.map(x => x.entry)];
-    }, [sortedOrder, items, visibleLines, visibleStrokes]);
+        const out: Entry[] = [];
+        const visited = new Set<string>();
+        const walk = (pid: string | null) => {
+            const list = byParent.get(pid) ?? [];
+            for (const s of list) {
+                if (s.kind === 'item') {
+                    const it = items[s.id];
+                    if (!it) continue;
+                    if (it.type === 'container') {
+                        if (visited.has(s.id)) continue;  // defensive cycle guard
+                        visited.add(s.id);
+                        out.push({ kind: 'container-body', id: s.id });
+                        walk(s.id);
+                        out.push({ kind: 'container-header', id: s.id });
+                    } else {
+                        out.push({ kind: 'item', id: s.id });
+                    }
+                } else {
+                    out.push({ kind: s.kind, id: s.id });
+                }
+            }
+        };
+        walk(null);
+        return out;
+    }, [items, visibleLines, visibleStrokes]);
 
     // Selection rings are rendered in a SEPARATE screen-space overlay
     // (outside the pan/zoom transform) so the ring is always a consistent
@@ -280,47 +270,6 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeer
     // broke dash spacing, border radius, and SVG-rasterized AA at extreme
     // zooms. Now: items draw themselves; the ring layer draws a clean
     // 1-2px outline on top in screen coords.
-
-    // Which container ids are visible (not culled, not hidden by a
-    // collapsed ancestor, not on a hidden layer). Used to render the
-    // top-layer ContainerHeaderView for each visible container AFTER
-    // all items so headers always sit above their children visually.
-    // Sorted by depth ascending — same rationale as the frame sort: a
-    // nested child's header must render on top of its parent's header
-    // and frame so the inner title/controls aren't painted over by the
-    // outer group's later-paint pass.
-    const visibleContainerIds = useMemo(() => {
-        const list: string[] = [];
-        for (const id of order) {
-            const it = items[id];
-            if (!it || it.type !== 'container') continue;
-            if (hiddenByCollapse.has(id)) continue;
-            if (state.hiddenLayers.includes(effectiveLayerId(it))) continue;
-            if (isStatusHidden(id)) continue;
-            if (!pinnedIds.has(id)) {
-                const bounds: Rect = { x: it.x, y: it.y, w: it.w, h: it.h };
-                if (!rectsIntersect(bounds, visibleRect)) continue;
-            }
-            list.push(id);
-        }
-        list.sort((a, b) => {
-            const depthOf = (id: string): number => {
-                let d = 0;
-                let cur = items[id];
-                const seen = new Set<string>();
-                while (cur?.parentId && !seen.has(cur.parentId)) {
-                    seen.add(cur.parentId);
-                    const p = items[cur.parentId];
-                    if (!p) break;
-                    if (p.type === 'container') d++;
-                    cur = p;
-                }
-                return d;
-            };
-            return depthOf(a) - depthOf(b);
-        });
-        return list;
-    }, [order, items, hiddenByCollapse, state.hiddenLayers, isStatusHidden, pinnedIds, visibleRect]);
 
     // Selection rects (in screen coords) for the overlay. Computed from
     // world coords × view so the ring is always a consistent 1-2 screen-px
@@ -485,6 +434,36 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeer
                     if (!st) return null;
                     return <StrokeView key={`st-${entry.id}`} stroke={st} />;
                 }
+                if (entry.kind === 'container-header') {
+                    // Header chrome rendered inline at the container's z-slot
+                    // (post-walk position), not as a fixed top layer. Same
+                    // culling as the body, plus out-of-focus skip (matches
+                    // pre-v4 layer-3 behavior — dimmed children dropped their
+                    // header overlay).
+                    const item = items[entry.id];
+                    if (!item || item.type !== 'container') return null;
+                    if (hiddenByCollapse.has(entry.id)) return null;
+                    if (state.hiddenLayers.includes(effectiveLayerId(item))) return null;
+                    if (isStatusHidden(entry.id)) return null;
+                    if (!pinnedIds.has(entry.id)) {
+                        const bounds: Rect = { x: item.x, y: item.y, w: item.w, h: item.h };
+                        if (!rectsIntersect(bounds, visibleRect)) return null;
+                    }
+                    const outOfFocus = inFocusSet !== null && !inFocusSet.has(entry.id);
+                    if (outOfFocus) return null;
+                    return (
+                        <ContainerHeaderView
+                            key={`header-${entry.id}`}
+                            item={item}
+                            selected={selected.has(entry.id)}
+                            childCount={countChildren(entry.id, items, lines, strokes)}
+                        />
+                    );
+                }
+                // 'item' or 'container-body' — same render path. The
+                // container-body kind reuses the type='container' switch
+                // branch below (ContainerItemView) plus the shared item
+                // wrapper (badges, out-of-focus dimming).
                 const id = entry.id;
                 const item = items[id];
                 if (!item) return null;
@@ -610,25 +589,12 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeer
                 old single-DrawingLayer pass that pinned everything above
                 items has been removed — see renderList useMemo for the
                 unified ordering. */}
-            {/* Container headers — rendered AFTER drawings so the title
-                bar + resize handles always sit on top of child items,
-                regardless of child stacking order. Gives the group a
-                consistent "chrome on top" feel at any zoom. */}
-            {visibleContainerIds.map(id => {
-                const item = items[id];
-                if (!item || item.type !== 'container') return null;
-                const isSelected = selected.has(id);
-                const outOfFocus = inFocusSet !== null && !inFocusSet.has(id);
-                if (outOfFocus) return null;
-                return (
-                    <ContainerHeaderView
-                        key={`header-${id}`}
-                        item={item}
-                        selected={isSelected}
-                        childCount={countChildren(id, items, lines, strokes)}
-                    />
-                );
-            })}
+            {/* v4: container headers moved inline into renderList at the
+                container's own z-slot so "Bring to Front" / "Send to Back"
+                actually affects the header alongside the frame and child
+                items. The pre-v4 standalone top-layer pass that pinned
+                every header above every item has been removed — see the
+                renderList useMemo for the unified hierarchical ordering. */}
             {/* Tier-3 dot layer. Renders AFTER headers so dots sit on top
                 at extreme zoom-out. Self-computes which containers are
                 in dotted mode; others pay nothing here. */}

@@ -55,6 +55,14 @@ export interface UseCanvasInteractionOptions {
     // deparent the child instead of keeping the grown frame. Always called
     // after the grow is committed (so a "No" choice = no further work).
     onChildOverflow?: (info: { parentId: string; childIds: string[] }) => void;
+    // Inverse of onChildOverflow: fired AFTER a drop auto-adopted an item
+    // into a container in an AMBIGUOUS way — item's area is <70% inside
+    // the group, so the intent is unclear (an edge graze rather than a
+    // confident "put it in here"). The surface shows a Yes/No/Cancel
+    // banner mirroring the deparent one. Confident "deep inside" drops
+    // skip the banner entirely so kanban-style organising stays fast.
+    // Only fires when newParentId !== null AND the adoption is ambiguous.
+    onContainerAdopt?: (info: { childId: string; newParentId: string; prevParentId: string | null }) => void;
     /** Phase 22.5: ref to the world-transform DOM div. When provided, the
      *  wheel handler updates the transform directly via ref + rAF and
      *  commits to React state only on gesture-end. Without this, wheel
@@ -1499,7 +1507,7 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
                 overflowReports.flatMap(r => r.childIds),
             );
 
-            const reparentDecisions: Array<{ id: string; newParentId: string | null }> = [];
+            const reparentDecisions: Array<{ id: string; newParentId: string | null; prevParentId: string | null; ambiguous: boolean }> = [];
             for (const id of drag.ids) {
                 const it = s.items[id];
                 if (!it) continue;
@@ -1551,7 +1559,26 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
                     continue;
                 }
                 if (newParentId !== currentParentId) {
-                    reparentDecisions.push({ id, newParentId });
+                    // Ambiguity score: how much of the dropped item's area
+                    // ended up inside the new parent's bounds. <70% means
+                    // the item only grazed the group's edge — likely an
+                    // accident, surface a confirmation banner. >=70% (or
+                    // any deparent to null) skips the banner so common
+                    // "drop deep inside" gestures stay silent. Threshold
+                    // is empirical; tune if false-positive banners become
+                    // a nuisance during kanban-style sorting.
+                    let ambiguous = false;
+                    if (newParentId !== null) {
+                        const np = s.items[newParentId];
+                        if (np) {
+                            const ix = Math.max(0, Math.min(it.x + it.w, np.x + np.w) - Math.max(it.x, np.x));
+                            const iy = Math.max(0, Math.min(it.y + it.h, np.y + np.h) - Math.max(it.y, np.y));
+                            const inter = ix * iy;
+                            const area = Math.max(1, it.w * it.h);
+                            ambiguous = (inter / area) < 0.7;
+                        }
+                    }
+                    reparentDecisions.push({ id, newParentId, prevParentId: currentParentId, ambiguous });
                 }
             }
 
@@ -1592,11 +1619,109 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
                 dispatch({ type: 'UPDATE_ITEM', id: dec.id, patch });
             }
 
+            // Second auto-grow pass for parents that just acquired new
+            // children via drop-reparenting. The first pass at line 1293
+            // iterates `affectedParentIds` built from each item's CURRENT
+            // parentId — at that point, an item being dropped INTO a new
+            // group still has its old parentId, so the new group never
+            // gets checked for overflow and stays at its original size
+            // (the user sees the adopted item half-clipped). We re-check
+            // here using a synthetic items view that reflects the just-
+            // dispatched reparent patches (React hasn't flushed yet, so
+            // s.items still shows pre-reparent state).
+            if (reparentDecisions.length > 0) {
+                const newParentIds = new Set<string>();
+                for (const dec of reparentDecisions) {
+                    if (dec.newParentId !== null) newParentIds.add(dec.newParentId);
+                }
+                const syntheticItems: Record<string, typeof s.items[string]> = { ...s.items };
+                for (const dec of reparentDecisions) {
+                    const existing = syntheticItems[dec.id];
+                    if (existing) syntheticItems[dec.id] = { ...existing, parentId: dec.newParentId } as typeof existing;
+                }
+                for (const parentId of newParentIds) {
+                    if (processedParents.has(parentId)) continue;  // first pass already grew it
+                    const parent = syntheticItems[parentId];
+                    if (!parent || parent.type !== 'container') continue;
+                    const parentRight = parent.x + parent.w;
+                    const parentBottom = parent.y + parent.h;
+                    const parentHeaderBottom = parent.y + TITLE;
+                    let minX = parent.x, minY = parent.y;
+                    let maxX = parentRight, maxY = parentBottom;
+                    let needsGrow = false;
+                    for (const child of Object.values(syntheticItems)) {
+                        if (child.parentId !== parentId) continue;
+                        if (child.x < parent.x) { minX = Math.min(minX, child.x - PAD); needsGrow = true; }
+                        if (child.y < parentHeaderBottom) { minY = Math.min(minY, child.y - PAD - TITLE); needsGrow = true; }
+                        if (child.x + child.w > parentRight) { maxX = Math.max(maxX, child.x + child.w + PAD); needsGrow = true; }
+                        if (child.y + child.h > parentBottom) { maxY = Math.max(maxY, child.y + child.h + PAD); needsGrow = true; }
+                    }
+                    if (!needsGrow) continue;
+                    const newW = maxX - minX;
+                    const newH = maxY - minY;
+                    suppressContainerResizeScaling(parentId);
+                    dispatch({
+                        type: 'UPDATE_ITEM',
+                        id: parentId,
+                        patch: {
+                            x: minX,
+                            y: minY,
+                            w: newW,
+                            h: newH,
+                            authoredW: newW,
+                            authoredH: newH,
+                        } as any,
+                    });
+                    // Re-seed authoredInParent for every child (including the
+                    // newly adopted one) against the new parent bounds. The
+                    // first reparent dispatch already wrote an anchor for the
+                    // adopted child against the OLD parent size; this rebases
+                    // it onto the grown bounds so the next vector-scale pass
+                    // derives positions consistently.
+                    for (const child of Object.values(syntheticItems)) {
+                        if (child.parentId !== parentId) continue;
+                        const next: any = {
+                            relX: child.x - minX,
+                            relY: child.y - minY,
+                            w: child.w,
+                            h: child.h,
+                        };
+                        if (child.type === 'text') {
+                            next.fontSize = (child as any).fontSize;
+                            next.authoredWidth = (child as any).authoredWidth ?? child.w;
+                        }
+                        if (child.type === 'box') {
+                            next.borderWidth = (child as any).borderWidth;
+                        }
+                        dispatch({ type: 'UPDATE_ITEM', id: child.id, patch: { authoredInParent: next } as any });
+                    }
+                    processedParents.add(parentId);
+                }
+            }
+
             // Emit the first overflow report — banner only handles one
             // parent at a time. Multi-parent drags are rare; the user can
             // re-drag the next batch if needed.
             if (overflowReports.length > 0 && optsRef.current?.onChildOverflow) {
                 optsRef.current.onChildOverflow(overflowReports[0]);
+            }
+
+            // Inverse path: surface the first ambiguous IN adoption so the
+            // user can confirm or revert. Confident adoptions (>=70%
+            // containment) already silently committed and don't show here.
+            // Overflow banner takes precedence — if a drag both overflowed
+            // an old parent AND ambiguously adopted into a new one, the
+            // deparent banner shows; the adopt banner is suppressed to
+            // avoid stacking two prompts for one gesture.
+            if (overflowReports.length === 0 && optsRef.current?.onContainerAdopt) {
+                const firstAmbiguous = reparentDecisions.find(d => d.ambiguous && d.newParentId !== null);
+                if (firstAmbiguous) {
+                    optsRef.current.onContainerAdopt({
+                        childId: firstAmbiguous.id,
+                        newParentId: firstAmbiguous.newParentId!,
+                        prevParentId: firstAmbiguous.prevParentId,
+                    });
+                }
             }
         }
 

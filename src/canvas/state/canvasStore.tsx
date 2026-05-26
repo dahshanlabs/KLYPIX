@@ -1082,10 +1082,47 @@ function reducerImpl(state: CanvasState, action: CanvasAction): CanvasState {
             // invariant "child zKey stays inside parent's z-band" for free,
             // because we never write a key outside the original sibling
             // range.
-            const itemIds = action.ids ?? [];
-            const lineIds = action.lineIds ?? [];
-            const strokeIds = action.strokeIds ?? [];
+            let itemIds = action.ids ?? [];
+            let lineIds = action.lineIds ?? [];
+            let strokeIds = action.strokeIds ?? [];
             if (itemIds.length === 0 && lineIds.length === 0 && strokeIds.length === 0) return state;
+
+            // Container-aware expansion: when a Container is in the selection,
+            // recursively pull in its descendant items + lines + strokes so
+            // the whole group moves as a unit. Without this, selecting a
+            // group and pressing Bring-to-Front would only shift the container
+            // frame within its own parent's bucket; descendants would stay
+            // interleaved at their original z within the container's bucket,
+            // so an unselected sibling stroke inside the group could remain
+            // visually above the group's children even after "bring to front".
+            const hasContainerInSel = itemIds.some(id => state.items[id]?.type === 'container');
+            if (hasContainerInSel) {
+                const eItems = new Set(itemIds);
+                const eLines = new Set(lineIds);
+                const eStrokes = new Set(strokeIds);
+                const stack: string[] = itemIds.filter(id => state.items[id]?.type === 'container');
+                const queued = new Set<string>(stack);
+                while (stack.length) {
+                    const pid = stack.pop()!;
+                    for (const [id, it] of Object.entries(state.items)) {
+                        if (it.parentId !== pid) continue;
+                        eItems.add(id);
+                        if (it.type === 'container' && !queued.has(id)) {
+                            queued.add(id);
+                            stack.push(id);
+                        }
+                    }
+                    for (const [id, ln] of Object.entries(state.lines)) {
+                        if (ln.parentId === pid) eLines.add(id);
+                    }
+                    for (const [id, st] of Object.entries(state.strokes)) {
+                        if (st.parentId === pid) eStrokes.add(id);
+                    }
+                }
+                itemIds = Array.from(eItems);
+                lineIds = Array.from(eLines);
+                strokeIds = Array.from(eStrokes);
+            }
 
             type Kind = 'item' | 'line' | 'stroke';
             interface Entry { kind: Kind; id: string; zKey: string }

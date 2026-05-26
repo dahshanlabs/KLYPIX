@@ -29,6 +29,7 @@ import { fileToItem } from './file/dropHandler';
 import { folderToItem } from './file/folderToZip';
 import { registerCloseSnapshot, captureCloseSnapshot } from './dashboard/closeSnapshotRegistry';
 import { pushClosedCanvas } from './dashboard/recentlyClosedStore';
+import { listRecentCanvases, removeRecentCanvas } from './dashboard/recentCanvasesStore';
 import { base64ToBytes, getAsset } from './file/assetRegistry';
 import JSZip from 'jszip';
 import { ocrImageAsset } from './file/ocrImage';
@@ -66,6 +67,7 @@ import { CanvasChatPanel } from './collab/CanvasChatPanel';
 import { CollabPresenceChips } from './collab/CollabPresenceChips';
 import { getCloudShare } from './cloud/cloudShareStore';
 import { useAuth } from '../components/AuthProvider';
+import { VoiceRecorderPanel } from '../components/VoiceRecorderPanel';
 import {
     suppressContainerResizeScaling,
     getContainerRenderMode,
@@ -81,7 +83,7 @@ import { useGridSettings, hexToRgba, gridAlphaFor, isDarkBackground, defaultText
 import { CanvasSettingsPopover } from './interaction/CanvasSettingsPopover';
 import { createAudioTranscribeController, type VoiceStatus } from './interaction/audioTranscribe';
 import { setDictateIntoHandler } from './interaction/voiceBridge';
-import { Search as SearchIcon, List, Layers, Play, Mic, History as HistoryIcon, Stamp as StampIcon, Filter as FilterIcon, FilePlus as LinkPlusIcon, Maximize2 as FitIcon, Loader2, Square as StopIcon, Clipboard as ClipboardIcon } from 'lucide-react';
+import { Search as SearchIcon, List, Layers, Play, Mic, History as HistoryIcon, Stamp as StampIcon, Filter as FilterIcon, FilePlus as LinkPlusIcon, Maximize2 as FitIcon, Clipboard as ClipboardIcon } from 'lucide-react';
 import { openWithPrefix as openPaletteWithPrefix } from './../palette/paletteStore';
 import { newId } from './items/types';
 import type { CanvasItem, ContainerItem, TextItem, StyleRun } from './items/types';
@@ -361,6 +363,17 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         parentId: string;
         childIds: string[];
     } | null>(null);
+    // Inverse banner: shown when a drag ambiguously adopted an item into a
+    // container (item ended up <70% inside the group — likely a graze, not
+    // an intentional "put it in here"). Yes confirms the adoption (no-op),
+    // No drops the item back to top-level at its current position, Cancel
+    // reverts the whole drag. Auto-times-out to "No" after 5 s so a
+    // missed banner doesn't silently leave the item adopted.
+    const [adoptPrompt, setAdoptPrompt] = useState<{
+        childId: string;
+        newParentId: string;
+        prevParentId: string | null;
+    } | null>(null);
     // Phase 22.5: ref to the world-transform DOM element inside CanvasRenderer.
     // useCanvasInteraction's wheel handler writes `style.transform` here
     // directly during a zoom/pan gesture; CanvasRenderer keeps re-rendering
@@ -372,6 +385,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         marqueeRect, connectPendingId, connectHoverWorld, spaceHeld, snapGuides, toast: hintToast, cancelConnect,
     } = useCanvasInteraction({
         onChildOverflow: (info) => setDeparentPrompt(info),
+        onContainerAdopt: (info) => setAdoptPrompt(info),
         worldRef,
     });
     // Auto-dismiss the deparent banner ~5 s after it appears. Same effect
@@ -382,6 +396,29 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         const t = setTimeout(() => setDeparentPrompt(null), 5000);
         return () => clearTimeout(t);
     }, [deparentPrompt]);
+    // Auto-dismiss the adopt banner ~5 s after it appears. Default-on-
+    // ignore = "No" (user explicit choice): the silent adoption is rolled
+    // back to top-level at the dropped position. Confirm via Yes is then
+    // a deliberate action rather than a side effect of being slow to react.
+    // Stale-state guard: if the item's parentId has already changed (the
+    // user clicked Yes/No/Cancel, or did something else that reparented),
+    // skip the revert.
+    useEffect(() => {
+        if (!adoptPrompt) return;
+        const prompt = adoptPrompt;
+        const t = setTimeout(() => {
+            const it = stateRef.current.items[prompt.childId];
+            if (it && it.parentId === prompt.newParentId) {
+                commit({
+                    type: 'UPDATE_ITEM',
+                    id: prompt.childId,
+                    patch: { parentId: null, authoredInParent: undefined } as any,
+                });
+            }
+            setAdoptPrompt(null);
+        }, 5000);
+        return () => clearTimeout(t);
+    }, [adoptPrompt, commit]);
     // Mirror surfaceRef locally so overlays that render with `position: fixed`
     // (ChatThread) can convert surface-local coords → viewport coords by
     // adding the surface's top/left offset. The TabBar above the canvas makes
@@ -780,6 +817,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     useOpSync({
         blobId: cloudShare?.blobId ?? null,
         active: tabActive,
+        authed: !!auth.user?.id,
         // Phase 9: surface concurrent-edit conflicts so the user knows
         // when a remote update or delete overlapped their own edit.
         onConflict: (info) => {
@@ -882,6 +920,12 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     // bailing on a useState init.
     const [launcherDismissed, setLauncherDismissed] = useState(false);
     const launcherShouldShow = !!openLauncherOnMount && !launcherDismissed;
+    // Auto-resume: on a fresh empty tab with no explicit launcher request,
+    // open the most-recent canvas instead of showing the launcher. Decision
+    // is one-shot per tab mount; the render gate suppresses the empty-state
+    // launcher until we've decided so it can't flash before we open.
+    const [autoResumeDecided, setAutoResumeDecided] = useState(false);
+    const autoResumeRanRef = useRef(false);
     // Sticky "this tab has been worked in" flag. Flips true the moment
     // the canvas has any content (item, stroke, line, or connection) and
     // STAYS true even after the user deletes everything back to zero.
@@ -909,6 +953,93 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     useEffect(() => {
         if (commentsItemId && !state.items[commentsItemId]) setCommentsItemId(null);
     }, [commentsItemId, state.items]);
+
+    // Auto-resume the most-recent canvas. Runs once per tab mount after
+    // autosave-restore has settled. Bails — and lets the empty-state
+    // launcher take over — when:
+    //   - openLauncherOnMount is set (close-recovery wants the launcher).
+    //   - pendingOpenPath is set (canvas-link click already has a target).
+    //   - autosave restored a file (state.filePath is set).
+    //   - chat→canvas queued items exist (don't hijack a deliberate hand-off).
+    //   - no recents on record.
+    // On a failed open we drop the bad entry and still mark the decision as
+    // made — the launcher will then surface with the remaining recents.
+    useEffect(() => {
+        if (!tabActive || !file.restoreSettled) return;
+        if (autoResumeRanRef.current) return;
+        if (openLauncherOnMount || pendingOpenPath) {
+            autoResumeRanRef.current = true;
+            setAutoResumeDecided(true);
+            return;
+        }
+        const s = stateRef.current;
+        const trulyEmpty = s.order.length === 0
+            && Object.keys(s.lines).length === 0
+            && Object.keys(s.strokes).length === 0
+            && Object.keys(s.connections).length === 0;
+        if (s.filePath || !trulyEmpty) {
+            autoResumeRanRef.current = true;
+            setAutoResumeDecided(true);
+            return;
+        }
+        let hasQueuedChat = false;
+        try {
+            const raw = localStorage.getItem('klypix:pendingCanvasItems');
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed) && parsed.length > 0) hasQueuedChat = true;
+            }
+        } catch { /* ignore; treat as no queue */ }
+        if (hasQueuedChat) {
+            autoResumeRanRef.current = true;
+            setAutoResumeDecided(true);
+            return;
+        }
+        const recents = listRecentCanvases();
+        if (recents.length === 0) {
+            autoResumeRanRef.current = true;
+            setAutoResumeDecided(true);
+            return;
+        }
+        autoResumeRanRef.current = true;
+        const target = recents[0];
+        // Defer the disk read + LOAD_FILE dispatch past the next paint so the
+        // empty canvas shell shows up immediately when the user clicks Canvas.
+        // Without this, the IPC + base64 asset transfer + asset-registry
+        // hydration + 100-item re-render all happen in the same tick as the
+        // canvas's first paint — the tab switch feels like a multi-second
+        // freeze. With it, the user sees the shell instantly and the file
+        // pops in a frame or two later with a "Restoring …" toast.
+        const ric: any = (window as any).requestIdleCallback;
+        // Only show the file name if it's something the user actually picked.
+        // Default-titled canvases ("Untitled" / empty) look noisy as
+        // "Restoring Untitled…"; just say "Restoring…" in that case.
+        const rawTitle = (target.title || target.filePath.split(/[\\/]/).pop() || '').replace(/\.(klypix|any)$/i, '').trim();
+        const isPlaceholder = !rawTitle || /^untitled$/i.test(rawTitle);
+        const toastId = Date.now();
+        setToast({
+            text: isPlaceholder ? `${tLocale('canvas.restoring')}…` : `${tLocale('canvas.restoring')} ${rawTitle}…`,
+            id: toastId,
+        });
+        const runOpen = () => {
+            file.openByPath(target.filePath).then((res) => {
+                if (res && !res.ok && /ENOENT|not found|no such file/i.test(res.error || '')) {
+                    removeRecentCanvas(target.filePath);
+                }
+            }).catch(() => { /* swallow; launcher will show */ })
+              .finally(() => {
+                  setAutoResumeDecided(true);
+                  // Clear the "Restoring…" toast as soon as the load resolves
+                  // (success OR failure). Guard against clobbering a newer
+                  // toast the user has since triggered — only clear if our
+                  // toast is still the current one.
+                  setToast(prev => (prev && prev.id === toastId ? null : prev));
+              });
+        };
+        if (ric) ric(runOpen, { timeout: 600 });
+        else setTimeout(runOpen, 50);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tabActive, file.restoreSettled]);
 
     // Chat→Canvas drain. Triggered when the active tab is shown AND the
     // autosave-restore decision has fully settled — we mustn't add cards
@@ -1007,6 +1138,10 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
 
     const voiceRef = useRef<ReturnType<typeof createAudioTranscribeController> | null>(null);
     if (!voiceRef.current) voiceRef.current = createAudioTranscribeController();
+    // Anchor for the floating VoiceRecorderPanel — needs the FAB's screen rect
+    // so it can portal-mount above the FAB without inheriting any ancestor's
+    // overflow clip.
+    const canvasVoiceFabRef = useRef<HTMLButtonElement | null>(null);
 
     // Where a completed transcript goes. Set before start(), reset when the
     // flow ends (success OR error).
@@ -1817,7 +1952,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 document.body, so without it inactive tabs (e.g. canvas mode
                 hidden while user is in chat) would punch the dashboard onto
                 document.body over the chat UI. */}
-            {tabActive && (manualDashboardOpen || launcherShouldShow || (isEmpty && !state.filePath && !hasInteracted)) && (
+            {tabActive && (manualDashboardOpen || launcherShouldShow || (isEmpty && !state.filePath && !hasInteracted && autoResumeDecided)) && (
                 <CanvasDashboard
                     onOpenRecent={(p) => {
                         setManualDashboardOpen(false);
@@ -1986,6 +2121,70 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                         style={{ left: sw.x, top: sw.y }}
                     >
                         <span className="text-white/60 mr-1">Move out of group?</span>
+                        <button
+                            onClick={onYes}
+                            className="px-2 py-1 rounded-md bg-emerald-500/25 text-emerald-300 hover:bg-emerald-500/35 transition-colors font-medium"
+                        >
+                            Yes
+                        </button>
+                        <button
+                            onClick={onNo}
+                            className="px-2 py-1 rounded-md bg-white/8 text-white/75 hover:bg-white/15 transition-colors"
+                        >
+                            No
+                        </button>
+                        <button
+                            onClick={onCancel}
+                            className="px-2 py-1 rounded-md text-white/55 hover:text-white/85 hover:bg-white/8 transition-colors"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                );
+            })()}
+
+            {adoptPrompt && (() => {
+                const it = state.items[adoptPrompt.childId];
+                const parent = state.items[adoptPrompt.newParentId];
+                if (!it || !parent) return null;
+                // Anchor banner below the adopted item's bottom-center, same
+                // pattern as the deparent banner so both prompts feel like
+                // one consistent UX (just opposite directions).
+                const sw = worldToScreen(
+                    { x: it.x + it.w / 2, y: it.y + it.h },
+                    state.view,
+                );
+                const closeBanner = () => setAdoptPrompt(null);
+                // Yes: silent adoption already happened — just dismiss.
+                const onYes = closeBanner;
+                // No: revert just the parentId, keep new position. Committed
+                // as a fresh action so undo unwinds the revert before the
+                // drag (two-step undo back to pre-drag state).
+                const onNo = () => {
+                    commit({
+                        type: 'UPDATE_ITEM',
+                        id: adoptPrompt.childId,
+                        patch: { parentId: null, authoredInParent: undefined } as any,
+                    });
+                    closeBanner();
+                };
+                // Cancel: full revert via undo — pops the drag's snapshot,
+                // restoring pre-drag position AND parentId in one step.
+                const onCancel = () => {
+                    undo();
+                    closeBanner();
+                };
+                const parentName = (parent as any).title || (parent as any).label || 'group';
+                return (
+                    <div
+                        data-canvas-ui="1"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onWheel={(e) => e.stopPropagation()}
+                        className="absolute z-30 -translate-x-1/2 mt-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-[#12121a]/95 border border-white/10 shadow-[0_8px_24px_rgba(0,0,0,0.55)] backdrop-blur-md text-[12px] text-white/85 animate-in fade-in duration-150"
+                        style={{ left: sw.x, top: sw.y }}
+                    >
+                        <span className="text-white/60 mr-1">Move into {parentName}?</span>
                         <button
                             onClick={onYes}
                             className="px-2 py-1 rounded-md bg-emerald-500/25 text-emerald-300 hover:bg-emerald-500/35 transition-colors font-medium"
@@ -2794,16 +2993,24 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                     routed to clip: so the user gets to past copies without
                     learning the prefix syntax. */}
                 <FileOpButton label={tLocale('canvas_top.clipboard_history')} onClick={() => openPaletteWithPrefix('clip:')}><ClipboardIcon size={13} /></FileOpButton>
-                <FileOpButton label={tLocale('canvas_top.search_short')} onClick={() => setSearchOpen(true)}><SearchIcon size={13} /></FileOpButton>
-                <FileOpButton label={tLocale('canvas_top.outline')} onClick={() => setOutlineOpen(v => !v)}><List size={13} /></FileOpButton>
-                <FileOpButton label={tLocale('canvas_top.layers')} onClick={() => setLayersOpen(v => !v)}><Layers size={13} /></FileOpButton>
+                <FileOpButton toggle="layers" label={tLocale('canvas_top.layers')} onClick={() => setLayersOpen(v => !v)}><Layers size={13} /></FileOpButton>
                 <FileOpButton label={tLocale('canvas_top.present')} onClick={() => setPresenting(true)}><Play size={13} /></FileOpButton>
-                <FileOpButton label={tLocale('canvas_top.history')} onClick={() => setVersionsOpen(v => !v)}><HistoryIcon size={13} /></FileOpButton>
-                <FileOpButton label={tLocale('canvas_top.templates')} onClick={() => setTemplatesOpen(v => !v)}><StampIcon size={13} /></FileOpButton>
-                <FileOpButton label={state.statusFilterHidden.length > 0 ? `${tLocale('canvas_top.smart_collections')} — ${state.statusFilterHidden.length}` : tLocale('canvas_top.smart_collections')} onClick={() => setCollectionsOpen(v => !v)} indicator={state.statusFilterHidden.length > 0}><FilterIcon size={13} /></FileOpButton>
+                <FileOpButton toggle="history" label={tLocale('canvas_top.history')} onClick={() => setVersionsOpen(v => !v)}><HistoryIcon size={13} /></FileOpButton>
+                <FileOpButton toggle="templates" label={tLocale('canvas_top.templates')} onClick={() => setTemplatesOpen(v => !v)}><StampIcon size={13} /></FileOpButton>
+                <FileOpButton toggle="collections" label={state.statusFilterHidden.length > 0 ? `${tLocale('canvas_top.smart_collections')} — ${state.statusFilterHidden.length}` : tLocale('canvas_top.smart_collections')} onClick={() => setCollectionsOpen(v => !v)} indicator={state.statusFilterHidden.length > 0}><FilterIcon size={13} /></FileOpButton>
                 <FileOpButton label={tLocale('canvas_top.link_to_canvas')} onClick={insertCanvasLink}><LinkPlusIcon size={13} /></FileOpButton>
                 <span className="w-px h-4 bg-white/10 mx-0.5" />
                 <CanvasSettingsPopover />
+            </div>
+
+            {/* Navigation cluster — sits directly under the top toolbar's
+                Home button. Search + Outline are view/navigation tools, not
+                creation tools, so they get their own surface separate from
+                both the file-ops bar above and the creation Toolbar on the
+                middle-left. */}
+            <div data-canvas-ui="1" className="absolute top-14 left-3 z-20 no-drag flex flex-col items-center gap-1 px-1 py-1 rounded-full bg-black/60 border border-white/10">
+                <FileOpButton toggle="search" label={tLocale('canvas_top.search_short')} onClick={() => setSearchOpen(true)}><SearchIcon size={13} /></FileOpButton>
+                <FileOpButton toggle="outline" label={tLocale('canvas_top.outline')} onClick={() => setOutlineOpen(v => !v)}><List size={13} /></FileOpButton>
             </div>
 
             {/* File title + tool/zoom/item indicator — bottom right. Title
@@ -2863,11 +3070,13 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                     : tLocale('canvas.items_count').replace('{n}', String(displayedItemCount))}</span>
             </div>
 
-            {/* Voice FAB — bottom-center. Centered normally; slides to
-                bottom-right when the agent command bar is open so the two
-                don't collide. Clicking streams dictation into the focused
-                text item (state.editingId) if there is one, otherwise into
-                the floating transcription card below. */}
+            {/* Voice FAB — bottom-center. Always rendered so it acts as the
+                anchor for the VoiceRecorderPanel (which portal-mounts to
+                document.body, sitting above the FAB while recording).
+                Slides to bottom-right when the agent command bar is open so
+                the two don't collide. Clicking streams dictation into the
+                focused text item (state.editingId) if there is one,
+                otherwise into the floating transcription card. */}
             <div
                 data-canvas-ui="1"
                 className="absolute bottom-3 left-1/2 z-30 no-drag"
@@ -2879,6 +3088,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 }}
             >
                 <button
+                    ref={canvasVoiceFabRef}
                     onClick={() => {
                         const rec = voiceRef.current!;
                         if (rec.isRecording()) {
@@ -2892,41 +3102,54 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                         }
                     }}
                     title={
-                        voiceStatus === 'recording' ? tLocale('chat.stop_recording') :
-                        voiceStatus === 'transcribing' ? 'Transcribing…' :
-                        'Voice (Ctrl+M)'
+                        voiceStatus === 'recording' ? tLocale('chat.voice_stop')
+                            : voiceStatus === 'transcribing' ? tLocale('chat.voice_transcribing')
+                            : 'Voice (Ctrl+M)'
                     }
                     disabled={voiceStatus === 'transcribing'}
-                    className={`relative w-10 h-10 flex items-center justify-center rounded-full border transition-colors cursor-pointer shadow-[0_6px_20px_rgba(0,0,0,0.4)] group ${
+                    className={`relative w-10 h-10 flex items-center justify-center rounded-full border transition-colors cursor-pointer shadow-[0_6px_20px_rgba(0,0,0,0.4)] ${
                         voiceStatus === 'recording'
-                            ? 'bg-red-500/90 border-red-400/70 text-white hover:bg-red-500'
+                            ? 'bg-red-500/20 border-red-400/40 text-red-300/80'
                             : voiceStatus === 'transcribing'
-                            ? 'bg-emerald-500/80 border-emerald-400/70 text-white cursor-wait'
+                            ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300/80 cursor-wait'
                             : 'bg-[#12121a]/90 border-white/15 text-white/75 hover:text-white hover:bg-[#1a1a22]/95'
                     }`}
                 >
-                    {voiceStatus === 'recording' ? <AudioBars level={voiceLevel} />
-                        : voiceStatus === 'transcribing' ? <Loader2 size={16} className="animate-spin" />
-                        : <Mic size={16} />}
-                    {/* Stop badge — small filled square at the top-right of the
-                        round FAB while recording, so the "click to stop"
-                        affordance is unambiguous even though the icon area
-                        is occupied by the waveform. Ringed in the page bg
-                        so it pops off the round button's red rim. */}
-                    {voiceStatus === 'recording' && (
-                        <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-red-600 ring-2 ring-[#12121a] flex items-center justify-center shadow-sm group-hover:bg-red-500 transition-colors pointer-events-none">
-                            <StopIcon size={6} className="text-white fill-white" />
-                        </span>
-                    )}
+                    <Mic size={16} />
                 </button>
             </div>
+            {(voiceStatus === 'recording' || voiceStatus === 'transcribing') && (
+                <VoiceRecorderPanel
+                    level={voiceLevel}
+                    status={voiceStatus === 'recording' ? 'recording' : 'transcribing'}
+                    anchorRef={canvasVoiceFabRef}
+                    position="above"
+                    // Belt-and-suspenders stop:
+                    //   1. Call rec.stop() unconditionally — the controller's
+                    //      stop() safely no-ops if not recording, so dropping
+                    //      the isRecording() gate removes the risk that a
+                    //      brief state race silently swallows the click.
+                    //   2. Optimistically flip voiceStatus to 'transcribing'
+                    //      ourselves. The MediaRecorder.onstop callback will
+                    //      do the same thing a few ms later, but if anything
+                    //      delays or breaks that chain, the UI still
+                    //      acknowledges the click immediately — the user is
+                    //      never left wondering whether their press
+                    //      registered.
+                    onStop={() => {
+                        try { voiceRef.current?.stop(); } catch (e) { console.warn('[canvas voice] stop', e); }
+                        setVoiceStatus('transcribing');
+                    }}
+                />
+            )}
 
-            {/* Transcription card — appears while the mic is streaming to
-                the card sink (no text item is being edited). Lets the user
-                copy the text or pin it to the canvas at the card's world
-                position. Persists after recording ends so slow readers can
-                still act on the final transcript. */}
-            {transcription && (() => {
+            {/* Transcription card — appears once the result is in (done/error)
+                in the card-sink path (no text item being edited). Lets the
+                user copy or pin the final transcript to the canvas at the
+                card's world position. The 'listening' and 'transcribing'
+                phases are owned by VoiceRecorderPanel above, so they're
+                skipped here to avoid stacking two indicators. */}
+            {transcription && (transcription.status === 'done' || transcription.status === 'error') && (() => {
                 const doneText = transcription.status === 'done' ? transcription.text : '';
                 const canAct = !!doneText;
                 return (
@@ -2939,18 +3162,6 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                         transcription.status === 'error' ? 'border-red-500/50' : 'border-emerald-500/40'
                     } rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] px-4 py-3 flex items-start gap-3`}>
                         <div className="flex-1 text-[13px] leading-relaxed whitespace-pre-wrap min-h-[20px]">
-                            {transcription.status === 'listening' && (
-                                <span className="text-white/50 italic flex items-center gap-2">
-                                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
-                                    Listening…
-                                </span>
-                            )}
-                            {transcription.status === 'transcribing' && (
-                                <span className="text-white/60 italic flex items-center gap-2">
-                                    <Loader2 size={12} className="animate-spin text-emerald-400" />
-                                    Transcribing…
-                                </span>
-                            )}
                             {transcription.status === 'done' && (
                                 <span className="text-white/90">{transcription.text || <span className="text-white/30 italic">(no speech detected)</span>}</span>
                             )}
@@ -3029,37 +3240,6 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 </div>
                 );
             })()}
-        </div>
-    );
-}
-
-// Waveform inside the voice FAB while recording. Driven by the actual
-// mic amplitude (0..1) from the AudioContext analyser — matches the
-// chat-side mic's feel.
-//
-// 9-bar bell-curve envelope anchored via `items-center` so bars grow
-// symmetrically UP and DOWN from a horizontal midline as the user
-// speaks. Previous version used `items-end` which bottom-anchored the
-// wave — readable but visually heavy on the bottom of the round FAB.
-function AudioBars({ level }: { level: number }) {
-    const scales = [0.3, 0.55, 0.75, 0.9, 1.0, 0.9, 0.75, 0.55, 0.3];
-    // Below this level, treat as silence and render a flat dim baseline
-    // so the rest state is clearly idle (matches the chat mic feel).
-    const REST_THRESHOLD = 0.08;
-    const isResting = level < REST_THRESHOLD;
-    const speakLevel = isResting ? 0 : (level - REST_THRESHOLD) / (1 - REST_THRESHOLD);
-    return (
-        <div className="flex items-center gap-[1.5px] h-5">
-            {scales.map((scale, i) => (
-                <span
-                    key={i}
-                    className="w-[2px] bg-white rounded-full transition-all duration-75"
-                    style={{
-                        height: isResting ? '3px' : `${Math.max(3, speakLevel * scale * 20)}px`,
-                        opacity: isResting ? 0.4 : 0.7 + speakLevel * 0.3,
-                    }}
-                />
-            ))}
         </div>
     );
 }
@@ -3184,12 +3364,16 @@ interface FileOpButtonProps {
     // user to open it. Currently lit when the status filter is hiding
     // anything, so users notice why items are missing from the canvas.
     indicator?: boolean;
+    // Identifier read by outside-click handlers (e.g. OutlineSidebar) so a
+    // toggle press isn't treated as an outside click that closes the panel.
+    toggle?: string;
 }
-function FileOpButton({ label, onClick, children, indicator }: FileOpButtonProps) {
+function FileOpButton({ label, onClick, children, indicator, toggle }: FileOpButtonProps) {
     return (
         <button
             onClick={onClick}
             title={label}
+            data-toggle={toggle}
             className="relative w-7 h-7 flex items-center justify-center rounded-full text-white/50 hover:text-white hover:bg-white/10 transition-all cursor-pointer"
         >
             {children}
