@@ -501,6 +501,29 @@ function ResultRow({
     onClick: () => void;
     onRunAction: (action: PaletteAction) => void;
 }) {
+    // Section header rendering — non-interactive, visually distinct.
+    // Used by clipboard provider's withSectionHeaders to split pinned
+    // from recent rows. Skipped by keyboard navigation in paletteStore.
+    if (result.sectionHeader) {
+        return (
+            <div
+                data-palette-row={index}
+                data-palette-section-header="1"
+                style={{
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: 1.2,
+                    color: result.accent ?? 'rgba(255,255,255,0.4)',
+                    padding: '10px 12px 4px 12px',
+                    textTransform: 'uppercase',
+                    pointerEvents: 'none',
+                    userSelect: 'none',
+                }}
+            >
+                {result.title}
+            </div>
+        );
+    }
     // Best-in-class: native title-attribute tooltip shows the FULL title
     // + subtitle on hover. Lets users see truncated content (long URLs,
     // long clipboard text) without a custom hover-preview component.

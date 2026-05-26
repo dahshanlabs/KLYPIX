@@ -49,6 +49,12 @@ interface PaletteState {
      *  resolves successfully. Auto-clears after ~1.6s. id forces React
      *  reconciliation so back-to-back identical texts still re-animate. */
     toast: { text: string; id: number } | null;
+    /** Smart-paste target — captured at palette open() so the primary
+     *  Paste action can SendKeys ^v straight into the app the user just
+     *  came from. Null when no recent non-Klypix foreground is known
+     *  (boot, no ENUM_WINDOWS result yet). app is a friendly process
+     *  name for the "Paste to <App>" label. */
+    target: { app: string; hwnd: string } | null;
 }
 
 const SOURCE_WEIGHT: Record<string, number> = {
@@ -71,7 +77,29 @@ let state: PaletteState = {
     secondaryCursor: 0,
     clipFilter: null,
     toast: null,
+    target: null,
 };
+
+// Friendly-name map mirrors the one in clipboardHistory.ts so the palette
+// label says "Paste to VS Code" instead of "Paste to Code". Kept here to
+// avoid round-tripping the cosmetic transform back through main.
+const PROC_FRIENDLY: Record<string, string> = {
+    code: 'VS Code', cursor: 'Cursor', windsurf: 'Windsurf',
+    chrome: 'Chrome', msedge: 'Edge', firefox: 'Firefox', brave: 'Brave',
+    opera: 'Opera', notepad: 'Notepad', notepadplusplus: 'Notepad++',
+    explorer: 'File Explorer', winword: 'Word', excel: 'Excel',
+    powerpnt: 'PowerPoint', outlook: 'Outlook', teams: 'Teams',
+    slack: 'Slack', discord: 'Discord', figma: 'Figma',
+    photoshop: 'Photoshop', illustrator: 'Illustrator', spotify: 'Spotify',
+    obsidian: 'Obsidian', notion: 'Notion', zoom: 'Zoom',
+    terminal: 'Terminal', windowsterminal: 'Windows Terminal',
+    powershell: 'PowerShell', cmd: 'Command Prompt', wt: 'Windows Terminal',
+};
+function friendlyProcName(proc: string): string {
+    const k = proc.toLowerCase().replace(/\.exe$/, '');
+    if (PROC_FRIENDLY[k]) return PROC_FRIENDLY[k];
+    return proc.charAt(0).toUpperCase() + proc.slice(1);
+}
 let toastTimer: number | null = null;
 
 const listeners = new Set<() => void>();
@@ -104,6 +132,9 @@ function rebuildRanked() {
     if (state.clipFilter && state.exclusiveProvider === 'clip') {
         const filter = state.clipFilter;
         ranked = ranked.filter(r => {
+            // When a filter chip is active the view is already narrowed
+            // to one kind — section headers become redundant noise.
+            if (r.sectionHeader) return false;
             if (filter === 'pinned') return r.title.startsWith('📌');
             // Kind detection: clipboardProvider sets distinct icons by kind.
             // We can't easily peek at the icon, so we rely on title content
@@ -133,6 +164,12 @@ function rebuildRanked() {
         const found = ranked.findIndex(r => r.id === prevId);
         if (found >= 0) nextIdx = found;
     }
+    // Don't park selection on a section header — find the first real row.
+    if (ranked[nextIdx]?.sectionHeader) {
+        for (let i = 0; i < ranked.length; i++) {
+            if (!ranked[i].sectionHeader) { nextIdx = i; break; }
+        }
+    }
     set({ ranked, selectedIndex: nextIdx, secondaryCursor: 0 });
 }
 
@@ -155,15 +192,36 @@ export function register(provider: PaletteProvider): () => void {
 export function open() {
     if (state.open) return;
     set({ open: true });
+    // Snapshot the previous foreground window so primary "Paste" actions
+    // can SendKeys straight there. Fire-and-forget — UI doesn't block on
+    // it; the label upgrades from "Paste" to "Paste to <App>" the moment
+    // it resolves. If the bridge is missing (web build), we silently stay
+    // on the copy-only fallback.
+    void captureSmartPasteTarget();
     // Re-fire the current query so empty-state providers populate.
     runQuery(state.query);
+}
+
+async function captureSmartPasteTarget(): Promise<void> {
+    try {
+        const bridge: any = (window as any).electron;
+        if (!bridge?.getLastActiveWindow) return;
+        const win = await bridge.getLastActiveWindow();
+        if (win?.hwnd && win?.process && win.process !== 'Unknown') {
+            set({ target: { app: friendlyProcName(win.process), hwnd: String(win.hwnd) } });
+        } else {
+            set({ target: null });
+        }
+    } catch {
+        set({ target: null });
+    }
 }
 
 export function close() {
     if (!state.open) return;
     queryAbort?.abort();
     queryAbort = null;
-    set({ open: false, secondaryCursor: 0 });
+    set({ open: false, secondaryCursor: 0, target: null });
 }
 
 export function toggle() {
@@ -190,6 +248,23 @@ export function moveSelection(delta: number) {
     let next = state.selectedIndex + delta;
     if (next < 0) next = 0;
     if (next > max) next = max;
+    // Skip past section headers — they're labels, not selectable rows.
+    // Keep moving in the same direction until we land on a real result
+    // OR hit a boundary. If the boundary IS a header, retreat one step
+    // back to the previous real row.
+    const step = delta >= 0 ? 1 : -1;
+    while (state.ranked[next]?.sectionHeader && next >= 0 && next <= max) {
+        const candidate = next + step;
+        if (candidate < 0 || candidate > max) {
+            // Walked off the edge — find the nearest non-header in the
+            // OPPOSITE direction so we don't park on a label.
+            for (let i = next - step; i >= 0 && i <= max; i -= step) {
+                if (!state.ranked[i]?.sectionHeader) { next = i; break; }
+            }
+            break;
+        }
+        next = candidate;
+    }
     set({ selectedIndex: next, secondaryCursor: 0 });
 }
 
@@ -200,6 +275,13 @@ export function jumpSelection(to: 'top' | 'bottom' | number) {
     if (to === 'top') next = 0;
     else if (to === 'bottom') next = max;
     else next = Math.max(0, Math.min(max, to));
+    // Skip section headers — same rule as moveSelection.
+    if (state.ranked[next]?.sectionHeader) {
+        const step = to === 'bottom' ? -1 : 1;
+        for (let i = next; i >= 0 && i <= max; i += step) {
+            if (!state.ranked[i]?.sectionHeader) { next = i; break; }
+        }
+    }
     set({ selectedIndex: next, secondaryCursor: 0 });
 }
 

@@ -75,6 +75,11 @@ export interface PaletteResult {
     /** When truthy, the result is rendered with a "loading" state — used
      *  by streaming providers (AI, web fetch) to show in-flight rows. */
     pending?: boolean;
+    /** When set, this entry renders as a section HEADER instead of a
+     *  normal row. Headers are not selectable, not keyboard-navigable,
+     *  and don't trigger primaryAction. Providers use them to group
+     *  related results (e.g. clipboard's 'Pinned' / 'Recent' split). */
+    sectionHeader?: string;
     /** Best-in-class detail pane: when the row is highlighted, render
      *  this content in the right-side preview panel. Providers fill it
      *  for rows whose UX benefits from a larger view: image clipboard

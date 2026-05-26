@@ -19,13 +19,14 @@
 // enough to absorb a typing burst.
 
 import type { PaletteProvider, PaletteResult, PaletteProviderContext } from './types';
-import { Clipboard, Image as ImageIcon, FileText, Pin, PinOff, Code, Trash2 } from 'lucide-react';
+import { Clipboard, Image as ImageIcon, FileText, Pin, PinOff, Code, Trash2, Link as LinkIcon, Palette as PaletteIcon, ExternalLink } from 'lucide-react';
 import React from 'react';
 import { fuzzyFilter } from '../search';
+import { getSnapshot } from '../paletteStore';
 
 interface ClipboardRow {
     id: string;
-    kind: 'text' | 'image' | 'files' | 'html';
+    kind: 'text' | 'image' | 'files' | 'html' | 'link' | 'color';
     text?: string;
     imageDataUrl?: string;
     filePaths?: string[];
@@ -136,7 +137,7 @@ async function syncPinChange(row: ClipboardRow, nowPinned: boolean): Promise<voi
 }
 
 function preview(row: ClipboardRow): string {
-    if (row.kind === 'text' || row.kind === 'html') {
+    if (row.kind === 'text' || row.kind === 'html' || row.kind === 'link' || row.kind === 'color') {
         return (row.text || '').slice(0, 120).replace(/\s+/g, ' ');
     }
     if (row.kind === 'files') {
@@ -181,6 +182,23 @@ function iconFor(row: ClipboardRow): React.ReactNode {
     if (row.kind === 'image') return React.createElement(ImageIcon, { size: 14 });
     if (row.kind === 'files') return React.createElement(FileText, { size: 14 });
     if (row.kind === 'html') return React.createElement(Code, { size: 14 });
+    if (row.kind === 'link') return React.createElement(LinkIcon, { size: 14 });
+    if (row.kind === 'color' && row.text) {
+        // Render an actual color swatch instead of a generic palette icon.
+        // The text is the literal color value (we validate strictly in
+        // clipboardHistory.classifyText), so CSS interprets it directly.
+        return React.createElement('div', {
+            style: {
+                width: 22,
+                height: 22,
+                borderRadius: 6,
+                background: row.text,
+                border: '1px solid rgba(255,255,255,0.2)',
+                boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.15)',
+            },
+        });
+    }
+    if (row.kind === 'color') return React.createElement(PaletteIcon, { size: 14 });
     return React.createElement(Clipboard, { size: 14 });
 }
 
@@ -234,6 +252,57 @@ function detailFor(row: ClipboardRow): (() => React.ReactNode) | undefined {
             }, row.filePaths!.join('\n')),
         );
     }
+    // Color row: large swatch + the literal value.
+    if (row.kind === 'color' && row.text) {
+        return () => React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 12, height: '100%' } },
+            React.createElement('div', {
+                style: {
+                    flex: 1,
+                    minHeight: 120,
+                    borderRadius: 10,
+                    background: row.text,
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.2)',
+                },
+            }),
+            React.createElement('div', {
+                style: {
+                    fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+                    fontSize: 14,
+                    color: 'rgba(255,255,255,0.95)',
+                    background: 'rgba(0,0,0,0.3)',
+                    borderRadius: 6,
+                    padding: '8px 10px',
+                    textAlign: 'center',
+                    userSelect: 'all',
+                },
+            }, row.text),
+            React.createElement('div', { style: { fontSize: 11, color: 'rgba(255,255,255,0.55)' } },
+                `Color · ${ageLabel(row.capturedAt)}${row.sourceApp ? ' · ' + row.sourceApp : ''}`,
+            ),
+        );
+    }
+    // Link row: show the URL prominently in monospace.
+    if (row.kind === 'link' && row.text) {
+        return () => React.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 12, height: '100%' } },
+            React.createElement('div', {
+                style: {
+                    fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+                    fontSize: 13,
+                    color: '#7dd3fc',
+                    background: 'rgba(14,165,233,0.08)',
+                    border: '1px solid rgba(14,165,233,0.2)',
+                    borderRadius: 8,
+                    padding: '10px 12px',
+                    wordBreak: 'break-all',
+                    userSelect: 'all',
+                },
+            }, row.text),
+            React.createElement('div', { style: { fontSize: 11, color: 'rgba(255,255,255,0.55)' } },
+                `Link · ${ageLabel(row.capturedAt)}${row.sourceApp ? ' · ' + row.sourceApp : ''}`,
+            ),
+        );
+    }
     // Text / HTML rows: detail panel only for content > 80 chars
     // (anything shorter fully fits in the title).
     if ((row.kind === 'text' || row.kind === 'html') && row.text && row.text.length > 80) {
@@ -273,19 +342,46 @@ function toResult(row: ClipboardRow): PaletteResult {
         accent: row.fromSync ? '#a855f7' : (row.pinned ? '#f59e0b' : '#06b6d4'),
         icon: iconFor(row),
         detail: detailFor(row),
-        primaryAction: {
-            label: 'Paste',
-            toast: 'Copied to clipboard',
-            handler: async () => {
-                const bridge: any = (window as any).electron?.clipboardHistory;
-                if (!bridge?.copy) return;
-                await bridge.copy(row.id);
-                // Invalidate the cache so the next palette query sees the
-                // newly-bumped row at the top.
-                listCache = null;
-            },
-        },
+        primaryAction: (() => {
+            // Best-in-class: read the smart-paste target from the palette
+            // store at row-build time. When known, primary action becomes
+            // a one-keystroke SendKeys ^v into the target app (Raycast
+            // parity). When unknown (boot, no recent foreground), fall back
+            // to the old "re-copy to OS clipboard and let the user paste".
+            const target = getSnapshot().target;
+            const canSmartPaste = !!(target?.hwnd && row.kind !== 'files');
+            return {
+                label: canSmartPaste ? `Paste to ${target!.app}` : 'Paste',
+                toast: canSmartPaste ? `Pasted to ${target!.app}` : 'Copied to clipboard',
+                handler: async () => {
+                    const bridge: any = (window as any).electron;
+                    if (canSmartPaste && bridge?.smartPaste) {
+                        const res = await bridge.smartPaste({ hwnd: target!.hwnd, rowId: row.id });
+                        listCache = null;
+                        if (res?.ok) return;
+                        // Smart-paste failed (target window closed, perms,
+                        // etc.) — fall back to the copy-only path so the
+                        // user can still manually paste.
+                    }
+                    if (bridge?.clipboardHistory?.copy) {
+                        await bridge.clipboardHistory.copy(row.id);
+                        listCache = null;
+                    }
+                },
+            };
+        })(),
         secondaryActions: [
+            ...(row.kind === 'link' && row.text ? [{
+                label: 'Open in browser',
+                chord: 'Alt+Enter',
+                toast: 'Opening…',
+                inlineIcon: React.createElement(ExternalLink, { size: 12 }),
+                inlineIconAccent: '#7dd3fc',
+                handler: async () => {
+                    const bridge: any = (window as any).electron;
+                    if (bridge?.openExternal) await bridge.openExternal(row.text!);
+                },
+            }] : []),
             {
                 label: row.pinned ? 'Unpin' : 'Pin',
                 chord: 'Shift+Enter',
@@ -312,11 +408,36 @@ function toResult(row: ClipboardRow): PaletteResult {
             {
                 label: 'Send to chat',
                 chord: 'Ctrl+Enter',
+                // Real bridge: images attach as files (round-trip data URL →
+                // temp file via save-pasted-image), File Explorer rows attach
+                // their paths directly, text/html rows append into the chat
+                // textarea. App.tsx listens for these CustomEvents and also
+                // flips the tab to 'chat' so the user sees the result.
+                toast: row.kind === 'image' || row.kind === 'files' ? 'Attached to chat' : 'Sent to chat',
                 handler: async () => {
-                    // Day 4 wires the chat-input bridge. For now, fall back
-                    // to copy + open chat tab.
-                    const bridge: any = (window as any).electron?.clipboardHistory;
-                    if (bridge?.copy) await bridge.copy(row.id);
+                    if (row.kind === 'image' && row.imageDataUrl) {
+                        const m = row.imageDataUrl.match(/^data:(image\/[\w+.-]+);base64,(.*)$/);
+                        if (!m) return;
+                        const mime = m[1];
+                        const bin = atob(m[2]);
+                        const bytes = new Uint8Array(bin.length);
+                        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                        const save = (window as any).electron?.savePastedImage;
+                        if (!save) return;
+                        const res = await save(bytes.buffer, mime);
+                        if (res?.ok && res.path) {
+                            window.dispatchEvent(new CustomEvent('klypix:chat-attach', { detail: { paths: [res.path] } }));
+                        }
+                        return;
+                    }
+                    if (row.kind === 'files' && row.filePaths && row.filePaths.length > 0) {
+                        window.dispatchEvent(new CustomEvent('klypix:chat-attach', { detail: { paths: row.filePaths.slice() } }));
+                        return;
+                    }
+                    if ((row.kind === 'text' || row.kind === 'html') && row.text) {
+                        window.dispatchEvent(new CustomEvent('klypix:chat-input-append', { detail: { text: row.text } }));
+                        return;
+                    }
                 },
             },
             {
@@ -361,19 +482,53 @@ export const clipboardProvider: PaletteProvider = {
     weight: 1.0,
 
     emptyState(): PaletteResult[] {
-        // Synchronous — palette empty-state can't await. Returns cached
-        // snapshot if any, otherwise empty list. The first time the
-        // palette opens after boot, the user sees nothing here; pressing
-        // any key triggers query() which awaits fetchList properly.
         if (!listCache) return [];
-        return listCache.rows.slice(0, 12).map(toResult);
+        return withSectionHeaders(listCache.rows.slice(0, 20));
     },
 
     async query(input: string, _ctx: PaletteProviderContext): Promise<PaletteResult[]> {
         const rows = await fetchList();
-        const results = rows.map(toResult);
         const q = input.trim();
-        if (q.length === 0) return results.slice(0, 20);
+        if (q.length === 0) return withSectionHeaders(rows.slice(0, 20));
+        // When the user is searching, section dividers add noise — show a
+        // flat fuzzy-ranked list instead. Pinned rows still get their
+        // 📌 prefix so they're recognizable.
+        const results = rows.map(toResult);
         return fuzzyFilter(results, q).slice(0, 20);
     },
 };
+
+// Insert 📌 PINNED / RECENT section headers between pinned and unpinned
+// rows when both groups exist. Removes the "did pin actually do
+// anything" ambiguity — pinned rows now visibly cluster under a labeled
+// header instead of just having a small emoji prefix.
+function withSectionHeaders(rows: ClipboardRow[]): PaletteResult[] {
+    const pinned = rows.filter(r => r.pinned);
+    const unpinned = rows.filter(r => !r.pinned);
+    const out: PaletteResult[] = [];
+    if (pinned.length > 0) {
+        out.push({
+            id: 'clip:section:pinned',
+            title: `📌 PINNED (${pinned.length})`,
+            sectionHeader: 'pinned',
+            accent: '#f59e0b',
+            primaryAction: { label: '', handler: () => {} },
+        });
+        for (const r of pinned) out.push(toResult(r));
+    }
+    if (unpinned.length > 0) {
+        // Only show "Recent" label when there's also a Pinned section
+        // above — otherwise it's redundant.
+        if (pinned.length > 0) {
+            out.push({
+                id: 'clip:section:recent',
+                title: 'RECENT',
+                sectionHeader: 'recent',
+                accent: '#9ca3af',
+                primaryAction: { label: '', handler: () => {} },
+            });
+        }
+        for (const r of unpinned) out.push(toResult(r));
+    }
+    return out;
+}
