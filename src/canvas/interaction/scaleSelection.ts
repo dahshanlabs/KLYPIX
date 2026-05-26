@@ -34,10 +34,31 @@ export function getSelectionBBox(state: ScaleState): SelectionBBox | null {
         const it = state.items[id];
         if (!it) continue;
         touched = true;
-        if (it.x < minX) minX = it.x;
-        if (it.y < minY) minY = it.y;
-        if (it.x + it.w > maxX) maxX = it.x + it.w;
-        if (it.y + it.h > maxY) maxY = it.y + it.h;
+        // Rotation-aware AABB: items render with a CSS transform rotating
+        // around their center, so the visual extent is the rotated AABB,
+        // not the stored x..x+w / y..y+h rect. Without this, the multi-
+        // select frame clips off the rotated corners of any tilted item.
+        const rot = (it as any).rotation;
+        if (typeof rot === 'number' && rot !== 0) {
+            const cx = it.x + it.w / 2;
+            const cy = it.y + it.h / 2;
+            const rad = (rot * Math.PI) / 180;
+            const cos = Math.abs(Math.cos(rad));
+            const sin = Math.abs(Math.sin(rad));
+            const hw = it.w / 2;
+            const hh = it.h / 2;
+            const rotW = hw * cos + hh * sin;
+            const rotH = hw * sin + hh * cos;
+            if (cx - rotW < minX) minX = cx - rotW;
+            if (cy - rotH < minY) minY = cy - rotH;
+            if (cx + rotW > maxX) maxX = cx + rotW;
+            if (cy + rotH > maxY) maxY = cy + rotH;
+        } else {
+            if (it.x < minX) minX = it.x;
+            if (it.y < minY) minY = it.y;
+            if (it.x + it.w > maxX) maxX = it.x + it.w;
+            if (it.y + it.h > maxY) maxY = it.y + it.h;
+        }
     }
     for (const id of state.selectedLineIds) {
         const ln = state.lines[id];

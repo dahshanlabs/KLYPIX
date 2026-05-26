@@ -1,4 +1,5 @@
 import React, { useRef } from 'react';
+import { RotateCw } from 'lucide-react';
 import { useCanvasStore } from '../state/canvasStore';
 import { getSelectionBBox } from './scaleSelection';
 
@@ -33,6 +34,15 @@ interface SnapshotItem {
     borderWidth?: number;
     isContainer: boolean;
     parentInSel: boolean;
+    /** True if this entity wasn't explicitly selected by the user — it was
+     *  pulled in because its (transitive) parent container IS in the
+     *  selection. Group rotation must rotate descendants of selected
+     *  containers because a container's rotation is just a CSS transform
+     *  on its own frame and does NOT cascade to children (children live
+     *  in world coords as DOM siblings). Group scale still skips these
+     *  to avoid double-application via the container's auto-resize-
+     *  children mechanism. */
+    implicitDescendant?: boolean;
 }
 interface SnapshotLine {
     kind: 'line';
@@ -43,6 +53,7 @@ interface SnapshotLine {
     y2: number;
     width: number;
     parentInSel: boolean;
+    implicitDescendant?: boolean;
 }
 interface SnapshotStroke {
     kind: 'stroke';
@@ -50,6 +61,7 @@ interface SnapshotStroke {
     points: { x: number; y: number; pressure?: number }[];
     width: number;
     parentInSel: boolean;
+    implicitDescendant?: boolean;
 }
 type SnapshotEntry = SnapshotItem | SnapshotLine | SnapshotStroke;
 
@@ -177,6 +189,85 @@ export function MultiSelectionBox() {
                 parentInSel,
             });
         }
+
+        // Expand selected containers to include their descendants. Without
+        // this, group rotation of a multi-selection that includes a
+        // container leaves the container's children in place (the
+        // container's `rotation` is a CSS transform on the frame only —
+        // children live as DOM siblings in world coords, not nested inside
+        // the container's transform). Mirrors the transitive walk done by
+        // ContainerRotateHandle for the single-container rotate case.
+        //
+        // Fixed-point iteration to absorb nested containers. Marking every
+        // container we add as `visited` per the same lesson learned in
+        // ContainerRotateHandle.gatherDescendants — relying on a single-
+        // loop "did we change anything" gate without per-entry visited
+        // tracking can re-fire forever on certain shapes (see memory
+        // entry: feedback_fixed_point_loop_visited).
+        const containerSubtree = new Set<string>();
+        for (const id of state.selectedIds) {
+            const it = state.items[id];
+            if (it && it.type === 'container') containerSubtree.add(id);
+        }
+        if (containerSubtree.size > 0) {
+            let changed = true;
+            while (changed) {
+                changed = false;
+                for (const [id, it] of Object.entries(state.items)) {
+                    if (containerSubtree.has(id)) continue;
+                    if (it.type !== 'container') continue;
+                    if (it.parentId && containerSubtree.has(it.parentId)) {
+                        containerSubtree.add(id);
+                        changed = true;
+                    }
+                }
+            }
+            // Pull in any items / lines / strokes whose direct parent sits
+            // in the subtree but that weren't explicitly selected (would
+            // duplicate otherwise — dedup via the explicit-selection sets).
+            for (const [id, it] of Object.entries(state.items)) {
+                if (itemSelected.has(id)) continue;
+                if (!it.parentId || !containerSubtree.has(it.parentId)) continue;
+                out.push({
+                    kind: 'item',
+                    id,
+                    x: it.x, y: it.y, w: it.w, h: it.h,
+                    rotation: (it as any).rotation,
+                    fontSize: (it as any).fontSize,
+                    borderWidth: (it as any).borderWidth,
+                    isContainer: it.type === 'container',
+                    parentInSel: false,
+                    implicitDescendant: true,
+                });
+            }
+            const lineSelected = new Set(state.selectedLineIds);
+            for (const [lid, ln] of Object.entries(state.lines)) {
+                if (lineSelected.has(lid)) continue;
+                if (!ln.parentId || !containerSubtree.has(ln.parentId)) continue;
+                out.push({
+                    kind: 'line',
+                    id: lid,
+                    x1: ln.x1, y1: ln.y1, x2: ln.x2, y2: ln.y2,
+                    width: ln.width,
+                    parentInSel: false,
+                    implicitDescendant: true,
+                });
+            }
+            const strokeSelected = new Set(state.selectedStrokeIds);
+            for (const [sid, st] of Object.entries(state.strokes)) {
+                if (strokeSelected.has(sid)) continue;
+                if (!st.parentId || !containerSubtree.has(st.parentId)) continue;
+                out.push({
+                    kind: 'stroke',
+                    id: sid,
+                    points: st.points.map(p => ({ ...p })),
+                    width: st.width,
+                    parentInSel: false,
+                    implicitDescendant: true,
+                });
+            }
+        }
+
         return out;
     }
 
@@ -186,7 +277,14 @@ export function MultiSelectionBox() {
         // pattern in applyRotate).
         const itemPatches: Array<{ id: string; patch: any }> = [];
         for (const e of snap) {
+            // Skip both explicit-parent-in-selection AND implicit
+            // descendants. The container's own resize already cascades
+            // size/position to children via the auto-scale-children
+            // mechanism in ContainerItemView, so scaling them again here
+            // would double-apply. (Rotation does NOT cascade — see
+            // applyRotate which keeps implicit descendants.)
             if (e.parentInSel) continue;
+            if (e.implicitDescendant) continue;
             if (e.kind === 'item') {
                 const newX = ax + (e.x - ax) * factor;
                 const newY = ay + (e.y - ay) * factor;
@@ -253,7 +351,14 @@ export function MultiSelectionBox() {
         // (separate action types, lower count in practice).
         const itemPatches: Array<{ id: string; patch: any }> = [];
         for (const e of snap) {
-            if (e.parentInSel) continue;
+            // Rotate every entry — including explicitly-selected children
+            // whose parent is also selected. A container's rotation patch
+            // is just a CSS transform on its own frame and does NOT
+            // cascade to children (they live as siblings in world coords).
+            // The previous `if (e.parentInSel) continue;` skip left those
+            // children un-rotated inside a rotated parent — visible as
+            // a child whose selection ring stays axis-aligned while the
+            // parent frame tilts.
             if (e.kind === 'item') {
                 const oldCx = e.x + e.w / 2;
                 const oldCy = e.y + e.h / 2;
@@ -262,10 +367,13 @@ export function MultiSelectionBox() {
                     x: np.x - e.w / 2,
                     y: np.y - e.h / 2,
                 };
-                if (typeof e.rotation === 'number' || (!e.isContainer)) {
-                    const base = typeof e.rotation === 'number' ? e.rotation : 0;
-                    patch.rotation = base + deltaDeg;
-                }
+                // Always accumulate rotation — containers ARE rotatable now
+                // (see ContainerRotateHandle / ContainerItem frame
+                // transform), so the previous "containers without a prior
+                // rotation field stay axis-aligned" guard left the frame
+                // visually un-rotated during multi-select rotate.
+                const base = typeof e.rotation === 'number' ? e.rotation : 0;
+                patch.rotation = base + deltaDeg;
                 itemPatches.push({ id: e.id, patch });
             } else if (e.kind === 'line') {
                 const a = rotPt(e.x1, e.y1);
@@ -422,11 +530,12 @@ export function MultiSelectionBox() {
     // the per-item RotateHandle so the chrome feels consistent.
     const ROT_DIAMETER_SCREEN = 14;
     const ROT_OFFSET_SCREEN = 22;
-    const rotDiameter = ROT_DIAMETER_SCREEN / Math.max(0.0001, view.zoom);
-    const rotOffset = ROT_OFFSET_SCREEN / Math.max(0.0001, view.zoom);
+    const surfaceZoom = Math.max(0.0001, view.zoom);
+    const rotDiameter = ROT_DIAMETER_SCREEN / surfaceZoom;
+    const rotOffset = ROT_OFFSET_SCREEN / surfaceZoom;
     const rotCenterX = boxX + boxW / 2;
     const rotCenterY = boxY - rotOffset - rotDiameter / 2;
-    const rotIconSz = 9 / Math.max(0.0001, view.zoom);
+    const shadowWorld = 2 / surfaceZoom;
 
     return (
         <>
@@ -459,11 +568,15 @@ export function MultiSelectionBox() {
             {/* Group rotation handle. Mirrors the per-item RotateHandle UX:
                 Shift = snap to 15°, drag = rotate selection around bbox
                 centroid. Cursor is the standard "grab" so users recognize
-                this as a rotation grip. */}
+                this as a rotation grip. Uses Lucide RotateCw — the hand-
+                coded arc-arrow it replaces collapsed to a download-arrow
+                silhouette at low zoom (same fix already in
+                ContainerRotateHandle). */}
             <div
                 onPointerDown={onRotatePointerDown}
                 onPointerMove={onRotatePointerMove}
                 onPointerUp={onRotatePointerUp}
+                title="Drag to rotate group · Shift snaps to 15°"
                 style={{
                     position: 'absolute',
                     left: rotCenterX - rotDiameter / 2,
@@ -471,7 +584,8 @@ export function MultiSelectionBox() {
                     width: rotDiameter,
                     height: rotDiameter,
                     background: '#10b981',
-                    border: `${stroke}px solid #ffffff`,
+                    border: `${stroke}px solid rgba(10,10,15,0.85)`,
+                    boxShadow: `0 0 0 ${shadowWorld}px rgba(16,185,129,0.22)`,
                     borderRadius: '50%',
                     cursor: 'grab',
                     pointerEvents: 'auto',
@@ -481,18 +595,8 @@ export function MultiSelectionBox() {
                     justifyContent: 'center',
                     color: 'white',
                 }}
-                title="Rotate group (hold Shift to snap to 15°)"
             >
-                <svg width={rotIconSz} height={rotIconSz} viewBox="0 0 16 16" style={{ pointerEvents: 'none' }}>
-                    <path
-                        d="M8 3 L8 1 L11 4 L8 7 L8 5 A3 3 0 1 0 11 8"
-                        fill="none"
-                        stroke="white"
-                        strokeWidth={1.5 / Math.max(0.0001, view.zoom)}
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                    />
-                </svg>
+                <RotateCw size={9 / surfaceZoom} />
             </div>
             {ALL_HANDLES.map(h => {
                 const p = handlePos(h);

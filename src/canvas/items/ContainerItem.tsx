@@ -6,6 +6,7 @@ import { getReadabilityReference, hasTextDescendant } from './containerMinTextSi
 import type { ContainerItem as ContainerItemType, CanvasItem, DrawnLine, FreehandStroke } from './types';
 import { useCanvasStore } from '../state/canvasStore';
 import { ResizeHandle } from '../interaction/ResizeHandle';
+import { ContainerRotateHandle } from '../interaction/ContainerRotateHandle';
 import { useGridSettings, isDarkBackground } from '../gridSettings';
 
 interface Props {
@@ -969,6 +970,16 @@ function ContainerItemViewImpl({ item, selected }: Props) {
     // individually). This component just steps aside.
     if (isDottedMode(mode)) return null;
 
+    // Group rotation: applied as a CSS transform on the frame in expanded
+    // mode. The descendants' positions are already written in rotated
+    // world coords (see ContainerRotateHandle.applyRotation), so the
+    // frame's CSS rotation around the same centroid keeps the frame
+    // visually wrapped around its rotated contents.
+    //
+    // Tab/dot modes skip rotation: the capsule has no descendants visible
+    // to align with, so a rotated tab would just look like a stray
+    // angled pill. Expand-to-rotate, collapse-to-pill is fine for v1.
+    const frameRotation = !tabMode ? (item.rotation ?? 0) : 0;
     const style: React.CSSProperties = {
         position: 'absolute',
         left: item.x,
@@ -988,6 +999,8 @@ function ContainerItemViewImpl({ item, selected }: Props) {
             : selected ? `0 0 0 ${shadowW}px rgba(16,185,129,0.22)` : undefined,
         pointerEvents: 'auto',
         overflow: 'hidden',
+        transform: frameRotation ? `rotate(${frameRotation}deg)` : undefined,
+        transformOrigin: 'center',
     };
 
     return (
@@ -1202,6 +1215,14 @@ function ContainerHeaderViewImpl({ item, childCount, selected }: Props) {
     // world coords — rendered inside the world-transform layer alongside
     // items, but AFTER them in DOM order so it always visually stacks on
     // top of children (and its own container frame).
+    //
+    // Group rotation: matches the frame's CSS rotate so the header sits
+    // visually attached to the rotated body. Pivot must be the FRAME's
+    // center (item.x + item.w/2, item.y + item.h/2), not the header's
+    // own center, so the header swings with the rotation rather than
+    // spinning in place. Expressed as transformOrigin offsets from the
+    // header div's own top-left (which lives at item.x / item.y).
+    const headerRotation = !tabMode ? (item.rotation ?? 0) : 0;
     const headerStyle: React.CSSProperties = {
         position: 'absolute',
         left: item.x,
@@ -1211,6 +1232,8 @@ function ContainerHeaderViewImpl({ item, childCount, selected }: Props) {
         transition: animatingCollapse
             ? 'width 250ms cubic-bezier(0.22, 1, 0.36, 1)'
             : undefined,
+        transform: headerRotation ? `rotate(${headerRotation}deg)` : undefined,
+        transformOrigin: headerRotation ? `${item.w / 2}px ${item.h / 2}px` : undefined,
         padding: `0 ${headerPadX}px`,
         background: item.scopeLocked
             // Scope-locked keeps an amber-tinted strip in both themes —
@@ -1517,16 +1540,23 @@ function ContainerHeaderViewImpl({ item, childCount, selected }: Props) {
                 const effMinW = Math.min(item.w, Math.max(authoredWMin, minHeaderForFifteen));
                 const effMinH = Math.min(item.h, authoredHMin);
                 return (
-                    <ResizeHandle
-                        itemId={item.id}
-                        x={item.x}
-                        y={item.y}
-                        w={item.w}
-                        h={item.h}
-                        minW={effMinW}
-                        minH={effMinH}
-                        aspectLockedByDefault={true}
-                    />
+                    <>
+                        <ResizeHandle
+                            itemId={item.id}
+                            x={item.x}
+                            y={item.y}
+                            w={item.w}
+                            h={item.h}
+                            minW={effMinW}
+                            minH={effMinH}
+                            aspectLockedByDefault={true}
+                            rotation={item.rotation ?? 0}
+                        />
+                        {/* Group rotate handle — rotates the container plus all
+                            descendants around the container centroid. Hidden in
+                            tab/dot mode (no body to align with). */}
+                        <ContainerRotateHandle item={item} />
+                    </>
                 );
             })()}
         </>
