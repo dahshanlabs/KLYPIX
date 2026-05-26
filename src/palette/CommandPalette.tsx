@@ -54,8 +54,8 @@ function InlineActions({
                     title={a.label}
                     aria-label={a.label}
                     style={{
-                        width: 24,
-                        height: 24,
+                        width: 28,
+                        height: 28,
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -65,6 +65,13 @@ function InlineActions({
                         color: a.inlineIconAccent ?? 'rgba(255,255,255,0.7)',
                         cursor: 'pointer',
                         padding: 0,
+                        // Make the inner SVG transparent to pointer events so
+                        // every click on the visible icon-square lands on the
+                        // BUTTON itself. Without this, lucide's SVG paths
+                        // intercept clicks in the icon's center and the
+                        // button.onClick never fires for hits there — which
+                        // showed up as 'clicks only register at the bottom edge'.
+                        pointerEvents: 'auto',
                     }}
                     onMouseEnter={(e) => {
                         e.currentTarget.style.background = a.inlineIconAccent
@@ -79,7 +86,12 @@ function InlineActions({
                         e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
                     }}
                 >
-                    {a.inlineIcon}
+                    {/* pointerEvents:none so the inner SVG path/stroke
+                        never wins the hit-test over the button — every
+                        click on the icon-square fires button.onClick. */}
+                    <span style={{ pointerEvents: 'none', display: 'flex' }}>
+                        {a.inlineIcon}
+                    </span>
                 </button>
             ))}
         </div>
