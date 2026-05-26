@@ -3,6 +3,7 @@ import { Check, X, Clock, ShieldAlert } from 'lucide-react';
 import type { ApprovalItem as ApprovalItemType } from './types';
 import { useCanvasStore } from '../state/canvasStore';
 import { resolveApproval } from '../agent/approvalRegistry';
+import { t } from '../../i18n/strings';
 
 interface Props {
     item: ApprovalItemType;
@@ -143,9 +144,9 @@ function toneClass(tone: 'positive' | 'negative' | 'neutral'): string {
 
 function timeSince(ts: number): string {
     const s = Math.floor((Date.now() - ts) / 1000);
-    if (s < 60) return `${s}s ago`;
+    if (s < 60) return t('time.ago_seconds').replace('{n}', String(s));
     const m = Math.floor(s / 60);
-    if (m < 60) return `${m}m ago`;
+    if (m < 60) return t('time.ago_minutes').replace('{n}', String(m));
     const h = Math.floor(m / 60);
-    return `${h}h ago`;
+    return t('time.ago_hours').replace('{n}', String(h));
 }

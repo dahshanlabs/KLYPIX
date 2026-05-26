@@ -503,7 +503,7 @@ const MessageItem = React.memo(({ msg, idx, copiedIndex, copyToClipboard, onView
                                     <path d="M2 4L6 7L2 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                                     <line x1="7" y1="10" x2="12" y2="10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                                 </svg>
-                                <span className="text-[9px] font-bold uppercase tracking-wider">Agent</span>
+                                <span className="text-[9px] font-bold uppercase tracking-wider">{t('agent.badge_user')}</span>
                             </div>
                         )}
                     </div>

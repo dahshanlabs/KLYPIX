@@ -16,6 +16,7 @@ import { startNarrationSession, dispatchNarration } from './narrator';
 import type { ExecutionPlan, PlanStep, ProgressCheckpoint, SynthesizedBrief } from './types';
 import { HybridRouter, AGENT_MODE_CONFIG } from '../../services/router';
 import type { ToolCallResult, FlashAttempt, RouterMessage } from '../../services/router';
+import { getLocale } from '../../i18n/strings';
 
 const MAX_TURNS = 25;
 const TOOL_TIMEOUT = 60000; // 60s — sandbox Python scripts need more time
@@ -202,12 +203,25 @@ export class ClaudeAgent {
       console.warn('[ClaudeAgent] Memory injection failed (continuing without):', err);
     }
 
+    // Mirror the UI locale in the model's voice. The short status updates
+    // ("Reading spreadsheet...", "Creating document now...") and the final
+    // ## Results / ## Suggestions block come straight from the model — if
+    // the user picked Arabic in settings, the console feels half-translated
+    // when these still arrive in English. Tool names + step.type pills are
+    // handled in the renderer; this directive covers everything the model
+    // freely composes. The user's prompt itself still wins (an Arabic UI
+    // user can ask a question in English and get an English answer).
+    const uiLocale = (() => { try { return getLocale(); } catch { return 'en'; } })();
+    const localeDirective = uiLocale === 'ar'
+      ? 'LANGUAGE: The user interface is set to Arabic. Write ALL status updates, ## Results headers, ## Suggestions, narration, and free-form messages in Arabic — unless the user explicitly writes their prompt in another language, in which case match their language. Code, file paths, tool names, and JSON keys stay in English.'
+      : '';
     const systemPrompt = [
       'You are KLYPIX, an AI agent running on the user\'s Windows desktop.',
       dataAnalysisRules,
       reportRules,
       'You can see the user\'s screen, read/write files, run shell commands, and automate their browser.',
       '',
+      localeDirective,
       memorySection ? `USER MEMORY (use this to personalize your response):\n${memorySection}\n` : '',
       hasImages ? `ATTACHED SCREENSHOTS: ${imageCount} screenshot(s) are attached to this message. ALWAYS analyze these images FIRST before using any tools. The user is asking about what is visible in these screenshots. Describe what you see in detail. Do NOT say you cannot see images — you CAN, they are attached.` : '',
       '',

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { AgentStep } from '../core/agent/claudeAgent';
 import type { CostSummary } from '../core/agent/costTracker';
 import { useNarration } from '../hooks/useNarration';
-import { t, useLocale } from '../i18n/strings';
+import { t, useLocale, translateToolName, translateStepType } from '../i18n/strings';
 
 function AnimatedDots() {
   const [count, setCount] = useState(0);
@@ -81,7 +81,9 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
   const formatTime = (s: number) => {
     const mins = Math.floor(s / 60);
     const secs = s % 60;
-    return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+    const mUnit = t('agent.unit_minutes');
+    const sUnit = t('agent.unit_seconds');
+    return mins > 0 ? `${mins}${mUnit} ${secs}${sUnit}` : `${secs}${sUnit}`;
   };
 
   const liveTokens = cost
@@ -116,11 +118,15 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
             <div className="flex items-center gap-2 text-[10px] font-mono text-gray-500 leading-tight">
               <span className={isRunning ? 'text-purple-400' : 'text-gray-500'}>{formatTime(elapsed)}</span>
               <span>&middot;</span>
-              <span>{liveTokens.total.toLocaleString()} tok</span>
+              <span>{liveTokens.total.toLocaleString()} {t('agent.tok')}</span>
               {fileCount > 0 && (
                 <>
                   <span>&middot;</span>
-                  <span className="text-purple-400">{fileCount} file{fileCount > 1 ? 's' : ''}</span>
+                  <span className="text-purple-400">
+                    {fileCount === 1
+                      ? t('agent.file_count_one')
+                      : t('agent.file_count').replace('{n}', String(fileCount))}
+                  </span>
                 </>
               )}
               {cost && (
@@ -194,7 +200,7 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
                     'text-gray-300'
                   }>
                     {step.toolName && (
-                      <span className="font-mono text-[10px] bg-white/5 px-1 rounded mr-1.5">{step.toolName}</span>
+                      <span className="font-mono text-[10px] bg-white/5 px-1 rounded mr-1.5" title={step.toolName}>{translateToolName(step.toolName)}</span>
                     )}
                     {/* Hybrid Router: show model badge for routed turns */}
                     {step.description?.includes('[flash]') && (
@@ -203,7 +209,7 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
                     {step.description?.includes('[claude]') && (
                       <span className="text-[9px] font-bold bg-purple-500/20 text-purple-300 px-1 rounded mr-1.5">🧠 CLAUDE</span>
                     )}
-                    {(step.description || step.type).replace(/\s*\[(flash|claude)\]/g, '')}
+                    {(step.description || translateStepType(step.type)).replace(/\s*\[(flash|claude)\]/g, '')}
                   </span>
                   {step.result && step.type === 'tool_result' && (
                     <p className="text-[10px] text-gray-500 truncate mt-0.5">{step.result.slice(0, 120)}</p>
@@ -256,11 +262,11 @@ export const WorkflowPanel: React.FC<WorkflowPanelProps> = ({
           <span className="text-gray-600">/</span>
           <span className="text-purple-300">🧠 {routerMetrics.claudeTurns}</span>
           {routerMetrics.escalations > 0 && (
-            <span className="text-orange-400">↑{routerMetrics.escalations} esc</span>
+            <span className="text-orange-400">↑{routerMetrics.escalations} {t('agent.escalations_suffix')}</span>
           )}
           <span className="text-gray-600">·</span>
           <span className="text-emerald-400">${routerMetrics.totalCostUSD.toFixed(4)}</span>
-          <span className="text-gray-600">router</span>
+          <span className="text-gray-600">{t('agent.router')}</span>
         </div>
       )}
     </div>

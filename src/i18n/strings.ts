@@ -87,6 +87,10 @@ const strings: Strings = {
     'settings.tab.privacy': { en: 'Privacy', ar: 'الخصوصية' },
     'settings.tab.agent': { en: 'Agent Engine', ar: 'محرك الوكيل' },
     'settings.tab.about': { en: 'About', ar: 'حول' },
+    'settings.tab.language': { en: 'Language', ar: 'اللغة' },
+    'settings.language.caption': { en: 'Switch the app interface between English and Arabic. Arabic flips the layout to right-to-left.', ar: 'بدّل واجهة التطبيق بين العربية والإنجليزية. تختيار العربية يقلب التخطيط إلى اليمين-إلى-اليسار.' },
+    'settings.language.english_subtitle': { en: 'English (left-to-right)', ar: 'English (left-to-right)' },
+    'settings.language.arabic_subtitle': { en: 'العربية (يمين-إلى-يسار)', ar: 'العربية (يمين-إلى-يسار)' },
     'settings.autosave_note': { en: 'Changes save automatically.', ar: 'يتم حفظ التغييرات تلقائيًا.' },
     // Hotkeys
     'settings.hotkeys.caption': { en: 'Global keyboard shortcuts that work even when Klypix is hidden.', ar: 'اختصارات لوحة المفاتيح العامة التي تعمل حتى عندما يكون Klypix مخفيًا.' },
@@ -248,6 +252,58 @@ const strings: Strings = {
     'agent.tell_agent': { en: 'Tell agent something...', ar: 'أخبر الوكيل بشيء...' },
     'agent.collapse_console': { en: 'Collapse console', ar: 'طيّ وحدة التحكم' },
     'agent.expand_console': { en: 'Expand console', ar: 'توسيع وحدة التحكم' },
+    // Workflow console chrome
+    'agent.badge_user': { en: 'Agent', ar: 'وكيل' },
+    'agent.tok': { en: 'tok', ar: 'رمز' },
+    'agent.file_count': { en: '{n} files', ar: '{n} ملفات' },
+    'agent.file_count_one': { en: '1 file', ar: 'ملف واحد' },
+    'agent.router': { en: 'router', ar: 'موجِّه' },
+    'agent.escalations_suffix': { en: 'esc', ar: 'تصعيد' },
+    'agent.unit_seconds': { en: 's', ar: 'ث' },
+    'agent.unit_minutes': { en: 'm', ar: 'د' },
+    // Relative time-ago labels (canvas approval cards etc). Arabic puts
+    // "قبل" (ago) before the number — match natural reading order.
+    'time.ago_seconds': { en: '{n}s ago', ar: 'قبل {n} ث' },
+    'time.ago_minutes': { en: '{n}m ago', ar: 'قبل {n} د' },
+    'time.ago_hours': { en: '{n}h ago', ar: 'قبل {n} س' },
+    // Friendly tool labels (pills shown in workflow console). Falls back to
+    // raw tool name when no translation is registered (e.g. MCP tools).
+    'agent.tool.capture_screenshot': { en: 'screenshot', ar: 'لقطة شاشة' },
+    'agent.tool.get_active_window': { en: 'active window', ar: 'النافذة النشطة' },
+    'agent.tool.read_active_file': { en: 'read open file', ar: 'قراءة الملف المفتوح' },
+    'agent.tool.get_all_open_files': { en: 'list open files', ar: 'سرد الملفات المفتوحة' },
+    'agent.tool.read_file_by_title': { en: 'read by title', ar: 'قراءة بالعنوان' },
+    'agent.tool.read_file': { en: 'read file', ar: 'قراءة ملف' },
+    'agent.tool.write_file': { en: 'write file', ar: 'كتابة ملف' },
+    'agent.tool.edit_file': { en: 'edit file', ar: 'تحرير ملف' },
+    'agent.tool.list_directory': { en: 'list folder', ar: 'سرد مجلد' },
+    'agent.tool.file_move': { en: 'move file', ar: 'نقل ملف' },
+    'agent.tool.file_delete': { en: 'delete file', ar: 'حذف ملف' },
+    'agent.tool.run_shell': { en: 'shell', ar: 'أمر طرفية' },
+    'agent.tool.browser_navigate': { en: 'open URL', ar: 'فتح رابط' },
+    'agent.tool.browser_click': { en: 'click', ar: 'نقر' },
+    'agent.tool.browser_fill': { en: 'fill form', ar: 'تعبئة نموذج' },
+    'agent.tool.read_web_content': { en: 'read page', ar: 'قراءة صفحة' },
+    'agent.tool.system_open': { en: 'open app', ar: 'فتح تطبيق' },
+    'agent.tool.system_type': { en: 'type keys', ar: 'كتابة مفاتيح' },
+    'agent.tool.clipboard_read': { en: 'read clipboard', ar: 'قراءة الحافظة' },
+    'agent.tool.clipboard_write': { en: 'write clipboard', ar: 'كتابة الحافظة' },
+    'agent.tool.ask_user': { en: 'ask user', ar: 'سؤال المستخدم' },
+    'agent.tool.generate_document': { en: 'generate doc', ar: 'إنشاء مستند' },
+    'agent.tool.sandbox_execute': { en: 'sandbox exec', ar: 'تنفيذ في العزل' },
+    'agent.tool.sandbox_read_file': { en: 'sandbox read', ar: 'قراءة في العزل' },
+    'agent.tool.sandbox_write_file': { en: 'sandbox write', ar: 'كتابة في العزل' },
+    'agent.tool.sandbox_list_dir': { en: 'sandbox list', ar: 'سرد في العزل' },
+    'agent.tool.sandbox_run_python': { en: 'sandbox python', ar: 'بايثون في العزل' },
+    'agent.tool.sandbox_copy_from_shared': { en: 'sandbox import', ar: 'استيراد للعزل' },
+    'agent.tool.sandbox_save_to_shared': { en: 'sandbox export', ar: 'تصدير من العزل' },
+    // Step types — shown when step has no description
+    'agent.step.thinking': { en: 'thinking', ar: 'تفكير' },
+    'agent.step.tool_call': { en: 'tool call', ar: 'استدعاء أداة' },
+    'agent.step.tool_result': { en: 'tool result', ar: 'نتيجة أداة' },
+    'agent.step.permission': { en: 'permission', ar: 'إذن' },
+    'agent.step.text': { en: 'text', ar: 'نص' },
+    'agent.step.error': { en: 'error', ar: 'خطأ' },
 
     // ── auth ───────────────────────────────────────────────────────────
     'auth.email': { en: 'Email', ar: 'البريد الإلكتروني' },
@@ -888,6 +944,25 @@ export function t(key: keyof typeof strings): string {
     const entry = strings[key];
     if (!entry) return key;
     return entry[currentLocale] ?? entry.en ?? key;
+}
+
+// Look up a friendly localized label for an agent tool name (e.g.
+// 'file_move' → 'move file' / 'نقل ملف'). MCP / sandbox tools without a
+// registered entry render their raw name unchanged so engineers still
+// recognize them in logs/screenshots.
+export function translateToolName(name: string): string {
+    const key = `agent.tool.${name}` as keyof typeof strings;
+    const entry = strings[key];
+    if (entry) return entry[currentLocale] ?? entry.en ?? name;
+    return name;
+}
+
+// Step.type fallback (when description is empty). Same fallback rules.
+export function translateStepType(type: string): string {
+    const key = `agent.step.${type}` as keyof typeof strings;
+    const entry = strings[key];
+    if (entry) return entry[currentLocale] ?? entry.en ?? type;
+    return type;
 }
 
 // Translate a free-form action-chip label (from contextIntelligence.ts

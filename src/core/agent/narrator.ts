@@ -1,5 +1,6 @@
 import { callGeminiFlash } from '../../api/gemini';
 import { narrationStore } from './narrationStore';
+import { getLocale } from '../../i18n/strings';
 
 /**
  * Narrator layer — fires a tiny Gemini Flash call between agent turns to surface
@@ -66,7 +67,7 @@ export function dispatchNarration(ctx: NarrationContext): void {
   void (async () => {
     try {
       const result = await Promise.race([
-        callGeminiFlash(NARRATOR_SYSTEM_PROMPT, buildUserContent(ctx), {
+        callGeminiFlash(narratorSystemPrompt(), buildUserContent(ctx), {
           maxOutputTokens: 30,
           temperature: 0.3,
         }),
@@ -91,12 +92,21 @@ export function dispatchNarration(ctx: NarrationContext): void {
   })();
 }
 
-const NARRATOR_SYSTEM_PROMPT = [
-  'You narrate an AI agent\'s progress to the user in real-time.',
-  'Output ONE short status sentence — 5 to 10 words — in present continuous tense.',
-  'Examples: "Reading the PDF now...", "Drafting the email...", "Looking up the file path...", "Scanning Downloads folder..."',
-  'No quotes. No prefix. No emoji. Just the sentence.',
-].join('\n');
+// Rebuilt per call so a runtime locale toggle takes effect on the next
+// narration without restarting the agent loop.
+function narratorSystemPrompt(): string {
+  const loc = (() => { try { return getLocale(); } catch { return 'en' as const; } })();
+  const langLine = loc === 'ar'
+    ? 'Write the sentence in Arabic. Example: "جارٍ قراءة ملف PDF...", "جارٍ صياغة البريد...".'
+    : '';
+  return [
+    'You narrate an AI agent\'s progress to the user in real-time.',
+    'Output ONE short status sentence — 5 to 10 words — in present continuous tense.',
+    'Examples: "Reading the PDF now...", "Drafting the email...", "Looking up the file path...", "Scanning Downloads folder..."',
+    langLine,
+    'No quotes. No prefix. No emoji. Just the sentence.',
+  ].filter(Boolean).join('\n');
+}
 
 function buildUserContent(ctx: NarrationContext): string {
   const truncResult = (ctx.lastToolResult || '').slice(0, 200);
