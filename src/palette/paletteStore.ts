@@ -66,6 +66,13 @@ interface PaletteState {
      *  (boot, no ENUM_WINDOWS result yet). app is a friendly process
      *  name for the "Paste to <App>" label. */
     target: { app: string; hwnd: string } | null;
+    /** Compact mode = Alt+K standalone mini window. Skips the dark
+     *  backdrop and (more importantly here) suppresses empty-state
+     *  emptyState() fan-out, so the list stays clean until the user
+     *  types OR activates an exclusive provider (clip button / typing
+     *  `clip:`). Driven by App.tsx via setCompact() when paletteOnly
+     *  toggles. */
+    compact: boolean;
 }
 
 const SOURCE_WEIGHT: Record<string, number> = {
@@ -91,6 +98,7 @@ let state: PaletteState = {
     detailPaneSticky: false,
     detailPaneUserDismissed: false,
     target: null,
+    compact: false,
 };
 
 // Friendly-name map mirrors the one in clipboardHistory.ts so the palette
@@ -347,6 +355,16 @@ export function setClipFilter(filter: PaletteState['clipFilter']) {
     rebuildRanked();
 }
 
+/** Toggle compact-mode behavior. Currently affects the empty-state policy:
+ *  in compact mode, an empty query with no exclusive provider yields zero
+ *  rows (clean "search to surface" UX); in normal mode the providers'
+ *  emptyState() defaults still populate (recent canvases, etc.). */
+export function setCompact(c: boolean) {
+    if (state.compact === c) return;
+    set({ compact: c });
+    if (state.open) runQuery(state.query);
+}
+
 export function cycleSecondary(delta: 1 | -1) {
     const cur = state.ranked[state.selectedIndex];
     if (!cur) return;
@@ -381,8 +399,17 @@ async function runQuery(rawInput: string) {
     const nextClipFilter = exclusiveId === 'clip' ? state.clipFilter : null;
     set({ exclusiveProvider: exclusiveId, bySource: new Map(), clipFilter: nextClipFilter });
 
-    // Empty input → empty-state results from every provider.
+    // Empty input → empty-state results from every provider, UNLESS we're
+    // in compact mode (Alt+K mini window). In compact mode the user
+    // explicitly wants a clean "type to search" surface — no rows show
+    // until they either type a character or activate an exclusive
+    // provider via the clipboard quick-button.
     if (rawInput.trim().length === 0 && !exclusiveId) {
+        if (state.compact) {
+            state.bySource = new Map();
+            rebuildRanked();
+            return;
+        }
         const bySource = new Map<string, PaletteResult[]>();
         for (const p of providers.values()) {
             try {

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, ArrowDown, ArrowUp, CornerDownLeft, Eye, EyeOff } from 'lucide-react';
+import { Search, ArrowDown, ArrowUp, CornerDownLeft, Eye, EyeOff, ClipboardList, X } from 'lucide-react';
 import { t, useLocale } from '../i18n/strings';
 import {
     subscribe,
@@ -13,6 +13,7 @@ import {
     setClipFilter,
     showToast,
     toggleDetailPane,
+    openWithPrefix,
 } from './paletteStore';
 import { intentFromKey } from './keyboardModel';
 import { recordHit } from './frecency';
@@ -130,11 +131,20 @@ function InlineActions({
 // Sizing: 640px wide, max-height 60vh, centered top-third of viewport.
 // Same proportions as Raycast / Linear / Cmd+K palettes for muscle memory.
 
-export function CommandPalette() {
+export function CommandPalette({ compact = false }: { compact?: boolean } = {}) {
     useLocale();
     const snap = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     const inputRef = useRef<HTMLInputElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
+
+    // In compact mode the body+footer collapse into the modal entirely
+    // when there's no query AND no exclusive provider — leaving only
+    // the search pill visible. As soon as the user types one character
+    // OR clicks the clipboard quick-button, the modal expands smoothly
+    // to reveal the list. Non-compact mode always shows results.
+    const shouldShowResults = compact
+        ? (!!snap.query || !!snap.exclusiveProvider)
+        : true;
 
     // Focus the input every time the palette opens. Skipping requestAnimationFrame
     // here because by the time React renders us, the DOM is ready — and any
@@ -236,53 +246,111 @@ export function CommandPalette() {
                 position: 'fixed',
                 inset: 0,
                 zIndex: 9999,
-                background: 'rgba(0,0,0,0.35)',
-                backdropFilter: 'blur(2px)',
+                // Compact mode = Alt+K standalone window. The Electron
+                // window itself is transparent, so the modal should NOT
+                // draw a dark backdrop — we want only the palette pill
+                // floating with no chrome around it.
+                background: compact ? 'transparent' : 'rgba(0,0,0,0.35)',
+                backdropFilter: compact ? 'none' : 'blur(2px)',
                 display: 'flex',
                 alignItems: 'flex-start',
                 justifyContent: 'center',
-                paddingTop: '15vh',
+                paddingTop: compact ? 0 : '15vh',
+                // In compact mode we must NOT eat clicks on the empty area
+                // around the modal — that area is the OS drag region for
+                // moving the mini window. `pointerEvents: none` on the
+                // backdrop, then re-enable on the modal child.
+                pointerEvents: compact ? 'none' : 'auto',
             }}
             data-palette-root="1"
         >
             <div
                 role="dialog"
                 aria-label={t('palette.title')}
+                // In compact mode the modal is the whole window's interior;
+                // mark it no-drag so input + buttons + rows are clickable.
+                // The thin drag handle below re-introduces an OS drag region.
+                // `palette-bg-glow` paints the emerald radial-gradient drift
+                // behind the content — Klypix's visual identity instead of
+                // a plain black panel.
+                className={compact ? 'no-drag palette-bg-glow' : undefined}
                 style={{
                     // Detail pane visibility is STICKY (paletteStore auto-
                     // flips detailPaneSticky=true on first row with detail
                     // + stays on for the session; eye button toggles).
                     // Modal width follows the sticky flag, NOT the current
                     // row — fixes "width jumps when arrowing".
-                    width: snap.detailPaneSticky ? 880 : 640,
-                    maxWidth: '92vw',
+                    // Compact: fill the mini window width (minus a small
+                    // margin so the drop shadow shows).
+                    width: compact
+                        ? '100%'
+                        : (snap.detailPaneSticky ? 880 : 640),
+                    maxWidth: compact ? '100%' : '92vw',
                     // Phase 23 polish: FIXED height instead of max-height so
                     // the modal doesn't visually jump as the result count
                     // changes. 60vh capped at 520px so on small screens we
                     // don't stretch awkwardly tall. Body content scrolls
                     // inside the fixed container.
-                    height: 'min(60vh, 520px)',
+                    // Compact: auto-height so it snaps to header-only when
+                    // collapsed; capped via maxHeight which we animate.
+                    height: compact ? 'auto' : 'min(60vh, 520px)',
+                    // Compact + empty = collapse to just the header pill
+                    // (~58px). Compact + active = full window. Animating
+                    // maxHeight gives a smooth fold-in/fold-out without
+                    // unmounting any DOM during the transition.
+                    maxHeight: compact
+                        ? (shouldShowResults ? '100%' : 58)
+                        : undefined,
+                    // position:relative is REQUIRED for the .palette-bg-
+                    // glow ::before to anchor to THIS box. Without it,
+                    // the pseudo-element's position:absolute falls
+                    // through to the backdrop (which fills the viewport)
+                    // and the emerald glow bleeds into the desktop area
+                    // below the collapsed pill.
+                    position: 'relative',
                     display: 'flex',
                     flexDirection: 'column',
                     background: '#0e0e14',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    borderRadius: 12,
-                    boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+                    border: compact ? 'none' : '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: compact ? 10 : 12,
+                    boxShadow: compact ? 'none' : '0 24px 64px rgba(0,0,0,0.6)',
                     overflow: 'hidden',
-                    // When detail panel is active, the layout widens smoothly
-                    // from 640 → 880 instead of jumping. 120ms feels responsive
-                    // without being distracting on every selection change.
-                    transition: 'width 120ms ease-out',
+                    // Compact transition does TWO things: fold-in/out on
+                    // maxHeight and width-shift on detail-pane toggle.
+                    // 240ms Raycast-style cubic-bezier for both.
+                    transition: compact
+                        ? 'max-height 240ms cubic-bezier(0.16, 1, 0.3, 1)'
+                        : 'width 120ms ease-out',
+                    // Re-enable hit-testing on the modal itself (parent has
+                    // pointerEvents:none in compact so the OS can drag the
+                    // window from the surrounding area).
+                    pointerEvents: 'auto',
                 }}
             >
-                {/* Header: search input */}
+                {/* Header: search input. In compact mode the header
+                    itself becomes the OS drag region — long-press +
+                    drag anywhere on the empty header background moves
+                    the mini window. Input + buttons override back to
+                    `.no-drag` so they stay clickable. This is more
+                    discoverable than a 6px strip and matches Spotlight's
+                    "grab the pill" feel. */}
                 <div
+                    className={compact ? 'drag' : undefined}
                     style={{
                         display: 'flex',
                         alignItems: 'center',
                         gap: 10,
-                        padding: '12px 14px',
-                        borderBottom: '1px solid rgba(255,255,255,0.06)',
+                        // Compact + collapsed: tighten vertical padding
+                        // so the whole modal lands inside the 58px
+                        // maxHeight without clipping the buttons.
+                        padding: compact ? '10px 14px' : '12px 14px',
+                        // Hide the under-header divider when nothing
+                        // follows — looks cleaner as a standalone pill.
+                        borderBottom: shouldShowResults
+                            ? '1px solid rgba(255,255,255,0.06)'
+                            : 'none',
+                        position: 'relative',
+                        zIndex: 1,
                     }}
                 >
                     <Search size={16} style={{ color: 'rgba(255,255,255,0.45)', flexShrink: 0 }} />
@@ -291,6 +359,20 @@ export function CommandPalette() {
                         value={snap.query}
                         onChange={(e) => setQuery(e.target.value)}
                         placeholder={t('palette.placeholder')}
+                        // Compact + collapsed (no query, no clip mode): make
+                        // the input itself part of the drag region so the
+                        // entire pill — including its big middle area —
+                        // becomes a grab handle. The input still receives
+                        // keystrokes (it was auto-focused on open) so typing
+                        // works seamlessly; as soon as a character lands,
+                        // `shouldShowResults` flips true and the input
+                        // reverts to no-drag so the user can click to
+                        // position their cursor in the typed text.
+                        className={
+                            compact
+                                ? (shouldShowResults ? 'no-drag' : 'drag')
+                                : undefined
+                        }
                         style={{
                             flex: 1,
                             background: 'transparent',
@@ -303,6 +385,49 @@ export function CommandPalette() {
                         spellCheck={false}
                         autoComplete="off"
                     />
+                    {/* Clipboard quick-button — one-click equivalent of
+                        typing `clip:`. Pressed state when already in
+                        clip-mode; clicking again exits back to the global
+                        view by clearing the prefix. */}
+                    {(() => {
+                        const inClip = snap.exclusiveProvider === 'clip';
+                        return (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (inClip) {
+                                        setQuery('');
+                                    } else {
+                                        openWithPrefix('clip:');
+                                    }
+                                }}
+                                title={inClip ? t('palette.clear_clip_filter') : t('palette.show_clipboard')}
+                                aria-label={inClip ? t('palette.clear_clip_filter') : t('palette.show_clipboard')}
+                                className={compact ? 'no-drag' : undefined}
+                                style={{
+                                    background: inClip ? 'rgba(16,185,129,0.12)' : 'rgba(255,255,255,0.04)',
+                                    border: '1px solid ' + (inClip ? 'rgba(16,185,129,0.3)' : 'rgba(255,255,255,0.08)'),
+                                    color: inClip ? '#10b981' : 'rgba(255,255,255,0.55)',
+                                    borderRadius: 6,
+                                    width: 28,
+                                    height: 28,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    cursor: 'pointer',
+                                    padding: 0,
+                                    position: 'relative',
+                                }}
+                            >
+                                <span style={{ pointerEvents: 'none', display: 'flex' }}>
+                                    <ClipboardList size={14} />
+                                </span>
+                                {/* SVG click-sink — same trick as InlineActions,
+                                    defeats lucide path-level hit-test. */}
+                                <span style={{ position: 'absolute', inset: 0, background: 'transparent' }} />
+                            </button>
+                        );
+                    })()}
                     {/* Eye toggle: show/hide the detail preview pane.
                         Pinned visibility means arrowing between rows
                         with and without detail doesn't make the modal
@@ -313,6 +438,7 @@ export function CommandPalette() {
                         onClick={toggleDetailPane}
                         title={snap.detailPaneSticky ? t('palette.hide_preview') : t('palette.show_preview')}
                         aria-label={snap.detailPaneSticky ? t('palette.hide_preview') : t('palette.show_preview')}
+                        className={compact ? 'no-drag' : undefined}
                         style={{
                             background: snap.detailPaneSticky ? 'rgba(16,185,129,0.12)' : 'rgba(255,255,255,0.04)',
                             border: '1px solid ' + (snap.detailPaneSticky ? 'rgba(16,185,129,0.3)' : 'rgba(255,255,255,0.08)'),
@@ -325,11 +451,13 @@ export function CommandPalette() {
                             justifyContent: 'center',
                             cursor: 'pointer',
                             padding: 0,
+                            position: 'relative',
                         }}
                     >
                         <span style={{ pointerEvents: 'none', display: 'flex' }}>
                             {snap.detailPaneSticky ? <Eye size={14} /> : <EyeOff size={14} />}
                         </span>
+                        <span style={{ position: 'absolute', inset: 0, background: 'transparent' }} />
                     </button>
                     {snap.exclusiveProvider && (
                         <span
@@ -347,8 +475,47 @@ export function CommandPalette() {
                             {snap.exclusiveProvider}
                         </span>
                     )}
+                    {/* X dismiss button — Raycast-style hard-close. Visible in
+                        compact mode only; the non-compact palette already
+                        closes on backdrop click. Renders LAST so it sits at
+                        the far edge of the header where users instinctively
+                        look for a close affordance. */}
+                    {compact && (
+                        <button
+                            type="button"
+                            onClick={() => close()}
+                            title={t('palette.hint.close')}
+                            aria-label={t('palette.hint.close')}
+                            className="no-drag"
+                            style={{
+                                background: 'rgba(255,255,255,0.04)',
+                                border: '1px solid rgba(255,255,255,0.08)',
+                                color: 'rgba(255,255,255,0.55)',
+                                borderRadius: 6,
+                                width: 28,
+                                height: 28,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: 'pointer',
+                                padding: 0,
+                                position: 'relative',
+                            }}
+                        >
+                            <span style={{ pointerEvents: 'none', display: 'flex' }}>
+                                <X size={14} />
+                            </span>
+                            <span style={{ position: 'absolute', inset: 0, background: 'transparent' }} />
+                        </button>
+                    )}
                 </div>
 
+                {/* Everything below the header (chips + body + footer)
+                    only renders when there's something to show. In
+                    compact mode this collapses the entire palette to
+                    just the search pill until the user types or hits
+                    the clipboard quick-button. */}
+                {shouldShowResults && (<>
                 {/* Best-in-class: filter chips when in clip: mode. Lets the
                     user narrow to a kind subset (text / images / files /
                     pinned) without typing. Rendered above the result list
@@ -361,6 +528,8 @@ export function CommandPalette() {
                             gap: 6,
                             padding: '6px 10px',
                             borderBottom: '1px solid rgba(255,255,255,0.04)',
+                            position: 'relative',
+                            zIndex: 1,
                         }}
                     >
                         {([
@@ -426,7 +595,7 @@ export function CommandPalette() {
                     renders for the highlighted row only when its provider
                     supplied a detail() factory — image clipboard rows show
                     full preview, file rows show parent path tree, etc. */}
-                <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+                <div style={{ display: 'flex', flex: 1, minHeight: 0, position: 'relative', zIndex: 1 }}>
                     <div
                         ref={listRef}
                         style={{
@@ -438,7 +607,11 @@ export function CommandPalette() {
                         }}
                     >
                         {snap.ranked.length === 0 ? (
-                            <EmptyState query={snap.query} />
+                            // key forces remount when query toggles between
+                            // empty and not-empty — so the entrance
+                            // animation re-fires on every transition back
+                            // to empty.
+                            <EmptyState key={snap.query || 'empty'} query={snap.query} compact={compact} />
                         ) : (
                             snap.ranked.map((r, i) => (
                                 <ResultRow
@@ -463,6 +636,7 @@ export function CommandPalette() {
                     current={snap.ranked[snap.selectedIndex]}
                     secondaryCursor={snap.secondaryCursor}
                 />
+                </>)}
             </div>
         </div>,
         document.body,
@@ -528,9 +702,14 @@ function DetailPane({ result }: { result: RankedResult | undefined }) {
     );
 }
 
-function EmptyState({ query }: { query: string }) {
+function EmptyState({ query }: { query: string; compact?: boolean }) {
+    // No compact-special branch: the parent (CommandPalette) now hides
+    // the entire body+footer in compact-empty state via shouldShowResults,
+    // so this component only renders when there's an actual "no match"
+    // scenario (query typed but no hits, or clip-mode empty list).
     return (
         <div
+            className="palette-empty-anim"
             style={{
                 padding: '40px 20px',
                 textAlign: 'center',
@@ -589,12 +768,17 @@ function ResultRow({
     const tooltip = result.subtitle && result.title !== result.subtitle
         ? `${result.title}\n\n${result.subtitle}`
         : result.title;
+    // Stagger the entrance animation across the visible window. Cap at
+    // 10 rows of stagger so a 50-row clipboard list doesn't take ages to
+    // settle; rows beyond index 10 enter on the same beat.
+    const staggerIdx = Math.min(index, 10);
     return (
         <div
             data-palette-row={index}
             onMouseEnter={onHover}
             onClick={onClick}
             title={tooltip}
+            className="palette-row-anim"
             style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -607,6 +791,7 @@ function ResultRow({
                     ? '1px solid rgba(16,185,129,0.25)'
                     : '1px solid transparent',
                 transition: 'background 60ms, border-color 60ms',
+                animationDelay: `${staggerIdx * 18}ms`,
             }}
         >
             <div
@@ -712,6 +897,8 @@ function Footer({
                 color: 'rgba(255,255,255,0.4)',
                 borderTop: '1px solid rgba(255,255,255,0.06)',
                 background: 'rgba(255,255,255,0.02)',
+                position: 'relative',
+                zIndex: 1,
             }}
         >
             <Hint icon={<><ArrowUp size={10} /><ArrowDown size={10} /></>} label={t('palette.hint.navigate')} />
