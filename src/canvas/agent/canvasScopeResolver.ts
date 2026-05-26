@@ -1,4 +1,5 @@
 import type { CanvasItem } from '../items/types';
+import { t } from '../../i18n/strings';
 
 // Determines which canvas items the agent should "see" for a given command.
 // See docs/CLAUDE-KLYPIX-CANVAS.md §4.
@@ -46,10 +47,13 @@ export function resolveScope(
         const sole = items[selectedIds[0]];
         if (sole?.type === 'container') {
             const kids = allOrder.filter(id => items[id]?.parentId === sole.id);
+            const insideDesc = t('canvas.command_bar.scope.inside')
+                .replace('{title}', sole.title)
+                .replace('{n}', String(kids.length));
             return {
                 kind: 'container',
                 itemIds: kids,
-                description: `inside "${sole.title}" (${kids.length} items)${sole.scopeLocked ? ' · locked' : ''}`,
+                description: `${insideDesc}${sole.scopeLocked ? t('canvas.command_bar.scope.locked_suffix') : ''}`,
                 anchorId: sole.id,
             };
         }
@@ -58,10 +62,13 @@ export function resolveScope(
     if (selectedIds.length > 0) {
         // Selection may span items from inside a locked container. That's OK —
         // explicit selection bypasses scope-lock from the user's point of view.
+        const desc = selectedIds.length === 1
+            ? t('canvas.command_bar.scope.selected_one')
+            : t('canvas.command_bar.scope.selected_many').replace('{n}', String(selectedIds.length));
         return {
             kind: 'selected',
             itemIds: selectedIds,
-            description: `${selectedIds.length} ${selectedIds.length === 1 ? 'item' : 'items'} selected`,
+            description: desc,
         };
     }
 
@@ -86,19 +93,19 @@ export function resolveScope(
             return {
                 kind: 'selected',  // treat nearby like selection-style scope
                 itemIds: nearby,
-                description: `${nearby.length} nearby items`,
+                description: t('canvas.command_bar.scope.nearby').replace('{n}', String(nearby.length)),
             };
         }
     }
 
     const visible = visibleToOutside(items, allOrder);
     if (visible.length === 0) {
-        return { kind: 'empty', itemIds: [], description: 'empty canvas' };
+        return { kind: 'empty', itemIds: [], description: t('canvas.command_bar.scope.empty') };
     }
     return {
         kind: 'full_canvas',
         itemIds: visible,
-        description: `full canvas (${visible.length} items)`,
+        description: t('canvas.command_bar.scope.full').replace('{n}', String(visible.length)),
     };
 }
 

@@ -86,7 +86,7 @@ import { setDictateIntoHandler } from './interaction/voiceBridge';
 import { Search as SearchIcon, List, Layers, Play, Mic, History as HistoryIcon, Stamp as StampIcon, Filter as FilterIcon, FilePlus as LinkPlusIcon, Maximize2 as FitIcon, Clipboard as ClipboardIcon } from 'lucide-react';
 import { openWithPrefix as openPaletteWithPrefix } from './../palette/paletteStore';
 import { newId } from './items/types';
-import type { CanvasItem, ContainerItem, TextItem, StyleRun } from './items/types';
+import type { CanvasItem, ContainerItem, TextItem, StyleRun, Connection } from './items/types';
 import { applyStyleToRange, getSelectionStyle, type ItemTextDefaults } from './items/styleRuns';
 import type { FormatPatch } from './interaction/ContextMenu';
 import { DEFAULT_TEXT_COLOR } from './items/types';
@@ -687,11 +687,11 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         if (!it || it.type !== 'image' || !it.assetId) return;
         if (extractingIds.has(imageId)) return;
         setExtractingIds(prev => { const next = new Set(prev); next.add(imageId); return next; });
-        setToast({ text: 'Extracting text…', id: Date.now() });
+        setToast({ text: 'Extracting text…', id: Date.now(), kind: 'simple' });
         try {
             const text = await ocrImageAsset(it.assetId);
             if (!text) {
-                setToast({ text: 'OCR failed — try again or check API key', id: Date.now() });
+                setToast({ text: 'OCR failed — try again or check API key', id: Date.now(), kind: 'simple' });
                 return;
             }
             const isEmpty = /^\(no text detected\)$/i.test(text.trim());
@@ -717,19 +717,30 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 fontSize: 14,
                 color: defaultTextColorFor(getCurrentGridSettings().background),
                 border: true,
-                borderColor: 'rgba(16,185,129,0.45)',
-                borderWidth: 1,
-                lineStyle: 'solid',
-                fillColor: 'rgba(18,18,26,0.8)',
+                borderColor: 'rgba(16,185,129,0.5)',
                 heading: false,
                 tags: ['ocr'],
             };
             commit({ type: 'ADD_ITEM', item: node });
+            // Connect source image → OCR result card so the lineage matches
+            // how the agent's reply cards anchor back to their source items.
+            const conn: Connection = {
+                id: newId('conn'),
+                fromId: imageId,
+                toId: node.id,
+                label: '',
+                color: '#10b981',
+                width: 2,
+                arrowHead: true,
+                style: 'solid',
+                createdBy: 'agent',
+            };
+            commit({ type: 'ADD_CONNECTION', connection: conn });
             dispatch({ type: 'SELECT', ids: [node.id] });
-            setToast({ text: isEmpty ? 'No text detected' : 'Text extracted', id: Date.now() });
+            setToast({ text: isEmpty ? 'No text detected' : 'Text extracted', id: Date.now(), kind: 'simple' });
         } catch (err) {
             console.error('[canvas OCR]', err);
-            setToast({ text: 'OCR failed', id: Date.now() });
+            setToast({ text: 'OCR failed', id: Date.now(), kind: 'simple' });
         } finally {
             setExtractingIds(prev => { const next = new Set(prev); next.delete(imageId); return next; });
         }
@@ -760,7 +771,11 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     }, [state.title, state.isDirty, hasContent, state.filePath]);
     const [isDragOver, setIsDragOver] = useState(false);
     const [commandOpen, setCommandOpen] = useState(false);
-    const [toast, setToast] = useState<{ text: string; id: number } | null>(null);
+    // `kind: 'simple'` strips the pin/dismiss buttons and shortens the
+    // timeout. Used for system feedback (OCR result, "folder packed", etc.)
+    // where the actual artifact already exists on the canvas — no need to
+    // offer "pin" since there's nothing useful to pin.
+    const [toast, setToast] = useState<{ text: string; id: number; kind?: 'simple' } | null>(null);
     const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
     // Final on-screen rect of the right-click context menu, reported by
     // ContextMenu after its own viewport-edge clamp (it can flip upward
@@ -2844,6 +2859,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 <AgentToast
                     text={toast.text}
                     keyVal={toast.id}
+                    simple={toast.kind === 'simple'}
                     onDismiss={() => setToast(null)}
                     onPin={() => {
                         const pinned: TextItem = {
@@ -2905,7 +2921,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             {/* File ops + nav — top left. Mic lives separately as a bottom-
                 center FAB (see below) so dictation has its own space and
                 doesn't get lost in the file-ops cluster. */}
-            <div data-canvas-ui="1" className="absolute top-3 left-3 z-20 no-drag flex items-center gap-1 px-1 py-1 rounded-full bg-black/60 border border-white/10">
+            <div data-canvas-ui="1" className="absolute top-3 left-3 z-30 no-drag flex items-center gap-1 px-1 py-1 rounded-full bg-black/60 border border-white/10">
                 <FileOpButton label={tLocale('canvas_top.home')} onClick={() => setManualDashboardOpen(true)}><HomeIcon size={13} /></FileOpButton>
                 <span className="w-px h-4 bg-white/10 mx-0.5" />
                 <FileOpButton label={tLocale('canvas_top.new_short')} onClick={file.newFile}><FilePlus2 size={13} /></FileOpButton>
@@ -3247,17 +3263,21 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
 interface AgentToastProps {
     text: string;
     keyVal: number;
+    simple?: boolean;
     onDismiss: () => void;
     onPin: () => void;
 }
 
-function AgentToast({ text, keyVal, onDismiss, onPin }: AgentToastProps) {
+function AgentToast({ text, keyVal, simple, onDismiss, onPin }: AgentToastProps) {
     const [hovered, setHovered] = useState(false);
     useEffect(() => {
         if (hovered) return;
-        const t = setTimeout(onDismiss, 10_000);
+        // Simple toasts (OCR/system feedback) get a short, fire-and-forget
+        // duration. Agent answer toasts keep the 10s pin window.
+        const ms = simple ? 2500 : 10_000;
+        const t = setTimeout(onDismiss, ms);
         return () => clearTimeout(t);
-    }, [hovered, keyVal, onDismiss]);
+    }, [hovered, keyVal, onDismiss, simple]);
 
     return (
         <div
@@ -3267,11 +3287,13 @@ function AgentToast({ text, keyVal, onDismiss, onPin }: AgentToastProps) {
             className="absolute bottom-20 left-1/2 -translate-x-1/2 z-40 w-[min(520px,85vw)] no-drag animate-in slide-in-from-bottom-2 fade-in duration-200"
         >
             <div className="bg-[#1a1a2a]/95 backdrop-blur-xl border border-emerald-500/30 rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] px-4 py-3 flex items-start gap-3">
-                <div className="flex-1 text-[13px] text-white/90 leading-relaxed whitespace-pre-wrap">{text}</div>
-                <div className="flex items-center gap-1 shrink-0">
-                    <button onClick={onPin} title={tLocale('canvas.pin_to_canvas')} className="p-1.5 rounded-md text-white/40 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all"><Pin size={14} /></button>
-                    <button onClick={onDismiss} title={tLocale('canvas.dismiss')} className="p-1.5 rounded-md text-white/30 hover:text-white/70 hover:bg-white/5 transition-all">×</button>
-                </div>
+                <div className="flex-1 text-[13px] text-white/90 leading-relaxed whitespace-pre-wrap text-center">{text}</div>
+                {!simple && (
+                    <div className="flex items-center gap-1 shrink-0">
+                        <button onClick={onPin} title={tLocale('canvas.pin_to_canvas')} className="p-1.5 rounded-md text-white/40 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all"><Pin size={14} /></button>
+                        <button onClick={onDismiss} title={tLocale('canvas.dismiss')} className="p-1.5 rounded-md text-white/30 hover:text-white/70 hover:bg-white/5 transition-all">×</button>
+                    </div>
+                )}
             </div>
         </div>
     );

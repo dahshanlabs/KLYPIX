@@ -4,6 +4,7 @@ import { useCanvasStore } from '../state/canvasStore';
 import { resolveScope } from '../agent/canvasScopeResolver';
 import { runCanvasAgent, type AgentProgress } from '../agent/canvasAgent';
 import type { CanvasItem } from '../items/types';
+import { t, useLocale } from '../../i18n/strings';
 
 interface Props {
     open: boolean;
@@ -26,6 +27,7 @@ const SUGGESTED_COMMANDS = [
 ];
 
 export function CommandBar({ open, onClose, onToast, onProgress, onError }: Props) {
+    useLocale();
     const { state, dispatch, pushSnapshot } = useCanvasStore();
     const stateRef = useRef(state);
     stateRef.current = state;
@@ -101,7 +103,7 @@ export function CommandBar({ open, onClose, onToast, onProgress, onError }: Prop
                         dir="auto"
                         ref={inputRef}
                         className="flex-1 bg-transparent outline-none text-white/90 text-[15px] placeholder-white/30 font-[Thmanyah_Sans,system-ui,sans-serif]"
-                        placeholder={busy ? 'thinking…' : 'ask the agent, or pick a command below'}
+                        placeholder={busy ? t('canvas.command_bar.thinking') : t('canvas.command_bar.placeholder')}
                         value={input}
                         disabled={busy}
                         onChange={(e) => setInput(e.target.value)}
@@ -114,11 +116,11 @@ export function CommandBar({ open, onClose, onToast, onProgress, onError }: Prop
                     {busy ? (
                         <Loader2 size={16} className="text-emerald-400 animate-spin" />
                     ) : (
-                        <button onClick={submit} className="text-white/40 hover:text-emerald-300 transition-colors" title="Run (Enter)">
+                        <button onClick={submit} className="text-white/40 hover:text-emerald-300 transition-colors" title={t('canvas.command_bar.run_hint')}>
                             <CornerDownLeft size={14} />
                         </button>
                     )}
-                    <button onClick={onClose} className="text-white/30 hover:text-white/70 transition-colors ml-1" title="Close (Esc)">
+                    <button onClick={onClose} className="text-white/30 hover:text-white/70 transition-colors ml-1" title={t('canvas.command_bar.close_hint')}>
                         <X size={14} />
                     </button>
                 </div>
@@ -126,7 +128,7 @@ export function CommandBar({ open, onClose, onToast, onProgress, onError }: Prop
                     <span className="text-emerald-300/80">{scope.description}</span>
                     {progress && (
                         <span className="text-white/50">
-                            · step {progress.turn}
+                            · {t('canvas.command_bar.step').replace('{n}', String(progress.turn))}
                             {progress.tool && <span className="text-emerald-300/70"> · {progress.tool}</span>}
                         </span>
                     )}
