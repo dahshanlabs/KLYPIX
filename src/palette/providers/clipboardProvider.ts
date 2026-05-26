@@ -482,7 +482,21 @@ export const clipboardProvider: PaletteProvider = {
     weight: 1.0,
 
     emptyState(): PaletteResult[] {
-        if (!listCache) return [];
+        // First open: listCache is null because no query has fetched yet
+        // and emptyState is synchronous (can't await). Kick off a
+        // background fetch + refresh so the palette repopulates within
+        // a tick — without this, users saw "no clip rows" on first
+        // Ctrl+K until they typed any character.
+        if (!listCache) {
+            void (async () => {
+                await fetchList();
+                try {
+                    const { refresh } = await import('../paletteStore');
+                    refresh();
+                } catch { /* swallow */ }
+            })();
+            return [];
+        }
         return withSectionHeaders(listCache.rows.slice(0, 20));
     },
 
