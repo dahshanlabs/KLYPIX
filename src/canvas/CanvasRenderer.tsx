@@ -20,6 +20,7 @@ import { StrokeView, LineView } from './drawing/DrawingLayer';
 import { MultiSelectionBox } from './interaction/MultiSelectionBox';
 import { DotClusterLayer } from './drawing/DotClusterLayer';
 import { DrawingResizeHandles } from './interaction/DrawingResizeHandles';
+import { DrawingRotateHandle } from './interaction/DrawingRotateHandle';
 import { rectsIntersect, type Rect } from './CanvasEngine';
 import type { CanvasItem } from './items/types';
 
@@ -730,13 +731,22 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeer
                 const minY = Math.min(ln.y1, ln.y2) - pad;
                 const maxX = Math.max(ln.x1, ln.x2) + pad;
                 const maxY = Math.max(ln.y1, ln.y2) + pad;
+                const lineBounds = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
                 return (
-                    <DrawingResizeHandles
-                        kind="line"
-                        id={lid}
-                        bounds={{ x: minX, y: minY, w: maxX - minX, h: maxY - minY }}
-                        view={view}
-                    />
+                    <>
+                        <DrawingResizeHandles
+                            kind="line"
+                            id={lid}
+                            bounds={lineBounds}
+                            view={view}
+                        />
+                        <DrawingRotateHandle
+                            kind="line"
+                            id={lid}
+                            bounds={lineBounds}
+                            view={view}
+                        />
+                    </>
                 );
             }
             const sid = state.selectedStrokeIds[0];
@@ -750,13 +760,22 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeer
                 if (pt.y > maxY) maxY = pt.y;
             }
             const pad = Math.max(2, st.width / 2);
+            const strokeBounds = { x: minX - pad, y: minY - pad, w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2 };
             return (
-                <DrawingResizeHandles
-                    kind="stroke"
-                    id={sid}
-                    bounds={{ x: minX - pad, y: minY - pad, w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2 }}
-                    view={view}
-                />
+                <>
+                    <DrawingResizeHandles
+                        kind="stroke"
+                        id={sid}
+                        bounds={strokeBounds}
+                        view={view}
+                    />
+                    <DrawingRotateHandle
+                        kind="stroke"
+                        id={sid}
+                        bounds={strokeBounds}
+                        view={view}
+                    />
+                </>
             );
         })()}
         </>
