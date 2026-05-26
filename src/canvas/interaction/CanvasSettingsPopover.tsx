@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Settings, Check, LogIn, LogOut, User } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -33,12 +33,41 @@ const PRESETS: { color: string; label: string }[] = [
     { color: CANVAS_BG_PAPER, label: 'Paper' },
 ];
 
+// Popover width matches `w-72` (288px). Keep in sync if the className changes —
+// the clamp math below assumes this is the rendered width.
+const POPOVER_WIDTH = 288;
+const VIEWPORT_MARGIN = 8;
+const MIN_POPOVER_HEIGHT = 160;
+
 export function CanvasSettingsPopover() {
     useLocale();
     const grid = useGridSettings();
     const auth = useAuth();
     const [open, setOpen] = useState(false);
     const anchorRef = useRef<HTMLDivElement>(null);
+    const buttonRef = useRef<HTMLButtonElement>(null);
+    const [pos, setPos] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
+
+    // Compute clamped viewport-fixed coords so the panel never clips against
+    // the window edge — on narrow widths the gear sits close to the right and
+    // a plain `left: 0` overflows. We switch to `position: fixed` to escape
+    // any ancestor overflow, then clamp left/top against the window dims.
+    useLayoutEffect(() => {
+        if (!open) return;
+        const place = () => {
+            const btn = buttonRef.current;
+            if (!btn) return;
+            const r = btn.getBoundingClientRect();
+            const top = r.bottom + 8;
+            const maxLeft = window.innerWidth - POPOVER_WIDTH - VIEWPORT_MARGIN;
+            const left = Math.max(VIEWPORT_MARGIN, Math.min(r.left, maxLeft));
+            const maxHeight = Math.max(MIN_POPOVER_HEIGHT, window.innerHeight - top - VIEWPORT_MARGIN);
+            setPos({ top, left, maxHeight });
+        };
+        place();
+        window.addEventListener('resize', place);
+        return () => window.removeEventListener('resize', place);
+    }, [open]);
 
     useEffect(() => {
         if (!open) return;
@@ -63,6 +92,7 @@ export function CanvasSettingsPopover() {
     return (
         <div ref={anchorRef} className="relative">
             <button
+                ref={buttonRef}
                 onClick={() => setOpen((v) => !v)}
                 title="Canvas settings"
                 className={cn(
@@ -75,7 +105,13 @@ export function CanvasSettingsPopover() {
 
             {open && (
                 <div
-                    className="absolute top-full left-0 mt-2 z-50 w-72 p-3 rounded-xl bg-[#1a1a22]/95 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.5)] space-y-3 no-drag"
+                    className="fixed z-[100] w-72 p-3 rounded-xl bg-[#1a1a22]/95 backdrop-blur-xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.5)] space-y-3 no-drag overflow-y-auto"
+                    style={{
+                        top: pos?.top ?? -9999,
+                        left: pos?.left ?? -9999,
+                        maxHeight: pos?.maxHeight,
+                        visibility: pos ? 'visible' : 'hidden',
+                    }}
                     onMouseDown={(e) => e.stopPropagation()}
                 >
                     {/* Account — mirrors the chat Settings panel so users can
