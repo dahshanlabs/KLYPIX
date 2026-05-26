@@ -55,6 +55,11 @@ interface PaletteState {
      *  ("No preview" placeholder renders instead). Toggle off via the
      *  eye button in the header. Reset on palette close. */
     detailPaneSticky: boolean;
+    /** Set when the user explicitly turned the detail pane off via the
+     *  eye button. Suppresses the auto-flip-on-detail behavior until the
+     *  palette closes — respects the user's "I don't want this right
+     *  now" intent across arrow navigation. Reset on palette close. */
+    detailPaneUserDismissed: boolean;
     /** Smart-paste target — captured at palette open() so the primary
      *  Paste action can SendKeys ^v straight into the app the user just
      *  came from. Null when no recent non-Klypix foreground is known
@@ -84,6 +89,7 @@ let state: PaletteState = {
     clipFilter: null,
     toast: null,
     detailPaneSticky: false,
+    detailPaneUserDismissed: false,
     target: null,
 };
 
@@ -121,13 +127,18 @@ function emit() {
 /** Replace state with a new shallow-merged object so React's identity
  *  check fires. */
 function set(patch: Partial<PaletteState>) {
+    const prevSelectedIndex = state.selectedIndex;
+    const prevRanked = state.ranked;
     state = { ...state, ...patch };
-    // Auto-flip detailPaneSticky to true when the user lands on a row
-    // that has a detail factory. Once flipped on, the pane stays open
-    // for the rest of this palette session — eliminates the "modal
-    // width jumps every time I arrow between previewable / not" UX
-    // wart. Eye button or palette close reset it back to false.
-    if (!state.detailPaneSticky) {
+    // Auto-flip detailPaneSticky to true ONLY when the user JUST moved
+    // to a row that has a detail factory. Triggers off a real selection
+    // change — not every mutation — so the eye-button toggle isn't
+    // immediately undone by the auto-flip when the current row still
+    // has detail.
+    const selectionChanged =
+        state.selectedIndex !== prevSelectedIndex ||
+        state.ranked !== prevRanked;
+    if (selectionChanged && !state.detailPaneSticky && !state.detailPaneUserDismissed) {
         const cur = state.ranked[state.selectedIndex];
         if (cur?.detail) {
             state = { ...state, detailPaneSticky: true };
@@ -239,7 +250,7 @@ export function close() {
     if (!state.open) return;
     queryAbort?.abort();
     queryAbort = null;
-    set({ open: false, secondaryCursor: 0, target: null, detailPaneSticky: false });
+    set({ open: false, secondaryCursor: 0, target: null, detailPaneSticky: false, detailPaneUserDismissed: false });
 }
 
 export function toggle() {
@@ -303,9 +314,16 @@ export function jumpSelection(to: 'top' | 'bottom' | number) {
     set({ selectedIndex: next, secondaryCursor: 0 });
 }
 
-/** Toggle the sticky detail-pane visibility (the eye button in the header). */
+/** Toggle the sticky detail-pane visibility (the eye button in the header).
+ *  Turning OFF also sets detailPaneUserDismissed so the auto-flip-on-
+ *  detail logic respects the user's intent until they re-toggle or
+ *  close the palette. Turning ON clears the dismissed flag. */
 export function toggleDetailPane() {
-    set({ detailPaneSticky: !state.detailPaneSticky });
+    const willBeOn = !state.detailPaneSticky;
+    set({
+        detailPaneSticky: willBeOn,
+        detailPaneUserDismissed: !willBeOn,
+    });
 }
 
 /** Show a brief confirmation banner inside the palette. Auto-clears after
