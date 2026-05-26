@@ -216,6 +216,68 @@ textarea::placeholder {
   }
 }
 
+/* ── Command Palette (Phase 23) — Raycast-grade entrance animations ─────
+   Easing curves: matched to Raycast's "natural" motion — quick start,
+   gentle settle. Keep durations under 240ms so the palette never feels
+   sluggish to power users. */
+
+@keyframes palette-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes palette-empty-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes palette-glow-drift {
+  0%   { transform: translate(-15%, -10%) scale(1); }
+  50%  { transform: translate(15%, 10%)  scale(1.1); }
+  100% { transform: translate(-15%, -10%) scale(1); }
+}
+
+.palette-row-anim {
+  animation: palette-row-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.palette-empty-anim {
+  animation: palette-empty-in 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Subtle emerald glow drifting behind the compact palette.
+   IMPORTANT: NO `filter: blur()` — blur is the single most expensive
+   CSS effect on Windows DWM. With `transparent: true` Electron windows
+   already pay a per-pixel alpha-composite cost on every drag-move
+   event; adding a blurred layer on top causes visible drag lag. The
+   radial-gradient's transparent fade already produces a soft falloff,
+   so we get the visual identity without the perf hit. `transform`
+   animations run on the compositor and are essentially free. */
+.palette-bg-glow::before {
+  content: '';
+  position: absolute;
+  inset: -20%;
+  background:
+    radial-gradient(circle at 20% 30%, rgba(16, 185, 129, 0.22) 0%, transparent 55%),
+    radial-gradient(circle at 80% 70%, rgba(16, 185, 129, 0.14) 0%, transparent 60%);
+  z-index: 0;
+  pointer-events: none;
+  will-change: transform;
+  animation: palette-glow-drift 18s ease-in-out infinite;
+}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 4px;

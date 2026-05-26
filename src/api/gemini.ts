@@ -62,6 +62,20 @@ function getGenAI(): GoogleGenerativeAI {
     return new GoogleGenerativeAI(getApiKey());
 }
 
+// Sniff image MIME from base64 magic bytes. Gemini's vision endpoint rejects
+// mislabeled images (PNG-as-JPEG returns a corrupt-image error), so every
+// inlineData payload must declare the real format. Default to JPEG to match
+// pre-existing screenshot capture (screenCapture_1.3.2.exe outputs JPEG).
+function detectImageMime(base64: string): string {
+    if (!base64 || base64.length < 4) return 'image/jpeg';
+    if (base64.startsWith('/9j/')) return 'image/jpeg';
+    if (base64.startsWith('iVBOR')) return 'image/png';
+    if (base64.startsWith('R0lGOD')) return 'image/gif';
+    if (base64.startsWith('UklGR')) return 'image/webp';
+    if (base64.startsWith('Qk')) return 'image/bmp';
+    return 'image/jpeg';
+}
+
 function getModel(options?: { maxOutputTokens?: number; temperature?: number }) {
     const genAI = getGenAI();
     return genAI.getGenerativeModel({
@@ -184,7 +198,7 @@ export async function askGeminiStreaming(
             parts.push({
                 inlineData: {
                     data: img,
-                    mimeType: "image/jpeg",
+                    mimeType: detectImageMime(img),
                 },
             });
         }
@@ -293,7 +307,7 @@ Respond ONLY with the JSON object.`;
     try {
         const result = await model.generateContent([
             prompt,
-            { inlineData: { data: screenshotBase64, mimeType: "image/jpeg" } },
+            { inlineData: { data: screenshotBase64, mimeType: detectImageMime(screenshotBase64) } },
         ]);
         const text = result.response.text().trim();
         const parsed = safeParseJSON(text);
@@ -442,7 +456,7 @@ export async function generateDocumentContent(
         parts.push({
             inlineData: {
                 data: imageBase64,
-                mimeType: "image/jpeg",
+                mimeType: detectImageMime(imageBase64),
             },
         });
     }
@@ -574,7 +588,7 @@ Respond ONLY with the JSON array.`;
             parts.push({
                 inlineData: {
                     data: img,
-                    mimeType: "image/jpeg",
+                    mimeType: detectImageMime(img),
                 },
             });
         }
@@ -642,7 +656,7 @@ export async function callGeminiFlashWithImage(
         parts.push({
             inlineData: {
                 data: imageBase64,
-                mimeType: "image/jpeg",
+                mimeType: detectImageMime(imageBase64),
             },
         });
     }

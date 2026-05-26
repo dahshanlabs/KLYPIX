@@ -18,7 +18,7 @@ process.on('unhandledRejection', (reason: any) => {
 });
 import { registerAuthHandlers, handleDeepLink } from './auth/authGuard';
 import { registerCloudHandlers } from './cloudHandlers';
-import { startClipboardHistory, registerClipboardHistoryIpc, setForegroundProbe as setClipboardForegroundProbe } from './clipboardHistory';
+import { startClipboardHistory, registerClipboardHistoryIpc, setForegroundProbe as setClipboardForegroundProbe, copyRowToClipboard as copyClipboardRowDirect, getClipboardEnabled, setClipboardEnabled, getClipboardRetention, setClipboardRetention, getClipboardExcludes, setClipboardExcludes } from './clipboardHistory';
 import { registerStartAppsIpc } from './startApps';
 import { registerFileSearchIpc } from './fileSearch';
 import { initAutoUpdater } from './updater';
@@ -381,6 +381,62 @@ let lastScanResult: any = null;
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let currentShortcut = 'Alt+Space';
+// Mutable hotkey accelerators — re-assignable via the hotkey:set IPC so
+// users can rebind from the Settings panel. Initial values are the
+// product defaults; loaded from userData/hotkeys.json on startup if the
+// user has customized them before.
+let paletteHotkeyAccel = 'Alt+K';
+// IMPORTANT: Electron's globalShortcut.register THROWS on accelerator
+// strings it can't parse, and 'Semicolon' is NOT a recognized key name —
+// only the literal `;` works. Using 'Alt+Semicolon' previously aborted
+// the entire app.whenReady() callback partway through, leaving every
+// later IPC handler (hotkey:set, clipboard-settings:*, app:get-version,
+// even the legacy get-shortcut) unregistered. Always use `;` here.
+let quickActionHotkeyAccel = 'Alt+;';
+
+function hotkeysPersistPath(): string {
+    return path.join(app.getPath('userData'), 'hotkeys.json');
+}
+function loadPersistedHotkeys(): void {
+    try {
+        const raw = fs.readFileSync(hotkeysPersistPath(), 'utf-8');
+        const parsed = JSON.parse(raw);
+        // Migrate any pre-fix persisted accelerators that used invalid
+        // names like 'Semicolon' (which Electron throws on). Replace with
+        // the literal symbol the OS expects.
+        const fix = (s: string): string => s.replace(/Semicolon/g, ';').replace(/Comma/g, ',');
+        if (parsed?.chat && typeof parsed.chat === 'string') currentShortcut = fix(parsed.chat);
+        if (parsed?.palette && typeof parsed.palette === 'string') paletteHotkeyAccel = fix(parsed.palette);
+        if (parsed?.quickAction && typeof parsed.quickAction === 'string') quickActionHotkeyAccel = fix(parsed.quickAction);
+    } catch { /* first run — fine */ }
+}
+function persistHotkeys(): void {
+    try {
+        fs.writeFileSync(hotkeysPersistPath(), JSON.stringify({
+            chat: currentShortcut,
+            palette: paletteHotkeyAccel,
+            quickAction: quickActionHotkeyAccel,
+        }), 'utf-8');
+    } catch { /* disk full / permission denied — in-memory still works */ }
+}
+
+const PALETTE_ONLY_WIDTH = 640;
+const PALETTE_ONLY_HEIGHT = 440;
+let paletteOnlyMode = false;
+// Bounds snapshot taken before entering palette-only mode so we can
+// restore the user's normal Alt+Space window size on exit. Without this,
+// the next chat open would inherit the compact palette bounds.
+let preBoundsBeforePalette: Electron.Rectangle | null = null;
+
+// Quick AI Action (Alt+;) — same mode-flip pattern as palette-only. Pops a
+// compact 520×420 popup centered on the screen with the selected text and
+// a 2×3 action grid. Action HWND is remembered so "Replace" can SendKeys
+// the AI output back into the source app.
+const QUICK_ACTION_WIDTH = 520;
+const QUICK_ACTION_HEIGHT = 420;
+let quickActionMode = false;
+let preBoundsBeforeQuickAction: Electron.Rectangle | null = null;
+let quickActionTargetHwnd: string | null = null;
 let savedBounds: any = null;
 // Disk-persisted window bounds. Previously `savedBounds` was in-memory
 // only, so any app restart reset the window to the default top-right
@@ -447,7 +503,7 @@ function clampBoundsToDisplay(b: { x: number; y: number; width: number; height: 
     }
 }
 let isManualResizeActive = false;
-let lastActiveWindow = { title: "Unknown", process: "Unknown" };
+let lastActiveWindow: { title: string; process: string; hwnd?: string } = { title: "Unknown", process: "Unknown" };
 let lastSetWidth = 700;
 let lastSetHeight = 400;
 let lastToggleTime = 0;
@@ -472,8 +528,8 @@ async function getActiveWindowInfo() {
             if (!visible || minimized) continue;
             if (title === 'KLYPIX' || proc.toLowerCase() === 'electron') continue;
             if (!title || title === 'Program Manager') continue; // Skip empty/desktop shell
-            lastActiveWindow = { title, process: proc };
-            console.log(`[getActiveWindowInfo] Found: "${title.substring(0, 50)}" proc=${proc}`);
+            lastActiveWindow = { title, process: proc, hwnd: handle };
+            console.log(`[getActiveWindowInfo] Found: "${title.substring(0, 50)}" proc=${proc} hwnd=${handle}`);
             break;
         }
         return lastActiveWindow;
@@ -629,6 +685,168 @@ function createTray() {
 // Remember whether the last-hidden state was canvas fullscreen, so we can
 // reopen the window at full size instead of stranding it as a tiny overlay.
 let savedCanvasFullscreen = false;
+
+function enterPaletteOnlyMode(): void {
+    if (!mainWindow) return;
+    // Snapshot current bounds (whatever the user had for chat/canvas) so
+    // we restore them on exit. When the window is hidden, getBounds()
+    // returns the last shown bounds — works correctly here.
+    preBoundsBeforePalette = mainWindow.getBounds();
+    paletteOnlyMode = true;
+    const display = screen.getPrimaryDisplay();
+    const { width: sw, height: sh } = display.workAreaSize;
+    const w = PALETTE_ONLY_WIDTH;
+    const h = PALETTE_ONLY_HEIGHT;
+    // Center horizontally, place ~20% from the top so it sits in the
+    // upper third — the natural reading zone, matches Raycast/Spotlight.
+    mainWindow.setBounds({
+        x: Math.round((sw - w) / 2),
+        y: Math.max(60, Math.round(sh * 0.2)),
+        width: w,
+        height: h,
+    });
+    // Capture target BEFORE showing — same trick Alt+Space uses, so the
+    // palette can label primary action "Paste to <App>" using the window
+    // that WAS foreground (not KLYPIX itself).
+    void getActiveWindowInfo();
+    mainWindow.webContents.send('palette-only:enter');
+    mainWindow.show();
+    mainWindow.focus();
+}
+
+function exitPaletteOnlyMode(opts: { hide: boolean }): void {
+    if (!mainWindow) return;
+    paletteOnlyMode = false;
+    mainWindow.webContents.send('palette-only:exit');
+    const restoreBounds = () => {
+        if (!mainWindow || !preBoundsBeforePalette) return;
+        try { mainWindow.setBounds(preBoundsBeforePalette); } catch { /* window destroyed */ }
+        preBoundsBeforePalette = null;
+    };
+    if (opts.hide) {
+        mainWindow.hide();
+        // Hidden → restore bounds immediately. Next show (Alt+Space)
+        // picks up the normal chat size with no visible flash.
+        restoreBounds();
+    } else {
+        // Visible exit path (currently unused but kept for future) —
+        // defer so the renderer can unmount the palette-only branch
+        // before the window expands to chat bounds.
+        setTimeout(restoreBounds, 50);
+    }
+}
+
+// ── Quick AI Action (Alt+;) ─────────────────────────────────────────────────
+
+/**
+ * Capture the user's CURRENT selection from the foreground app by:
+ *   1. Saving the current OS clipboard (text + image)
+ *   2. Focusing the target HWND
+ *   3. Sending Ctrl+C to copy whatever is selected
+ *   4. Reading the clipboard back as text
+ *   5. Restoring the saved clipboard
+ * Returns the selected text or null. The clipboard restore is best-effort —
+ * if it fails, the clipboard-history poll will treat the selection as a new
+ * row, which is harmless (it's already on the clipboard the user copied it
+ * from anyway, just with a new timestamp).
+ */
+async function captureSelectionFromHwnd(hwndStr: string): Promise<string | null> {
+    if (!/^\d+$/.test(hwndStr)) return null;
+    try {
+        const os = require('os');
+        const scriptPath = path.join(os.tmpdir(), `klypix_capsel_${Date.now()}.ps1`);
+        const outPath = path.join(os.tmpdir(), `klypix_capsel_${Date.now()}.txt`);
+        const scriptContent = `
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class CS {
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+}
+"@
+$savedText = Get-Clipboard -Raw -ErrorAction SilentlyContinue
+$hwnd = [IntPtr]${hwndStr}
+if ([CS]::IsIconic($hwnd)) { [CS]::ShowWindow($hwnd, 9) | Out-Null }
+$fgWin = [CS]::GetForegroundWindow()
+$pidOut = 0
+$fgTid = [CS]::GetWindowThreadProcessId($fgWin, [ref]$pidOut)
+$myTid = [CS]::GetCurrentThreadId()
+[CS]::AttachThreadInput($myTid, $fgTid, $true) | Out-Null
+[CS]::SetForegroundWindow($hwnd) | Out-Null
+[CS]::AttachThreadInput($myTid, $fgTid, $false) | Out-Null
+Start-Sleep -Milliseconds 80
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.SendKeys]::SendWait("^c")
+Start-Sleep -Milliseconds 140
+$selection = Get-Clipboard -Raw -ErrorAction SilentlyContinue
+if ($selection) {
+    [System.IO.File]::WriteAllText("${outPath.replace(/\\/g, '\\\\')}", $selection, [System.Text.Encoding]::UTF8)
+}
+if ($savedText) { Set-Clipboard -Value $savedText -ErrorAction SilentlyContinue }
+`.trim();
+        fs.writeFileSync(scriptPath, scriptContent, 'utf8');
+        await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`, { timeout: 4000 });
+        try { fs.unlinkSync(scriptPath); } catch {}
+        let selection: string | null = null;
+        try {
+            if (fs.existsSync(outPath)) {
+                selection = fs.readFileSync(outPath, 'utf8');
+                fs.unlinkSync(outPath);
+            }
+        } catch {}
+        if (!selection) return null;
+        // Trim trailing whitespace and a single trailing newline that PS
+        // adds when round-tripping through Set-Clipboard.
+        selection = selection.replace(/\r\n/g, '\n').replace(/\s+$/, '');
+        return selection.length > 0 ? selection : null;
+    } catch (e: any) {
+        console.warn('[QuickAction] capture-selection failed:', e?.message);
+        return null;
+    }
+}
+
+function enterQuickActionMode(selection: string, targetHwnd: string): void {
+    if (!mainWindow) return;
+    preBoundsBeforeQuickAction = mainWindow.getBounds();
+    quickActionMode = true;
+    quickActionTargetHwnd = targetHwnd;
+    const display = screen.getPrimaryDisplay();
+    const { width: sw, height: sh } = display.workAreaSize;
+    mainWindow.setBounds({
+        x: Math.round((sw - QUICK_ACTION_WIDTH) / 2),
+        y: Math.max(80, Math.round(sh * 0.22)),
+        width: QUICK_ACTION_WIDTH,
+        height: QUICK_ACTION_HEIGHT,
+    });
+    mainWindow.webContents.send('quick-action:enter', { selection, targetHwnd, sourceApp: lastActiveWindow.process });
+    mainWindow.show();
+    mainWindow.focus();
+}
+
+function exitQuickActionMode(opts: { hide: boolean }): void {
+    if (!mainWindow) return;
+    quickActionMode = false;
+    quickActionTargetHwnd = null;
+    mainWindow.webContents.send('quick-action:exit');
+    const restoreBounds = () => {
+        if (!mainWindow || !preBoundsBeforeQuickAction) return;
+        try { mainWindow.setBounds(preBoundsBeforeQuickAction); } catch { /* window destroyed */ }
+        preBoundsBeforeQuickAction = null;
+    };
+    if (opts.hide) {
+        mainWindow.hide();
+        restoreBounds();
+    } else {
+        setTimeout(restoreBounds, 50);
+    }
+}
 
 async function toggleWindow() {
     if (!mainWindow)
@@ -945,13 +1163,236 @@ app.whenReady().then(() => {
             console.log('[CDP] No active debug ports found. Server-side fetch will be used for web content.');
         }
     })();
-    globalShortcut.register(currentShortcut, () => {
+    try { globalShortcut.register(currentShortcut, () => {
         const now = Date.now();
         if (now - lastToggleTime < 300)
             return;
         lastToggleTime = now;
+        // Alt+Space leaving palette-only / quick-action modes → restore
+        // normal chat bounds so the chat overlay doesn't inherit a compact
+        // mini-window size.
+        if (paletteOnlyMode && mainWindow?.isVisible()) {
+            exitPaletteOnlyMode({ hide: true });
+        }
+        if (quickActionMode && mainWindow?.isVisible()) {
+            exitQuickActionMode({ hide: true });
+        }
         toggleWindow();
+    }); } catch (e: any) { console.warn('[Hotkey] chat register failed:', e?.message); }
+
+    // Palette-only global hotkey (Alt+K). When KLYPIX is hidden, shows
+    // a compact palette-only mini window centered on the primary display.
+    // When KLYPIX is already visible (chat/canvas), behaves like the in-
+    // window Ctrl+K — just toggles the palette overlay on top of whatever
+    // is already there. This is Raycast/Alfred parity: one keystroke from
+    // anywhere → search bar.
+    loadPersistedHotkeys();
+    let lastPaletteHotkeyTime = 0;
+    // Safe-register: a throw here (invalid accelerator etc.) used to abort
+    // the whole whenReady callback and leave every later IPC handler
+    // unregistered. Catch and log so the rest of init still runs.
+    try { globalShortcut.register(paletteHotkeyAccel, () => {
+        const now = Date.now();
+        if (now - lastPaletteHotkeyTime < 250) return;
+        lastPaletteHotkeyTime = now;
+        if (!mainWindow) return;
+        if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
+            // If we're ALREADY in palette-only mode and the user presses
+            // Alt+K again, treat it as "close it" — Raycast behavior.
+            if (paletteOnlyMode) {
+                exitPaletteOnlyMode({ hide: true });
+                return;
+            }
+            // Window shown for chat/canvas — just toggle the palette inside.
+            mainWindow.webContents.send('palette:hotkey-toggle');
+            return;
+        }
+        enterPaletteOnlyMode();
+    }); } catch (e: any) { console.warn('[Hotkey] palette register failed:', e?.message); }
+
+    ipcMain.on('palette-only:close-window', () => {
+        if (!paletteOnlyMode) return;
+        exitPaletteOnlyMode({ hide: true });
     });
+
+    // Quick AI Action global hotkey (Alt+;). Capture the selection from the
+    // current foreground app, then show a compact popup with action choices.
+    let lastQuickActionTime = 0;
+    try { globalShortcut.register(quickActionHotkeyAccel, async () => {
+        const now = Date.now();
+        if (now - lastQuickActionTime < 400) return;
+        lastQuickActionTime = now;
+        if (!mainWindow) return;
+        // Toggle behavior: pressing the hotkey while already in QA mode
+        // dismisses it. Matches the palette-only feel.
+        if (quickActionMode && mainWindow.isVisible()) {
+            exitQuickActionMode({ hide: true });
+            return;
+        }
+        // Refresh foreground so we have the right target HWND. The
+        // persistent PS poller might be ~3s stale; getActiveWindowInfo()
+        // does a synchronous ENUM_WINDOWS for accuracy here.
+        await getActiveWindowInfo();
+        const targetHwnd = lastActiveWindow.hwnd;
+        if (!targetHwnd) {
+            console.warn('[QuickAction] no target HWND available');
+            return;
+        }
+        const selection = await captureSelectionFromHwnd(targetHwnd);
+        if (!selection) {
+            // No selection — open with empty selection; the popup will
+            // ask the user to type a custom prompt.
+            enterQuickActionMode('', targetHwnd);
+            return;
+        }
+        enterQuickActionMode(selection, targetHwnd);
+    }); } catch (e: any) { console.warn('[Hotkey] quickAction register failed:', e?.message); }
+
+    // Apply the AI result back into the target app. Three modes:
+    //   replace — clipboard-write + Ctrl+V (selection is already replaced
+    //             because the prior selection was lost when we copied it;
+    //             pasting into the cursor position effectively replaces it
+    //             only if the user hasn't moved the caret since)
+    //   insert  — focus target + paste at cursor (no replacement)
+    //   copy    — just write to clipboard, don't touch target
+    ipcMain.handle('quick-action:apply', async (_event: any, args: { mode: 'replace' | 'insert' | 'copy'; text: string; hwnd?: string }) => {
+        const text = args?.text ?? '';
+        if (!text) return { ok: false, error: 'Empty text' };
+        try {
+            clipboard.writeText(text);
+        } catch (e: any) {
+            return { ok: false, error: 'Clipboard write failed: ' + e.message };
+        }
+        if (args.mode === 'copy') return { ok: true };
+        const hwnd = args.hwnd || quickActionTargetHwnd;
+        if (!hwnd || !/^\d+$/.test(hwnd)) return { ok: false, error: 'Invalid target HWND' };
+        // Exit QA mode FIRST (hides KLYPIX) so SendKeys lands in the target,
+        // not in our own window.
+        exitQuickActionMode({ hide: true });
+        try {
+            const os = require('os');
+            const scriptPath = path.join(os.tmpdir(), `klypix_qa_apply_${Date.now()}.ps1`);
+            const scriptContent = `
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class QA {
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+}
+"@
+$hwnd = [IntPtr]${hwnd}
+if ([QA]::IsIconic($hwnd)) { [QA]::ShowWindow($hwnd, 9) | Out-Null }
+$fgWin = [QA]::GetForegroundWindow()
+$pidOut = 0
+$fgTid = [QA]::GetWindowThreadProcessId($fgWin, [ref]$pidOut)
+$myTid = [QA]::GetCurrentThreadId()
+[QA]::AttachThreadInput($myTid, $fgTid, $true) | Out-Null
+[QA]::SetForegroundWindow($hwnd) | Out-Null
+[QA]::AttachThreadInput($myTid, $fgTid, $false) | Out-Null
+Start-Sleep -Milliseconds 120
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.SendKeys]::SendWait("^v")
+`.trim();
+            fs.writeFileSync(scriptPath, scriptContent, 'utf8');
+            await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`, { timeout: 5000 });
+            try { fs.unlinkSync(scriptPath); } catch {}
+            return { ok: true };
+        } catch (e: any) {
+            return { ok: false, error: e?.message || 'apply failed' };
+        }
+    });
+
+    ipcMain.on('quick-action:close', () => {
+        if (!quickActionMode) return;
+        exitQuickActionMode({ hide: true });
+    });
+
+    // ── Unified hotkey settings (chat / palette / quickAction) ─────────────
+    // Persists under userData/hotkeys.json so the user's binds survive
+    // restart. Re-registers the corresponding globalShortcut on every
+    // set, validating the accelerator string by trying the register.
+    ipcMain.handle('hotkey:get-all', () => {
+        return {
+            chat: currentShortcut,
+            palette: paletteHotkeyAccel,
+            quickAction: quickActionHotkeyAccel,
+        };
+    });
+    ipcMain.handle('hotkey:set', async (_event: any, args: { id: 'chat' | 'palette' | 'quickAction'; accelerator: string }) => {
+        const { id, accelerator } = args || {} as any;
+        if (!id || !accelerator) return { ok: false, error: 'Missing id/accelerator' };
+        try {
+            if (id === 'chat') {
+                globalShortcut.unregister(currentShortcut);
+                const ok = globalShortcut.register(accelerator, () => {
+                    const now = Date.now();
+                    if (now - lastToggleTime < 300) return;
+                    lastToggleTime = now;
+                    if (paletteOnlyMode && mainWindow?.isVisible()) exitPaletteOnlyMode({ hide: true });
+                    if (quickActionMode && mainWindow?.isVisible()) exitQuickActionMode({ hide: true });
+                    toggleWindow();
+                });
+                if (!ok) { globalShortcut.register(currentShortcut, () => toggleWindow()); return { ok: false, error: 'Accelerator not available' }; }
+                currentShortcut = accelerator;
+            } else if (id === 'palette') {
+                globalShortcut.unregister(paletteHotkeyAccel);
+                const ok = globalShortcut.register(accelerator, () => {
+                    if (!mainWindow) return;
+                    if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
+                        if (paletteOnlyMode) { exitPaletteOnlyMode({ hide: true }); return; }
+                        mainWindow.webContents.send('palette:hotkey-toggle');
+                        return;
+                    }
+                    enterPaletteOnlyMode();
+                });
+                if (!ok) { globalShortcut.register(paletteHotkeyAccel, () => { /* original handler */ }); return { ok: false, error: 'Accelerator not available' }; }
+                paletteHotkeyAccel = accelerator;
+            } else if (id === 'quickAction') {
+                globalShortcut.unregister(quickActionHotkeyAccel);
+                const ok = globalShortcut.register(accelerator, async () => {
+                    if (!mainWindow) return;
+                    if (quickActionMode && mainWindow.isVisible()) { exitQuickActionMode({ hide: true }); return; }
+                    await getActiveWindowInfo();
+                    const tgt = lastActiveWindow.hwnd;
+                    if (!tgt) return;
+                    const sel = await captureSelectionFromHwnd(tgt);
+                    enterQuickActionMode(sel || '', tgt);
+                });
+                if (!ok) { globalShortcut.register(quickActionHotkeyAccel, () => { /* original handler */ }); return { ok: false, error: 'Accelerator not available' }; }
+                quickActionHotkeyAccel = accelerator;
+            } else {
+                return { ok: false, error: 'Unknown hotkey id' };
+            }
+            persistHotkeys();
+            return { ok: true };
+        } catch (e: any) {
+            return { ok: false, error: e?.message || 'Hotkey set failed' };
+        }
+    });
+
+    // ── Clipboard settings (retention, exclude apps, enable) ───────────────
+    // Forwards through to the clipboardHistory module's runtime state.
+    ipcMain.handle('clipboard-settings:get', () => ({
+        enabled: getClipboardEnabled(),
+        retention: getClipboardRetention(),
+        excludes: getClipboardExcludes(),
+    }));
+    ipcMain.handle('clipboard-settings:set', (_event: any, args: { enabled?: boolean; retention?: number; excludes?: string[] }) => {
+        if (typeof args.enabled === 'boolean') setClipboardEnabled(args.enabled);
+        if (typeof args.retention === 'number') setClipboardRetention(args.retention);
+        if (Array.isArray(args.excludes)) setClipboardExcludes(args.excludes);
+        return { ok: true };
+    });
+
+    ipcMain.handle('app:get-version', () => app.getVersion());
+
     ipcMain.handle('get-shortcut', () => currentShortcut);
     ipcMain.handle('set-shortcut', (_event: any, shortcut: string) => {
         try {
@@ -4430,6 +4871,94 @@ ipcMain.handle('open-file-dialog', async () => {
     if (result.canceled || result.filePaths.length === 0)
         return [];
     return result.filePaths.slice(0, MAX_FILE_COUNT);
+});
+// Best-in-class clipboard: returns the most-recent non-Klypix foreground
+// window so the palette can show "Paste to <App>" + drive SendKeys directly
+// to that HWND. The persistent PS poll keeps lastActiveWindow fresh; we
+// also kick a fresh ENUM_WINDOWS if the cached HWND is missing (e.g. boot).
+ipcMain.handle('get-last-active-window', async () => {
+    if (!lastActiveWindow.hwnd) {
+        try { await getActiveWindowInfo(); } catch { /* swallow */ }
+    }
+    return { ...lastActiveWindow };
+});
+
+// Smart-paste: write a stored clipboard-history row's content to the OS
+// clipboard, focus the target HWND, then synthesize Ctrl+V. Mirrors
+// Raycast's killer one-keystroke paste. HWND is validated as numeric to
+// stop any shell-injection via the PowerShell script body.
+ipcMain.handle('smart-paste', async (_event: any, args: { hwnd: string; rowId: string }) => {
+    const hwndStr = String(args?.hwnd ?? '').trim();
+    if (!/^\d+$/.test(hwndStr)) return { ok: false, error: 'Invalid HWND' };
+    if (!args?.rowId) return { ok: false, error: 'Missing rowId' };
+    const wrote = copyClipboardRowDirect(args.rowId);
+    if (!wrote) return { ok: false, error: 'Row not found or unwritable' };
+    try {
+        const os = require('os');
+        const scriptPath = path.join(os.tmpdir(), `klypix_smart_paste_${Date.now()}.ps1`);
+        // AttachThreadInput trick: SetForegroundWindow is restricted on
+        // modern Windows when the caller isn't the foreground process.
+        // Briefly attaching our input thread to the current foreground's
+        // thread bypasses that restriction reliably.
+        const scriptContent = `
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class SP {
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+}
+"@
+$hwnd = [IntPtr]${hwndStr}
+if ([SP]::IsIconic($hwnd)) { [SP]::ShowWindow($hwnd, 9) | Out-Null }
+$fgWin = [SP]::GetForegroundWindow()
+$pidOut = 0
+$fgTid = [SP]::GetWindowThreadProcessId($fgWin, [ref]$pidOut)
+$myTid = [SP]::GetCurrentThreadId()
+[SP]::AttachThreadInput($myTid, $fgTid, $true) | Out-Null
+[SP]::SetForegroundWindow($hwnd) | Out-Null
+[SP]::AttachThreadInput($myTid, $fgTid, $false) | Out-Null
+Start-Sleep -Milliseconds 120
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.SendKeys]::SendWait("^v")
+`.trim();
+        fs.writeFileSync(scriptPath, scriptContent, 'utf8');
+        await execAsync(`powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`, { timeout: 5000 });
+        try { fs.unlinkSync(scriptPath); } catch { /* cleanup best-effort */ }
+        return { ok: true };
+    } catch (e: any) {
+        return { ok: false, error: e?.message || 'smart-paste failed' };
+    }
+});
+
+ipcMain.handle('save-pasted-image', async (_event: any, payload: { data: ArrayBuffer | Uint8Array; mime?: string }) => {
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+    const mime = (payload?.mime || '').toLowerCase();
+    const extMap: Record<string, string> = {
+        'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg',
+        'image/gif': 'gif', 'image/webp': 'webp', 'image/bmp': 'bmp',
+    };
+    const ext = extMap[mime] || 'png';
+    const buf = Buffer.from(payload.data as any);
+    if (buf.length > MAX_FILE_SIZE) {
+        return { ok: false, error: `Image too large (${(buf.length / 1024 / 1024).toFixed(1)}MB, max 10MB)` };
+    }
+    const filename = `klypix_pasted_${Date.now()}.${ext}`;
+    const filePath = path.join(os.tmpdir(), filename);
+    try {
+        fs.writeFileSync(filePath, buf);
+        return { ok: true, path: filePath };
+    } catch (e: any) {
+        return { ok: false, error: e?.message || 'Failed to write pasted image' };
+    }
 });
 ipcMain.handle('validate-dropped-files', async (_event: any, filePaths: string[]) => {
     const fs = require('fs');

@@ -22,12 +22,23 @@ const MEMORY_KEY = 'alt_space_memory_v1';
 const PERSONA_KEY = 'alt_space_persona_v1';
 const PERSONA_V2_KEY = 'klypix_persona_v2';
 const MAX_MEMORY_EVENTS = 20;
+// User-facing gate from Settings → Privacy → Memory. When set to '0' we
+// stop recording new interactions AND persona snapshots; existing data
+// stays put (the user can wipe it via Settings → Privacy → "Forget
+// everything"). Same key the newer memoryManager.ts respects, so a
+// single toggle now controls both subsystems.
+const MEMORY_ENABLED_KEY = 'klypix:memoryEnabled';
+function isMemoryEnabled(): boolean {
+    try { return localStorage.getItem(MEMORY_ENABLED_KEY) !== '0'; }
+    catch { return true; }
+}
 
 /**
  * Saves a new interaction to the local memory buffer.
  * Keeps only the last 20 events to maintain performance and privacy.
  */
 export const saveMemoryEvent = (event: MemoryEvent) => {
+    if (!isMemoryEnabled()) return;
     try {
         const existing = getMemoryHistory();
         // Add new event to the front and trim the list
@@ -106,6 +117,7 @@ export const getPersona = (): string => {
  * Saves structured persona (v2).
  */
 export const saveStructuredPersona = (persona: StructuredPersona) => {
+    if (!isMemoryEnabled()) return;
     try {
         localStorage.setItem(PERSONA_V2_KEY, JSON.stringify(persona));
     } catch (e) {

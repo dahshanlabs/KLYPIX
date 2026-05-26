@@ -138,6 +138,65 @@ contextBridge.exposeInMainWorld('electron', {
     getCdpStatus: () => ipcRenderer.invoke('get-cdp-status'),
     openFileDialog: () => ipcRenderer.invoke('open-file-dialog'),
     validateDroppedFiles: (paths: string[]) => ipcRenderer.invoke('validate-dropped-files', paths),
+    savePastedImage: (data: ArrayBuffer | Uint8Array, mime: string) => ipcRenderer.invoke('save-pasted-image', { data, mime }),
+    getLastActiveWindow: () => ipcRenderer.invoke('get-last-active-window'),
+    smartPaste: (args: { hwnd: string; rowId: string }) => ipcRenderer.invoke('smart-paste', args),
+    // Palette-only mode (Alt+K when KLYPIX is hidden). Three signals:
+    //   onEnter — main has shown a compact palette-only window; renderer
+    //             should hide chat/canvas chrome and open the palette.
+    //   onExit  — leaving palette-only (user closed palette or pressed
+    //             Alt+K again); renderer should drop the flag.
+    //   onHotkeyToggle — Alt+K fired while KLYPIX was already showing
+    //             chat/canvas; just toggle the palette overlay in place.
+    paletteOnly: {
+        onEnter: (cb: () => void) => {
+            const listener = () => cb();
+            ipcRenderer.on('palette-only:enter', listener);
+            return () => ipcRenderer.removeListener('palette-only:enter', listener);
+        },
+        onExit: (cb: () => void) => {
+            const listener = () => cb();
+            ipcRenderer.on('palette-only:exit', listener);
+            return () => ipcRenderer.removeListener('palette-only:exit', listener);
+        },
+        onHotkeyToggle: (cb: () => void) => {
+            const listener = () => cb();
+            ipcRenderer.on('palette:hotkey-toggle', listener);
+            return () => ipcRenderer.removeListener('palette:hotkey-toggle', listener);
+        },
+        closeWindow: () => ipcRenderer.send('palette-only:close-window'),
+    },
+    // Quick AI Action (Alt+;). Main captures the selection from the
+    // foreground app and ships it in onEnter's payload. Renderer fires
+    // apply() with the AI result + mode (replace/insert/copy).
+    quickAction: {
+        onEnter: (cb: (payload: { selection: string; targetHwnd: string; sourceApp?: string }) => void) => {
+            const listener = (_: any, payload: any) => cb(payload);
+            ipcRenderer.on('quick-action:enter', listener);
+            return () => ipcRenderer.removeListener('quick-action:enter', listener);
+        },
+        onExit: (cb: () => void) => {
+            const listener = () => cb();
+            ipcRenderer.on('quick-action:exit', listener);
+            return () => ipcRenderer.removeListener('quick-action:exit', listener);
+        },
+        apply: (args: { mode: 'replace' | 'insert' | 'copy'; text: string; hwnd?: string }) =>
+            ipcRenderer.invoke('quick-action:apply', args),
+        close: () => ipcRenderer.send('quick-action:close'),
+    },
+    // Unified hotkey bindings (Settings → Hotkeys section).
+    hotkey: {
+        getAll: () => ipcRenderer.invoke('hotkey:get-all'),
+        set: (args: { id: 'chat' | 'palette' | 'quickAction'; accelerator: string }) =>
+            ipcRenderer.invoke('hotkey:set', args),
+    },
+    // Clipboard runtime settings (Settings → Clipboard section).
+    clipboardSettings: {
+        get: () => ipcRenderer.invoke('clipboard-settings:get'),
+        set: (args: { enabled?: boolean; retention?: number; excludes?: string[] }) =>
+            ipcRenderer.invoke('clipboard-settings:set', args),
+    },
+    getAppVersion: () => ipcRenderer.invoke('app:get-version'),
     getPathForFile: (file: File) => webUtils.getPathForFile(file),
     // ── Agent Mode ──────────────────────────────────────────────────────────
     executeAction: (intent: any) => ipcRenderer.invoke('eye:execute-action', intent),

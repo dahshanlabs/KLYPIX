@@ -18,8 +18,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 const POLL_INTERVAL_MS = 900;
-const MAX_UNPINNED = 200;
+// Mutable retention cap — re-assignable via setClipboardRetention IPC so
+// users can change "how many items to keep" from the Settings panel.
+// Pinned rows always survive regardless of this number.
+let maxUnpinned = 200;
 const PERSIST_FILE = 'clipboard-history.json';
+const SETTINGS_FILE = 'clipboard-settings.json';
+let captureEnabled = true;
+let userExcludePatterns: string[] = [];
 
 // Foreground-window title patterns that mark a clipboard write as
 // "probably a password" — those rows are stored but flagged skip:true
@@ -36,7 +42,22 @@ const PASSWORD_MANAGER_PATTERNS = [
     /protonpass/i,
 ];
 
-export type ClipboardKind = 'text' | 'image' | 'files' | 'html';
+export type ClipboardKind = 'text' | 'image' | 'files' | 'html' | 'link' | 'color';
+
+// Link auto-detect: a single http(s) URL with no surrounding prose. Trims
+// trailing punctuation common in pasted URLs ("hey check https://x.com.").
+const URL_DETECT_RE = /^https?:\/\/[^\s<>"']+$/i;
+// Color auto-detect: #RGB / #RRGGBB / #RRGGBBAA, rgb(a)(), hsl(a)(). Case-
+// insensitive. We only flag entries that are PURELY a color literal — no
+// "color: #fff" CSS prefix etc.; that's a 'text' row, not a swatch.
+const COLOR_DETECT_RE = /^(?:#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})|rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*(?:,\s*[01]?\.?\d+\s*)?\)|hsla?\(\s*\d{1,3}\s*,\s*\d{1,3}%?\s*,\s*\d{1,3}%?\s*(?:,\s*[01]?\.?\d+\s*)?\))$/i;
+
+function classifyText(text: string, html: string | null): ClipboardKind {
+    const trimmed = text.trim();
+    if (trimmed.length > 0 && trimmed.length < 2048 && URL_DETECT_RE.test(trimmed)) return 'link';
+    if (trimmed.length > 0 && trimmed.length < 64 && COLOR_DETECT_RE.test(trimmed)) return 'color';
+    return html && html !== text ? 'html' : 'text';
+}
 
 export interface ClipboardRow {
     id: string;             // uuid-ish; stable across reload
@@ -238,12 +259,19 @@ function pushRow(row: Omit<ClipboardRow, 'id' | 'pinned' | 'skip'>): void {
     rows = rows.filter(r => {
         if (r.pinned) return true;
         unpinnedSeen++;
-        return unpinnedSeen <= MAX_UNPINNED;
+        return unpinnedSeen <= maxUnpinned;
     });
     schedulePersist();
 }
 
 function poll() {
+    // User-disabled clipboard capture → skip the whole loop. Pinned rows
+    // remain visible in the palette; nothing new gets recorded.
+    if (!captureEnabled) return;
+    // Skip when the cached foreground app is on the user's exclude list
+    // (e.g. "1password", "banking"). The cached value is whatever the
+    // previous poll tick saw, which is close enough for this filter.
+    if (isUserExcludedApp(cachedForegroundProcess)) return;
     // Kick off (don't await) the foreground refresh. The clipboard read
     // below uses the PREVIOUSLY-cached foreground; by the next tick this
     // tick's foreground is current. Worst case: brand-new app on its
@@ -274,10 +302,11 @@ function poll() {
         const img = clipboard.readImage();
         if (img && !img.isEmpty()) {
             const png = img.toPNG();
-            // Skip images larger than ~4MB after base64 — that's ~5.4MB
-            // of base64 string, painful to ship around. The user can
-            // re-paste manually; we just don't store it.
-            if (png.byteLength <= 4 * 1024 * 1024) {
+            // Skip images larger than ~10MB after base64 — that's ~13.3MB
+            // of base64 string. Raycast tolerates larger images; we bumped
+            // from 4MB to 10MB to match. Pinned images persist to disk so
+            // restart-survival has the same upper bound.
+            if (png.byteLength <= 10 * 1024 * 1024) {
                 const b64 = png.toString('base64');
                 pushRow({
                     digest: sha1('image:' + sha1(b64.slice(0, 4096))),  // sample-hash
@@ -296,9 +325,10 @@ function poll() {
         const html = clipboard.readHTML();
         const text = clipboard.readText();
         if (text && text.length > 0) {
+            const kind = classifyText(text, html);
             pushRow({
                 digest: sha1('text:' + text),
-                kind: html && html !== text ? 'html' : 'text',
+                kind,
                 text,
                 html: html || undefined,
                 sourceApp: detectSourceApp(),
@@ -311,6 +341,7 @@ function poll() {
 export function startClipboardHistory(): void {
     if (pollTimer) return;
     load();
+    loadSettings();
     pollTimer = setInterval(poll, POLL_INTERVAL_MS);
     // Throttle polling down to 5s when no Klypix window is focused — saves
     // CPU on idle laptops without losing useful clipboard captures the
@@ -326,6 +357,91 @@ export function startClipboardHistory(): void {
 }
 
 // ── IPC ──────────────────────────────────────────────────────────────
+
+/** Writes a stored row's content back to the OS clipboard. Exported so
+ *  smart-paste can stage the row in main without going through the IPC. */
+export function copyRowToClipboard(id: string): boolean {
+    const row = rows.find(r => r.id === id);
+    if (!row) return false;
+    if (row.kind === 'image' && row.imageDataUrl) {
+        const m = row.imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (m) {
+            const buf = Buffer.from(m[2], 'base64');
+            const img = nativeImage.createFromBuffer(buf);
+            clipboard.writeImage(img);
+            return true;
+        }
+    }
+    if (row.kind === 'files' && row.filePaths && row.filePaths.length > 0) {
+        const joined = row.filePaths.join(' ') + '  ';
+        const buf = Buffer.from(joined, 'utf16le');
+        clipboard.writeBuffer('FileNameW', buf);
+        return true;
+    }
+    if (row.text) {
+        if (row.html) clipboard.write({ text: row.text, html: row.html });
+        else clipboard.writeText(row.text);
+        return true;
+    }
+    return false;
+}
+
+/** Read-only lookup so other modules (e.g. smart-paste, link-open) can
+ *  inspect a row without duplicating the array reference. */
+export function getRow(id: string): ClipboardRow | undefined {
+    return rows.find(r => r.id === id);
+}
+
+// ── User-facing settings (Settings panel → Clipboard section) ─────────────
+
+function settingsPath(): string {
+    return path.join(app.getPath('userData'), SETTINGS_FILE);
+}
+function loadSettings(): void {
+    try {
+        const raw = fs.readFileSync(settingsPath(), 'utf-8');
+        const s = JSON.parse(raw);
+        if (typeof s.enabled === 'boolean') captureEnabled = s.enabled;
+        if (typeof s.retention === 'number' && s.retention >= 25) maxUnpinned = s.retention;
+        if (Array.isArray(s.excludes)) userExcludePatterns = s.excludes.filter((x: any) => typeof x === 'string');
+    } catch { /* first run */ }
+}
+function saveSettings(): void {
+    try {
+        fs.writeFileSync(settingsPath(), JSON.stringify({
+            enabled: captureEnabled,
+            retention: maxUnpinned,
+            excludes: userExcludePatterns,
+        }), 'utf-8');
+    } catch {}
+}
+
+export function getClipboardEnabled(): boolean { return captureEnabled; }
+export function setClipboardEnabled(v: boolean): void { captureEnabled = !!v; saveSettings(); }
+export function getClipboardRetention(): number { return maxUnpinned; }
+export function setClipboardRetention(n: number): void {
+    if (typeof n !== 'number' || n < 25) return;
+    maxUnpinned = Math.min(2000, Math.floor(n));
+    // Re-prune immediately so the new cap takes effect without waiting
+    // for the next push.
+    let seen = 0;
+    rows = rows.filter(r => { if (r.pinned) return true; seen++; return seen <= maxUnpinned; });
+    schedulePersist();
+    saveSettings();
+}
+export function getClipboardExcludes(): string[] { return [...userExcludePatterns]; }
+export function setClipboardExcludes(list: string[]): void {
+    userExcludePatterns = (Array.isArray(list) ? list : []).filter(x => typeof x === 'string' && x.trim().length > 0).map(x => x.trim());
+    saveSettings();
+}
+
+// Used by detectSourceApp to skip user-listed excluded apps. Match is
+// case-insensitive substring on the friendly process name.
+function isUserExcludedApp(proc?: string): boolean {
+    if (!proc || userExcludePatterns.length === 0) return false;
+    const p = proc.toLowerCase();
+    return userExcludePatterns.some(pat => p.includes(pat.toLowerCase()));
+}
 
 export function registerClipboardHistoryIpc(): void {
     ipcMain.handle('clipboard-history:list', () => {

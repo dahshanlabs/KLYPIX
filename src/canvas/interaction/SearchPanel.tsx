@@ -23,6 +23,7 @@ export function SearchPanel({ open, onClose }: Props) {
     const [q, setQ] = useState('');
     const [idx, setIdx] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
+    const panelRef = useRef<HTMLDivElement>(null);
 
     const hits = useMemo<Hit[]>(() => {
         if (!q.trim()) return [];
@@ -93,10 +94,23 @@ export function SearchPanel({ open, onClose }: Props) {
         jumpTo(n);
     };
 
+    useEffect(() => {
+        if (!open) return;
+        const onDown = (e: MouseEvent) => {
+            const target = e.target as Node | null;
+            if (!target) return;
+            if (panelRef.current?.contains(target)) return;
+            if (target instanceof Element && target.closest('[data-toggle="search"]')) return;
+            onClose();
+        };
+        window.addEventListener('mousedown', onDown);
+        return () => window.removeEventListener('mousedown', onDown);
+    }, [open, onClose]);
+
     if (!open) return null;
 
     return (
-        <div data-canvas-ui="1" className="absolute top-3 right-3 z-40 no-drag w-[min(420px,calc(100vw-24px))] rounded-xl bg-[#12121a] border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.5)] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+        <div ref={panelRef} data-canvas-ui="1" className="absolute top-3 right-3 z-40 no-drag w-[min(420px,calc(100vw-24px))] rounded-xl bg-[#12121a] border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.5)] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
             <div className="flex items-center gap-2 px-3 py-2 border-b border-white/5">
                 <Search size={13} className="text-emerald-400" />
                 <input

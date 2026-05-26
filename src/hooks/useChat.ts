@@ -317,37 +317,70 @@ export function useChat(opts: UseChatOptions) {
             if (attachedFiles.length > 0) setAttachedFiles([]);
         }
 
-        // Attached files (non-deep mode)
+        // Attached files (non-deep mode): split images vs documents.
+        // Images go to Gemini's vision input (inlineData), documents go through
+        // text extraction. Previously both ran through readMultipleFiles, which
+        // only handles document text and rejected PNG/JPG with "Unsupported file
+        // type" — silently breaking attached-image chat.
+        const attachedImageBase64s: string[] = [];
         if (attachedFiles.length > 0 && !isDeepFileMode) {
+            const imageAtts = attachedFiles.filter(f => IMAGE_EXTS.includes(f.ext));
+            const docAtts = attachedFiles.filter(f => !IMAGE_EXTS.includes(f.ext));
+
             setIsReadingFile(true);
-            const attachItems = attachedFiles.map(f => ({
-                id: f.path, name: f.name,
-                type: IMAGE_EXTS.includes(f.ext) ? 'image' : 'file',
-                source: 'Attached', localPath: f.path,
-            }));
-            const attachResult = await window.electron.readMultipleFiles(attachItems);
+
+            for (const f of imageAtts) {
+                try {
+                    const r = await (window as any).electron.readFileBytes(f.path);
+                    if (r?.success && r.base64) {
+                        attachedImageBase64s.push(r.base64);
+                    } else {
+                        console.warn('[Attach] image read failed:', f.name, r?.error);
+                    }
+                } catch (err) {
+                    console.warn('[Attach] image read error:', f.name, err);
+                }
+            }
+
+            if (docAtts.length > 0) {
+                const attachItems = docAtts.map(f => ({
+                    id: f.path, name: f.name,
+                    type: 'file' as const,
+                    source: 'Attached', localPath: f.path,
+                }));
+                const attachResult = await window.electron.readMultipleFiles(attachItems);
+
+                if (attachResult.results && attachResult.results.length > 0) {
+                    let attachContext = '\n\n--- ATTACHED FILES ---\n';
+                    for (const f of attachResult.results) {
+                        if (f.error) {
+                            attachContext += `\n[Error reading ${f.name}: ${f.error}]\n`;
+                        } else {
+                            attachContext += `\nDocument: ${f.name} (${f.pageCount || 0} pages)\n${f.content}\n`;
+                        }
+                    }
+                    attachContext += '\n--- END OF ATTACHED FILES ---';
+                    promptForAI = promptForAI + attachContext;
+                }
+            }
+
             setIsReadingFile(false);
 
-            if (attachResult.results && attachResult.results.length > 0) {
-                let attachContext = '\n\n--- ATTACHED FILES ---\n';
-                for (const f of attachResult.results) {
-                    if (f.error) {
-                        attachContext += `\n[Error reading ${f.name}: ${f.error}]\n`;
-                    } else {
-                        attachContext += `\nDocument: ${f.name} (${f.pageCount || 0} pages)\n${f.content}\n`;
-                    }
-                }
-                attachContext += '\n--- END OF ATTACHED FILES ---';
-                promptForAI = promptForAI + attachContext;
-
+            if (attachedImageBase64s.length > 0 || docAtts.length > 0) {
                 setMessages(prev => {
                     const newArr = [...prev];
                     const lastMsg = newArr[newArr.length - 1];
                     const existingAttached = lastMsg.attachedFiles || [];
-                    newArr[newArr.length - 1] = {
+                    const next: Message = {
                         ...lastMsg,
                         attachedFiles: [...existingAttached, ...attachedFiles.map(f => f.name)],
                     };
+                    if (attachedImageBase64s.length > 0 && !lastMsg.attachedImage) {
+                        next.attachedImage = attachedImageBase64s.length === 1
+                            ? attachedImageBase64s[0]
+                            : `multi:${JSON.stringify(attachedImageBase64s)}`;
+                    }
+                    newArr[newArr.length - 1] = next;
                     saveMessages(newArr);
                     return newArr;
                 });
@@ -414,6 +447,21 @@ export function useChat(opts: UseChatOptions) {
         let imageToSend: string | string[] | null = opts.screenshotStack && opts.screenshotStack.length > 1
             ? opts.screenshotStack
             : screenshotBase64;
+
+        // Merge attached image files into the vision payload so Gemini can
+        // actually see them. Without this, attached PNG/JPG would only show
+        // up in the message bubble and never reach the model.
+        if (attachedImageBase64s.length > 0) {
+            if (imageToSend === null) {
+                imageToSend = attachedImageBase64s.length === 1
+                    ? attachedImageBase64s[0]
+                    : attachedImageBase64s;
+            } else if (Array.isArray(imageToSend)) {
+                imageToSend = [...imageToSend, ...attachedImageBase64s];
+            } else {
+                imageToSend = [imageToSend, ...attachedImageBase64s];
+            }
+        }
 
         // Update conversation context — single source of truth
         if (imageToSend) {

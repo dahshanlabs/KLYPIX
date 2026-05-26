@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
     Loader2, Image as ImageIcon, ImageOff, X, Maximize, Square, Mic,
@@ -59,26 +59,18 @@ import { AgentSettings } from './components/AgentSettings';
 import { AgentRobot } from './components/AgentRobot';
 import { KlypixMascot } from './components/KlypixMascot';
 import { ModeTabs, type AppTab } from './components/ModeTabs';
+import { VoiceRecorderPanel } from './components/VoiceRecorderPanel';
 // Phase 23 — global command palette. Mounted once at the app root; opens on
 // Ctrl+K (or Cmd+K) from anywhere. Providers register themselves when their
 // chunks load — Day 1 ships the infrastructure with zero providers, so the
 // palette opens empty until Day 2's Calculator + Klypix Search land.
 import { CommandPalette } from './palette/CommandPalette';
+import { QuickActionBar } from './components/QuickActionBar';
+import { SettingsPanel } from './components/SettingsPanel';
 import { useGlobalHotkey } from './palette/useGlobalHotkey';
 import { registerAllProviders } from './palette/registerProviders';
-import { toggle as togglePalette, openWithPrefix as openPaletteWithPrefix } from './palette/paletteStore';
-// Phase 22.5: lazy-load the canvas chunk. KlypixCanvas pulls in the full
-// canvas engine, all 10 item types, interaction handlers, drawing layer,
-// agent, file format, cloud sync, JSZip, XLSX, plus the Gemini-backed
-// canvas-agent / autoTag / OCR — roughly 1.0–1.5 MB of JS for users who
-// stay in chat mode. Splitting it means cold start for chat-only sessions
-// no longer parses any of that code. Once the user enters canvas mode the
-// chunk downloads + caches; from that point on the always-mount semantics
-// from CLAUDE.md still apply (we keep it rendered for the rest of the
-// session so multi-canvas tab state survives chat↔canvas switches).
-const KlypixCanvas = lazy(() =>
-    import('./canvas/KlypixCanvas').then((m) => ({ default: m.KlypixCanvas }))
-);
+import { toggle as togglePalette, openWithPrefix as openPaletteWithPrefix, open as openPalette, close as closePalette, subscribe as subscribePalette, getSnapshot as getPaletteSnapshot, setCompact as setPaletteCompact } from './palette/paletteStore';
+import { KlypixCanvas } from './canvas/KlypixCanvas';
 import { t, useLocale, translateActionLabel } from './i18n/strings';
 
 // ── Context-aware prompt system ──────────────────────────────────────────────
@@ -767,22 +759,88 @@ function AppMain() {
     // Top-level tab: Chat (current app) vs Canvas (.any workspace)
     const [activeTab, setActiveTab] = useState<AppTab>('chat');
 
-    // Phase 22.5: defer mounting KlypixCanvas (a lazy chunk) until the user
-    // first visits Canvas mode OR has a pending hand-off from chat. Once
-    // mounted, it stays mounted for the rest of the session — the
-    // always-mount semantics from CLAUDE.md kick in from the FIRST visit
-    // onward (preserves multi-canvas tab state, prevents the autosave
-    // restore dialog from re-firing). Avoids parsing ~1+MB of canvas JS
-    // for chat-only sessions.
-    const [hasVisitedCanvas, setHasVisitedCanvas] = useState<boolean>(() => {
-        // Edge case: if a hand-off queue from chat is already present on
-        // boot (e.g. previous session crashed mid-handoff), mount canvas
-        // eagerly so the drain effect can run.
-        try { return !!localStorage.getItem('klypix:pendingCanvasItems'); } catch { return false; }
-    });
+    // Palette-only mode — when true, the entire chat/canvas chrome is
+    // hidden and only the Command Palette modal renders. Set by the main
+    // process when the user hits Alt+K while KLYPIX is hidden.
+    const [paletteOnly, setPaletteOnly] = useState(false);
     useEffect(() => {
-        if (activeTab === 'canvas') setHasVisitedCanvas(true);
-    }, [activeTab]);
+        const bridge: any = (window as any).electron?.paletteOnly;
+        if (!bridge) return;
+        const offEnter = bridge.onEnter?.(() => {
+            setPaletteOnly(true);
+            setPaletteCompact(true);
+            openPalette();
+        });
+        const offExit = bridge.onExit?.(() => {
+            setPaletteOnly(false);
+            setPaletteCompact(false);
+            closePalette();
+        });
+        const offToggle = bridge.onHotkeyToggle?.(() => {
+            togglePalette();
+        });
+        return () => {
+            try { offEnter?.(); } catch {}
+            try { offExit?.(); } catch {}
+            try { offToggle?.(); } catch {}
+        };
+    }, []);
+
+    // When the palette closes while we're in palette-only mode, tell main
+    // to hide the window. Subscribes to the external palette store and
+    // detects open→closed transitions.
+    useEffect(() => {
+        if (!paletteOnly) return;
+        let wasOpen = getPaletteSnapshot().open;
+        const unsub = subscribePalette(() => {
+            const nowOpen = getPaletteSnapshot().open;
+            if (wasOpen && !nowOpen) {
+                (window as any).electron?.paletteOnly?.closeWindow?.();
+            }
+            wasOpen = nowOpen;
+        });
+        return unsub;
+    }, [paletteOnly]);
+
+    // Quick AI Action mode (Alt+;). Main captures the selection from the
+    // foreground app and sends it here as enter payload; renderer renders
+    // the QuickActionBar; on close we tell main to hide the window.
+    const [quickAction, setQuickAction] = useState<{ selection: string; targetHwnd: string; sourceApp?: string } | null>(null);
+    useEffect(() => {
+        const bridge: any = (window as any).electron?.quickAction;
+        if (!bridge) return;
+        const offEnter = bridge.onEnter?.((payload: { selection: string; targetHwnd: string; sourceApp?: string }) => {
+            setQuickAction(payload);
+        });
+        const offExit = bridge.onExit?.(() => {
+            setQuickAction(null);
+        });
+        return () => {
+            try { offEnter?.(); } catch {}
+            try { offExit?.(); } catch {}
+        };
+    }, []);
+
+    // Advanced Settings overlay (Ctrl+,). Distinct from the existing inline
+    // settings cog (which is the simpler account/Gemini panel) — this one
+    // is the full multi-section preferences UI (Hotkeys, Clipboard, AI,
+    // Privacy, About). Eventually we'll consolidate; for now they coexist.
+    const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+                e.preventDefault();
+                setShowAdvancedSettings(s => !s);
+            }
+        };
+        const onOpen = () => setShowAdvancedSettings(true);
+        window.addEventListener('keydown', onKey);
+        window.addEventListener('klypix:open-settings', onOpen as EventListener);
+        return () => {
+            window.removeEventListener('keydown', onKey);
+            window.removeEventListener('klypix:open-settings', onOpen as EventListener);
+        };
+    }, []);
 
     // Chat→Canvas hand-off. Pushes the response content into a localStorage
     // queue keyed `klypix:pendingCanvasItems`, then flips the app tab to
@@ -809,6 +867,53 @@ function AppMain() {
         }
         setActiveTab('canvas');
     }, []);
+
+    // Palette → chat bridge. The Command Palette's clipboard "Send to chat"
+    // action dispatches these CustomEvents so we don't have to thread the
+    // useAttachments / textarea refs through a portal. Two channels:
+    //   klypix:chat-attach        { paths: string[] }  → attach to chat
+    //   klypix:chat-input-append  { text: string }     → append to textarea
+    // Both also flip the active tab to 'chat' so the user sees the result.
+    // attachments is fresh every render, so we stash it in a ref and
+    // register the listener exactly once — otherwise we'd add/remove on
+    // every keystroke that re-renders App.
+    const attachmentsRef = useRef(attachments);
+    attachmentsRef.current = attachments;
+    useEffect(() => {
+        const onAttach = async (e: any) => {
+            const paths: string[] = Array.isArray(e?.detail?.paths) ? e.detail.paths : [];
+            if (paths.length === 0) return;
+            setActiveTab('chat');
+            await attachmentsRef.current.processDroppedFiles(paths);
+        };
+        const onAppend = (e: any) => {
+            const text: string = typeof e?.detail?.text === 'string' ? e.detail.text : '';
+            if (!text) return;
+            setActiveTab('chat');
+            const next = (queryRef.current ? queryRef.current + ' ' : '') + text;
+            queryRef.current = next;
+            setQuery(next);
+            requestAnimationFrame(() => {
+                if (inputRef.current) {
+                    inputRef.current.value = next;
+                    inputRef.current.style.height = 'auto';
+                    const nh = Math.min(inputRef.current.scrollHeight, 180);
+                    inputRef.current.style.height = `${nh}px`;
+                    setTextareaHeight(nh);
+                    inputRef.current.focus();
+                    const len = inputRef.current.value.length;
+                    inputRef.current.setSelectionRange(len, len);
+                }
+            });
+        };
+        window.addEventListener('klypix:chat-attach', onAttach as EventListener);
+        window.addEventListener('klypix:chat-input-append', onAppend as EventListener);
+        return () => {
+            window.removeEventListener('klypix:chat-attach', onAttach as EventListener);
+            window.removeEventListener('klypix:chat-input-append', onAppend as EventListener);
+        };
+    }, []);
+
     const [canvasFullscreen, setCanvasFullscreen] = useState(false);
 
     // If the user expanded Canvas to fullscreen and then clicks back to Chat, the
@@ -978,7 +1083,23 @@ function AppMain() {
             // We don't have a screenshot ready in the palette tick, so
             // pass null — the agent loop's first turn will capture one
             // if the model profile asks for vision.
+            //
+            // Mirror the submit() agent path: commit any in-flight agent
+            // reply into chat history, then push the user question. Without
+            // this, palette-launched runs leave chat.messages empty —
+            // silently hiding Keep Chat / Pin / Search / Clear since those
+            // are gated on messages.length > 0.
             try {
+                if (claudeAgent.state !== 'idle' && claudeAgent.streamingText) {
+                    const files = claudeAgent.producedFiles.map(f => ({ path: f.path, name: f.name, format: f.format, size: f.size }));
+                    chat.setMessages(prev => [...prev, {
+                        role: 'assistant' as const,
+                        content: claudeAgent.streamingText,
+                        ...(files.length > 0 ? { agentFiles: files } : {}),
+                    }]);
+                    claudeAgent.reset();
+                }
+                chat.setMessages(prev => [...prev, { role: 'user' as const, content: question, sourceMode: 'agent' as any }]);
                 claudeAgent.startAgent(question, null, windowCtx.activeWindowContext);
             } catch (err) {
                 console.warn('[palette] askAgent dispatch failed:', err);
@@ -996,7 +1117,7 @@ function AppMain() {
             window.removeEventListener('klypix:palette-prefill-tool', onPrefillTool);
             window.removeEventListener('klypix:palette-ask-agent', onAskAgent);
         };
-    }, [pinnedChats, claudeAgent, windowCtx]);
+    }, [pinnedChats, claudeAgent, windowCtx, chat]);
 
     const suggestions = useSuggestions({
         isDeepFileMode: deepMode.isDeepFileMode,
@@ -2029,6 +2150,36 @@ function AppMain() {
     };
 
     // ── Render ────────────────────────────────────────────────────────────────
+    // Quick AI Action mode (Alt+;): a focused 520×420 popup with the user's
+    // selection + 6 AI actions. Renders nothing else from the main app —
+    // it's a one-shot UI that disappears as soon as the user applies the
+    // result or hits Esc.
+    if (quickAction) {
+        return (
+            <QuickActionBar
+                selection={quickAction.selection}
+                targetHwnd={quickAction.targetHwnd}
+                sourceApp={quickAction.sourceApp}
+                onClose={() => (window as any).electron?.quickAction?.close?.()}
+            />
+        );
+    }
+    // Palette-only mode: skip the chat/canvas glass chrome entirely so the
+    // user just sees the centered Command Palette modal (which portals to
+    // document.body). The transparent drag region lets the user move the
+    // mini window by grabbing the empty area around the palette.
+    if (paletteOnly) {
+        // Outer is `.drag` so the transparent area around / below the
+        // collapsed search pill is grabable for moving the mini window.
+        // The CommandPalette modal itself sets `.no-drag` on its body
+        // so input + buttons + rows stay interactive — `-webkit-app-
+        // region` inherits from parent unless explicitly overridden.
+        return (
+            <div className="h-screen w-screen drag" style={{ background: 'transparent' }}>
+                <CommandPalette compact />
+            </div>
+        );
+    }
     return (
         <div
             className={cn('flex items-center justify-center h-screen w-screen p-0 animate-in', windowCtx.isResizing && 'resizing', attachments.isDragOver && 'drag-over-active')}
@@ -2048,23 +2199,26 @@ function AppMain() {
         >
             <div className="glass isolate w-full h-full rounded-2xl flex flex-col drag relative pb-10" style={{ overflow: 'clip' }}>
 
-                {/* Canvas overlay — always mounted (from the first visit onward)
-                    so multi-canvas tab state (items, undo stack, open tabs)
-                    survives Chat↔Canvas switches. KlypixCanvas toggles its own
+                {/* Settings overlay — the SINGLE unified panel (Ctrl+,, palette
+                    command, or the chat-header cog all open this). Renders
+                    above everything so it's accessible from chat OR canvas. */}
+                {showAdvancedSettings && (
+                    <SettingsPanel
+                        onClose={() => setShowAdvancedSettings(false)}
+                        settings={settings}
+                        auth={auth}
+                        t={t}
+                    />
+                )}
+
+                {/* Canvas overlay — always mounted. KlypixCanvas toggles its own
                     visibility via appVisible and propagates that to each inner
                     CanvasSurface's tabActive so global side effects (autosave
                     restore dialog, focus claim) only fire when canvas is actually
-                    shown.
-
-                    Phase 22.5: the component itself is React.lazy — chunk only
-                    downloads when hasVisitedCanvas flips true (first canvas visit
-                    or chat→canvas hand-off). The Suspense fallback renders
-                    nothing because by the time the user can see the canvas
-                    area, the chunk has already loaded. Keep the always-mounted
-                    rendering once we cross the threshold. */}
-                <Suspense fallback={null}>
-                    {hasVisitedCanvas && <KlypixCanvas appVisible={activeTab === 'canvas'} />}
-                </Suspense>
+                    shown. Mounting unconditionally preserves multi-canvas tab
+                    state across chat↔canvas switches and prevents the autosave
+                    restore dialog from re-firing on every trip. */}
+                <KlypixCanvas appVisible={activeTab === 'canvas'} />
 
                 {/* Phase 23: global command palette. Portals to body when open
                     so it floats above EVERYTHING. The hotkey hook installed
@@ -2156,196 +2310,6 @@ function AppMain() {
                     </div>
                 )}
 
-                {/* Settings Overlay */}
-                {settings.showSettings && (
-                    <div className="absolute inset-0 z-50 bg-[#242323]/90 backdrop-blur-2xl flex flex-col no-drag animate-in fade-in zoom-in-95 duration-200">
-                        <div className="pt-9 px-4 pb-2 flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                                <button onClick={() => settings.setShowSettings(false)} className="p-1 hover:bg-white/10 rounded-lg transition-all text-white/60"><ChevronLeft size={18} /></button>
-                            </div>
-                            <div className="flex items-center gap-4 no-drag shrink-0">
-                                <button onClick={() => (window as any).electron.minimizeWindow()} className="p-1.5 hover:bg-white/10 rounded-lg transition-all text-white/20 hover:text-white cursor-pointer"><Minus size={16} /></button>
-                                <button onClick={() => settings.setShowSettings(false)} className="p-1.5 hover:bg-white/10 rounded-lg transition-all text-white/20 hover:text-white cursor-pointer"><X size={16} /></button>
-                            </div>
-                        </div>
-                        <div className="px-4 pb-3 border-b border-white/5">
-                            <span className="text-xs font-bold uppercase tracking-widest text-white/80">{t('settings.account')} & {t('settings.privacy_mode')}</span>
-                        </div>
-                        <div className="flex-1 overflow-y-auto p-6 space-y-8">
-                            {/* Account Section — signed-in users get full
-                                identity card; trial / not-signed-in users get
-                                a Sign In CTA so they can deliberately auth
-                                without waiting for the 7-day trial to expire. */}
-                            <div className="space-y-3">
-                                <div className="flex items-center gap-2 text-white/40"><User size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">{t('settings.account')}</span></div>
-                                {auth.isAuthenticated ? (
-                                    <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-sm">
-                                                {auth.user?.displayName?.[0]?.toUpperCase() || auth.user?.email?.[0]?.toUpperCase() || '?'}
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <div className="text-sm font-medium text-white truncate">{auth.user?.displayName || 'User'}</div>
-                                                <div className="text-xs text-white/40 truncate">{auth.user?.email}</div>
-                                            </div>
-                                            <span className={cn('px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider', auth.user?.tier === 'admin' ? 'bg-amber-500/20 text-amber-400' : auth.user?.tier === 'pro' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/10 text-white/50')}>{t(`settings.tier_${auth.user?.tier || 'free'}` as any)}</span>
-                                        </div>
-                                        <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between">
-                                            <span className="text-[10px] text-white/30">{t('settings.queries_count').replace('{today}', String(auth.user?.queriesToday || 0)).replace('{total}', String(auth.user?.queriesTotal || 0))}</span>
-                                            <button onClick={() => { auth.signOut(); settings.setShowSettings(false); }} className="text-[10px] text-red-400/70 hover:text-red-400 transition-colors cursor-pointer">{t('settings.signout')}</button>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-                                        <div className="text-xs text-white/65 leading-relaxed">{t('settings.signin_cta_body')}</div>
-                                        <button
-                                            onClick={() => { settings.setShowSettings(false); (window as any).klypixShowSignIn?.(); }}
-                                            className="mt-3 w-full px-3 py-2 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-xs font-medium transition-colors cursor-pointer"
-                                        >
-                                            {t('settings.signin_cta_button')}
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* AI Provider — Gemini API key. Stored in localStorage
-                                (read by src/api/gemini.ts:getApiKey). The fallback
-                                constant in gemini.ts is now empty: if the user
-                                clears this field, chat stops working until they
-                                add a new key. */}
-                            <div className="space-y-3">
-                                <div className="flex items-center gap-2 text-white/40"><Key size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">{t('settings.section_ai_provider')}</span></div>
-                                <div className="bg-white/5 border border-white/10 p-3 rounded-xl space-y-2">
-                                    <div className="flex items-center justify-between gap-2">
-                                        <div className="flex flex-col">
-                                            <span className="text-xs text-white/80 font-medium">{t('settings.gemini_key_label')}</span>
-                                            <span className="text-[10px] text-white/40 leading-tight mt-0.5">{t('settings.gemini_key_hint')}</span>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-1.5">
-                                        <input
-                                            type={geminiKeyVisible ? 'text' : 'password'}
-                                            value={geminiKeyDraft}
-                                            onChange={(e) => setGeminiKeyDraft(e.target.value)}
-                                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleSaveGeminiKey(); } }}
-                                            placeholder={t('settings.gemini_key_placeholder')}
-                                            spellCheck={false}
-                                            autoComplete="off"
-                                            className="flex-1 bg-black/40 border border-white/10 rounded-md px-2.5 py-1.5 text-[11px] text-white/85 placeholder-white/25 focus:outline-none focus:border-emerald-500/40 font-mono tracking-tight"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => setGeminiKeyVisible(v => !v)}
-                                            title={geminiKeyVisible ? t('settings.gemini_key_hide') : t('settings.gemini_key_show')}
-                                            className="p-1.5 rounded-md bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/85"
-                                        >
-                                            {geminiKeyVisible ? <EyeOff size={12} /> : <Eye size={12} />}
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={handleSaveGeminiKey}
-                                            disabled={geminiKeyDraft.trim() === (localStorage.getItem('gemini_api_key') ?? '')}
-                                            className={cn('px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all', geminiKeyJustSaved ? 'bg-emerald-500/25 text-emerald-300' : geminiKeyDraft.trim() === (localStorage.getItem('gemini_api_key') ?? '') ? 'bg-white/5 text-white/30 cursor-not-allowed' : 'bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25')}
-                                        >
-                                            {geminiKeyJustSaved ? t('settings.gemini_key_saved') : t('settings.gemini_key_save')}
-                                        </button>
-                                        {geminiKeySaved && (
-                                            <button
-                                                type="button"
-                                                onClick={handleClearGeminiKey}
-                                                title={t('settings.gemini_key_clear')}
-                                                className="p-1.5 rounded-md bg-white/5 hover:bg-red-500/15 text-white/40 hover:text-red-300"
-                                            >
-                                                <Trash2 size={12} />
-                                            </button>
-                                        )}
-                                    </div>
-                                    {!geminiKeySaved && (
-                                        <p className="text-[10px] text-amber-300/80">{t('settings.gemini_key_missing')}</p>
-                                    )}
-                                    <button
-                                        type="button"
-                                        onClick={() => (window as any).electron?.openExternal?.('https://aistudio.google.com/apikey')}
-                                        className="flex items-center gap-1 text-[10px] text-emerald-400/80 hover:text-emerald-300 transition-colors"
-                                    >
-                                        <ExternalLink size={10} />
-                                        {t('settings.gemini_key_get')}
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="space-y-3">
-                                <div className="flex items-center gap-2 text-white/40"><Keyboard size={14} /><div className="flex flex-col"><span className="text-[10px] uppercase font-bold tracking-tighter">{t('settings.shortcut')}</span><span className="text-[8px] text-white/30 uppercase tracking-widest font-medium">{t('settings.shortcut.hint')}</span></div></div>
-                                <div className="bg-white/5 border border-white/10 p-3 rounded-xl flex items-center justify-between">
-                                    <span className="text-xs text-white/60">{t('settings.shortcut.activate')}</span>
-                                    <button onClick={() => settings.setIsRecording(!settings.isRecording)} className={cn('flex gap-1 px-2 py-1.5 rounded-lg border transition-all', settings.isRecording ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400 ring-2 ring-emerald-500/20' : 'bg-white/5 border-white/10 text-white/80 hover:bg-white/10 hover:border-white/20')}>
-                                        {settings.isRecording ? <span className="text-[10px] font-bold animate-pulse uppercase tracking-widest">{t('settings.shortcut.press')}</span> : settings.currentShortcut.split('+').map((part, i) => <React.Fragment key={i}><kbd className="px-1.5 py-0.5 bg-white/10 border border-white/20 rounded text-[10px] font-mono shadow-sm">{part}</kbd>{i < settings.currentShortcut.split('+').length - 1 && <span className="text-white/20">+</span>}</React.Fragment>)}
-                                    </button>
-                                </div>
-                            </div>
-                            <div className="space-y-4">
-                                <div className="flex items-center gap-2 text-white/40"><Volume2 size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">{t('settings.section_accessibility_voice')}</span></div>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <button onClick={() => settings.setIsVoiceDictationEnabled(!settings.isVoiceDictationEnabled)} className={cn('p-4 rounded-2xl border transition-all flex flex-col items-start gap-3', settings.isVoiceDictationEnabled ? 'bg-white/10 border-white/20' : 'bg-white/5 border-white/5 grayscale')}>
-                                        {settings.isVoiceDictationEnabled ? <Mic size={20} className="text-white" /> : <MicOff size={20} className="text-white/40" />}
-                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">{t('settings.voice_dictation')}</div><div className="text-[9px] text-white/40 leading-tight">{t('settings.voice_dictation.hint')}</div></div>
-                                    </button>
-                                    <button onClick={() => settings.setIsTTSEnabled(!settings.isTTSEnabled)} className={cn('p-4 rounded-2xl border transition-all flex flex-col items-start gap-3', settings.isTTSEnabled ? 'bg-white/10 border-white/20' : 'bg-white/5 border-white/5 grayscale')}>
-                                        {settings.isTTSEnabled ? <Volume2 size={20} className="text-white" /> : <VolumeX size={20} className="text-white/40" />}
-                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">{t('settings.speak_responses')}</div><div className="text-[9px] text-white/40 leading-tight">{t('settings.speak_responses.hint')}</div></div>
-                                    </button>
-                                </div>
-                            </div>
-                            <div className="space-y-4 pb-4">
-                                <div className="flex items-center gap-2 text-white/40"><Shield size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">{t('settings.section_privacy_memory')}</span></div>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <button onClick={() => settings.setIsPrivacyMode(!settings.isPrivacyMode)} className={cn('p-4 rounded-2xl border transition-all flex flex-col items-start gap-3', settings.isPrivacyMode ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-white/5 border-white/5')}>
-                                        {settings.isPrivacyMode ? <Shield size={20} className="text-emerald-400" /> : <ShieldOff size={20} className="text-white/40" />}
-                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">{t('settings.privacy_mode')}</div><div className="text-[9px] text-white/40 leading-tight">{t('settings.privacy_mode.hint')}</div></div>
-                                    </button>
-                                    <button onClick={() => { import('./api/memoryStore').then(m => { const data = m.exportMemoryData(); const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `alt-space-memory-${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); }); }} className="p-4 rounded-2xl border border-white/5 bg-white/5 hover:bg-white/10 transition-all flex flex-col items-start gap-3 group">
-                                        <Download size={20} className="text-white/40 group-hover:text-white transition-colors" />
-                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">{t('settings.download_memory')}</div><div className="text-[9px] text-white/40 leading-tight">{t('settings.download_memory.hint')}</div></div>
-                                    </button>
-                                    <button onClick={() => { if (confirm('Are you sure you want to clear your local AI memory? This will reset your Living Persona.')) { import('./api/memoryStore').then(m => m.clearMemory()); alert('Memory cleared.'); window.location.reload(); } }} className="p-4 rounded-2xl border border-white/5 bg-white/5 hover:bg-red-500/10 hover:border-red-500/20 transition-all flex flex-col items-start gap-3 group">
-                                        <Eraser size={20} className="text-white/40 group-hover:text-red-400 transition-colors" />
-                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">{t('settings.clear_memory')}</div><div className="text-[9px] text-white/40 leading-tight">{t('settings.clear_memory.hint')}</div></div>
-                                    </button>
-                                </div>
-                            </div>
-                            <div className="space-y-4 pb-4">
-                                <div className="flex items-center gap-2 text-white/40"><FileText size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">{t('settings.doc_reading')}</span></div>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <button onClick={() => settings.setPdfOcrMode('gemini')} className={cn('p-4 rounded-2xl border transition-all flex flex-col items-start gap-3', settings.pdfOcrMode === 'gemini' ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-white/5 border-white/5')}>
-                                        <Globe size={20} className={settings.pdfOcrMode === 'gemini' ? 'text-emerald-400' : 'text-white/40'} />
-                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">{t('settings.gemini_vision')}</div><div className="text-[9px] text-white/40 leading-tight">{t('settings.gemini_vision.hint')}</div></div>
-                                    </button>
-                                    <button onClick={() => settings.setPdfOcrMode('local')} className={cn('p-4 rounded-2xl border transition-all flex flex-col items-start gap-3', settings.pdfOcrMode === 'local' ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-white/5 border-white/5')}>
-                                        <Lock size={20} className={settings.pdfOcrMode === 'local' ? 'text-emerald-400' : 'text-white/40'} />
-                                        <div className="text-left"><div className="text-[11px] font-bold text-white mb-0.5">{t('settings.local_ocr')}</div><div className="text-[9px] text-white/40 leading-tight">{t('settings.local_ocr.hint')}</div></div>
-                                    </button>
-                                </div>
-                                <div className="space-y-4 pb-4">
-                                    <div className="flex items-center gap-2 text-white/40"><Zap size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">{t('settings.power_button')}</span></div>
-                                    <div className="space-y-3">
-                                        <input dir="auto" type="text" maxLength={20} value={settings.powerButtonLabel} onChange={e => settings.setPowerButtonLabel(e.target.value)} placeholder={t('settings.power_button.label')} className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-[11px] placeholder:text-white/25 focus:outline-none focus:border-emerald-500/30 transition-colors" />
-                                        <textarea dir="auto" rows={2} value={settings.powerButtonPrompt} onChange={e => settings.setPowerButtonPrompt(e.target.value)} placeholder={t('settings.power_button.prompt')} className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-[11px] placeholder:text-white/25 focus:outline-none focus:border-emerald-500/30 transition-colors resize-none" />
-                                        <div className="text-[9px] text-white/25">{t('settings.power_button.hint')}</div>
-                                    </div>
-                                </div>
-
-                                {/* Agent Engine Settings */}
-                                <div className="space-y-4 pb-4">
-                                    <div className="flex items-center gap-2 text-white/40"><Zap size={14} /><span className="text-[10px] uppercase font-bold tracking-tighter">{t('settings.agent_engine')}</span></div>
-                                    <AgentSettings />
-                                </div>
-                            </div>
-                        </div>
-                        <div className="p-4 border-t border-white/5 flex justify-center">
-                            <button onClick={() => settings.setShowSettings(false)} className="bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold uppercase tracking-widest px-8 py-2.5 rounded-xl transition-all">{t('settings.back_to_chat')}</button>
-                        </div>
-                    </div>
-                )}
 
                 {/* Title Bar */}
                 <div
@@ -2434,6 +2398,7 @@ function AppMain() {
                                 }
                             }}
                             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
+                            onPaste={attachments.handlePaste}
                             placeholder={agentMode ? t('chat.tell_klypix') : t('chat.input_placeholder')}
                             style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
                             className={cn('w-full bg-white/5 border rounded-xl py-2 px-4 text-[15px] focus:outline-none focus:ring-2 transition-all placeholder:text-white/40 outline-none resize-none overflow-hidden leading-snug flex items-center min-h-[38px]', agentMode ? 'border-purple-500/30 focus:ring-purple-500/50' : 'border-white/10 focus:ring-emerald-500/50', screenshot.showScreenshot && 'pr-16')}
@@ -2572,59 +2537,19 @@ function AppMain() {
                                         alert('Microphone access denied. Please allow microphone access in system settings.');
                                     }
                                 }}
-                                className={cn('relative rounded-xl transition-all ml-1 cursor-pointer overflow-visible group', isVoiceRecording ? 'bg-red-500/20 ring-2 ring-red-500/40 hover:bg-red-500/30' : 'bg-white/5 text-white/40 hover:bg-white/10')}
+                                className={cn(
+                                    'relative rounded-xl transition-all ml-1 cursor-pointer overflow-visible group flex items-center justify-center',
+                                    isVoiceRecording
+                                        // While recording, the floating panel is the
+                                        // affordance — dim the button so it reads as
+                                        // "active source" without competing visually.
+                                        ? 'bg-red-500/15 text-red-300/80 ring-1 ring-red-500/25'
+                                        : 'bg-white/5 text-white/40 hover:bg-white/10',
+                                )}
                                 style={{ width: 36, height: 36 }}
                                 title={isVoiceRecording ? t('chat.stop_recording') : t('chat.voice_input')}
                             >
-                                {/* Whisper-style voice visualization: a noise-floor
-                                    REST_THRESHOLD splits "silent" from "speaking".
-                                    Below it, bars flatten to a thin dim baseline so
-                                    the button is visibly idle (not animating). Above
-                                    it, voiceLevel is remapped to (0..1) starting at
-                                    the threshold so bars begin growing from zero
-                                    the moment the user actually speaks — no
-                                    "always-on" baseline noise.
-                                    9 bars with a bell-curve scale array form an
-                                    organic waveform shape (taller in the middle,
-                                    tapering to the ends), and items-center anchors
-                                    every bar to the horizontal midline so they
-                                    grow symmetrically UP and DOWN as you speak —
-                                    not bottom-anchored. */}
-                                {isVoiceRecording ? (() => {
-                                    const REST_THRESHOLD = 0.06;
-                                    const isResting = voiceLevel < REST_THRESHOLD;
-                                    const speakLevel = isResting ? 0 : (voiceLevel - REST_THRESHOLD) / (1 - REST_THRESHOLD);
-                                    const BAR_SCALES = [0.3, 0.55, 0.75, 0.9, 1.0, 0.9, 0.75, 0.55, 0.3];
-                                    return (
-                                        <>
-                                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none rounded-xl overflow-hidden">
-                                                <div className="flex items-center gap-[1.5px] h-full py-1.5">
-                                                    {BAR_SCALES.map((scale, i) => (
-                                                        <div
-                                                            key={i}
-                                                            className="w-[2px] rounded-full bg-red-300 transition-all duration-75"
-                                                            style={{
-                                                                height: isResting ? '10%' : `${Math.max(10, speakLevel * scale * 100)}%`,
-                                                                opacity: isResting ? 0.4 : 0.7 + speakLevel * 0.3,
-                                                            }}
-                                                        />
-                                                    ))}
-                                                </div>
-                                            </div>
-                                            {/* Stop badge — small filled square in the top-right
-                                                corner makes the "click to stop" affordance
-                                                explicit. Sits above the waveform layer; on
-                                                hover, brightens to confirm interactivity. */}
-                                            <div className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-500 ring-2 ring-zinc-900 flex items-center justify-center shadow-sm group-hover:bg-red-400 transition-colors pointer-events-none">
-                                                <StopIcon size={6} className="text-white fill-white" />
-                                            </div>
-                                        </>
-                                    );
-                                })() : (
-                                    <div className="absolute inset-0 flex items-center justify-center">
-                                        <Mic size={18} />
-                                    </div>
-                                )}
+                                <Mic size={18} />
                             </button>
                         )}
                         {/* Phase 23: dedicated clipboard-history button.
@@ -2658,6 +2583,31 @@ function AppMain() {
                             </button>
                         )}
                     </div>
+                    {/* Floating voice recorder panel — Wispr Flow-style.
+                        Portal-mounted to document.body and anchored under the
+                        textarea so the 220px panel sits centered below the
+                        input area. Fixed positioning bypasses every
+                        overflow-hidden ancestor (the input header, the chat
+                        scroll column) that was previously clipping the top of
+                        the waveform. */}
+                    {isVoiceRecording && (
+                        <VoiceRecorderPanel
+                            level={voiceLevel}
+                            status="recording"
+                            anchorRef={inputRef as React.RefObject<HTMLElement | null>}
+                            position="below"
+                            // Belt-and-suspenders stop: guard against weird
+                            // recorder states, use try/catch, and check .state
+                            // before calling stop() (MediaRecorder throws if
+                            // already inactive).
+                            onStop={() => {
+                                try {
+                                    const r = voiceRecognitionRef.current as MediaRecorder | null;
+                                    if (r && r.state !== 'inactive') r.stop();
+                                } catch (e) { console.warn('[chat voice] stop', e); }
+                            }}
+                        />
+                    )}
                 </div>
 
                 {/* Attached Files Pills */}
@@ -2697,7 +2647,7 @@ function AppMain() {
                 )}
 
                 {/* Quick Actions */}
-                {!settings.showSettings && !pinnedChats.showHistory && !screenshot.previewImage && (
+                {!showAdvancedSettings && !pinnedChats.showHistory && !screenshot.previewImage && (
                     <div ref={quickActionsRef} className="px-4 py-2 flex items-start justify-between gap-2 border-b border-white/[0.04] no-drag bg-white/[0.02] backdrop-blur-sm relative z-[50] overflow-visible">
                         <div className="flex items-center gap-2 flex-wrap relative">
                             {deepMode.isDeepFileMode && (
@@ -2813,7 +2763,7 @@ function AppMain() {
                                 {chat.messages.length > 0 && (
                                     <button onClick={() => { chat.setIsSearchOpen(!chat.isSearchOpen); if (!chat.isSearchOpen) setTimeout(() => chat.searchInputRef.current?.focus(), 100); else chat.setSearchQuery(''); }} className={cn('flex items-center justify-center w-7 h-7 rounded-lg cursor-pointer transition-all duration-200 active:scale-[0.93]', chat.isSearchOpen ? 'bg-emerald-500/[0.12] text-emerald-300' : 'text-white/55 hover:text-white/80 hover:bg-white/[0.06]')} title={t('chat.search_conversation')}><Search size={10} /></button>
                                 )}
-                                {chat.messages.length > 0 && (() => {
+                                {(chat.messages.length > 0 || claudeAgent.state !== 'idle') && (() => {
                                     const agentBusy = claudeAgent.state === 'running'
                                         || claudeAgent.state === 'waiting_permission'
                                         || claudeAgent.state === 'waiting_user_answer'
@@ -3298,8 +3248,8 @@ function AppMain() {
                     </div>
                 )}
 
-                {/* Launch Pad Chips — shown in default state only (no mode active, no suggestions) */}
-                {!screenshot.showScreenshot && !deepMode.isDeepFileMode && suggestions.suggestions.length === 0 && !suggestions.isFetchingSuggestions && chat.messages.length === 0 && (
+                {/* Launch Pad Chips — shown in default state only (no mode active, no suggestions, no agent output) */}
+                {!screenshot.showScreenshot && !deepMode.isDeepFileMode && suggestions.suggestions.length === 0 && !suggestions.isFetchingSuggestions && chat.messages.length === 0 && claudeAgent.state === 'idle' && (
                     <div className="px-4 py-3 flex flex-wrap gap-2 no-drag animate-in fade-in duration-300">
                         {(() => {
                             const chips: Array<{ label: string; action: () => void; icon?: string }> = [];
@@ -3722,7 +3672,7 @@ function AppMain() {
                         >
                             <Brain size={14} />
                         </button>
-                        <button onClick={() => settings.setShowSettings(!settings.showSettings)} className={cn('p-1.5 rounded-lg transition-all', settings.showSettings ? 'bg-white/20 text-white' : 'text-white/40 hover:bg-white/10')} title="Settings"><Settings size={14} /></button>
+                        <button onClick={() => setShowAdvancedSettings(s => !s)} className={cn('p-1.5 rounded-lg transition-all', showAdvancedSettings ? 'bg-white/20 text-white' : 'text-white/40 hover:bg-white/10')} title="Settings (Ctrl+,)"><Settings size={14} /></button>
                     </div>
                     <div className="absolute bottom-0 left-0 w-full h-[2px] bg-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.3)]" />
                 </div>

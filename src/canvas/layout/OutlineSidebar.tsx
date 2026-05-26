@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, FileText, Image as ImageIcon, File as FileIcon, LayoutGrid, Square, X, Search, Video as VideoIcon, Music as MusicIcon, Code2 as CodeIcon, PenTool, Minus as LineIcon } from 'lucide-react';
 import { useCanvasStore } from '../state/canvasStore';
 import { fitToViewport } from '../CanvasEngine';
@@ -111,10 +111,27 @@ export function OutlineSidebar({ open, onClose }: Props) {
         dispatch({ type: 'SET_VIEW', view });
     };
 
+    const panelRef = useRef<HTMLDivElement>(null);
+
+    // Close on click outside the panel. The toolbar toggle button carries
+    // data-toggle="outline" so clicking it doesn't fire close-then-reopen.
+    useEffect(() => {
+        if (!open) return;
+        const onDown = (e: MouseEvent) => {
+            const target = e.target as Node | null;
+            if (!target) return;
+            if (panelRef.current?.contains(target)) return;
+            if (target instanceof Element && target.closest('[data-toggle="outline"]')) return;
+            onClose();
+        };
+        window.addEventListener('mousedown', onDown);
+        return () => window.removeEventListener('mousedown', onDown);
+    }, [open, onClose]);
+
     if (!open) return null;
 
     return (
-        <div data-canvas-ui="1" className="absolute top-3 left-3 bottom-16 z-30 no-drag w-[260px] rounded-xl bg-[#12121a]/95 border border-white/10 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden animate-in slide-in-from-left-2 fade-in duration-150">
+        <div ref={panelRef} data-canvas-ui="1" className="absolute top-3 left-3 bottom-16 z-30 no-drag w-[260px] rounded-xl bg-[#12121a]/95 border border-white/10 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden animate-in slide-in-from-left-2 fade-in duration-150">
             <div className="px-3 py-2 border-b border-white/5 flex items-center gap-2">
                 <span className="text-[10px] font-bold uppercase tracking-widest text-white/60 flex-1">{t('canvas_top.outline')}</span>
                 <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-white/40"><X size={12} /></button>

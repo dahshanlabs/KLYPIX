@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Filter, Tag as TagIcon, CircleDot, ChevronRight, Type, Square, Image as ImageIcon, File as FileIcon, Folder, CheckSquare, Link as LinkIcon, Video, Music, Code, Eye, EyeOff } from 'lucide-react';
 import { useCanvasStore } from '../state/canvasStore';
 import type { ItemStatus, CanvasItem } from '../items/types';
@@ -129,10 +129,24 @@ export function SmartCollectionsPanel({ open, onClose }: Props) {
         dispatch({ type: 'SET_VIEW', view });
     };
 
+    const panelRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (!open) return;
+        const onDown = (e: MouseEvent) => {
+            const target = e.target as Node | null;
+            if (!target) return;
+            if (panelRef.current?.contains(target)) return;
+            if (target instanceof Element && target.closest('[data-toggle="collections"]')) return;
+            onClose();
+        };
+        window.addEventListener('mousedown', onDown);
+        return () => window.removeEventListener('mousedown', onDown);
+    }, [open, onClose]);
+
     if (!open) return null;
 
     return (
-        <div data-canvas-ui="1" className="absolute top-3 right-3 bottom-16 z-30 no-drag w-[260px] rounded-xl bg-[#12121a]/95 border border-white/10 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden animate-in slide-in-from-right-2 fade-in duration-150">
+        <div ref={panelRef} data-canvas-ui="1" className="absolute top-3 right-3 bottom-16 z-30 no-drag w-[260px] rounded-xl bg-[#12121a]/95 border border-white/10 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden animate-in slide-in-from-right-2 fade-in duration-150">
             <div className="px-3 py-2 border-b border-white/5 flex items-center gap-2">
                 <Filter size={12} className="text-emerald-400" />
                 <span className="text-[10px] font-bold uppercase tracking-widest text-white/60 flex-1">{t('canvas_top.smart_collections')}</span>

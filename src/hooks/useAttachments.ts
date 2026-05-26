@@ -62,6 +62,66 @@ export function useAttachments() {
         await processDroppedFiles(paths);
     };
 
+    // Pasted images / files (Ctrl+V on the chat input) should behave exactly
+    // like a drag-drop attach. Two sources to merge:
+    //   1. In-memory image bytes — exposed by the browser via
+    //      e.clipboardData.items as kind:'file' + image/* MIME. We write
+    //      these to os.tmpdir() via save-pasted-image so they become a real
+    //      path the existing validate pipeline can consume.
+    //   2. Real files copied from File Explorer (Windows CF_HDROP) — the
+    //      browser does NOT expose these on the paste event, so we fall
+    //      back to read-clipboard IPC (PowerShell Get-Clipboard) when no
+    //      image blob is present. Skipping that fallback when images are
+    //      present avoids a needless PS roundtrip in the hot path.
+    const handlePaste = async (e: React.ClipboardEvent) => {
+        const items = e.clipboardData?.items;
+        const imageItems: DataTransferItem[] = [];
+        if (items) {
+            for (let i = 0; i < items.length; i++) {
+                const it = items[i];
+                if (it.kind === 'file' && it.type.startsWith('image/')) {
+                    imageItems.push(it);
+                }
+            }
+        }
+        const remaining = MAX_ATTACHED - attachedFiles.length;
+        if (remaining <= 0 && imageItems.length > 0) {
+            e.preventDefault();
+            return;
+        }
+        // Branch 1: in-memory image bytes from the paste event.
+        if (imageItems.length > 0) {
+            e.preventDefault();
+            const paths: string[] = [];
+            for (const it of imageItems.slice(0, remaining)) {
+                const file = it.getAsFile();
+                if (!file) continue;
+                try {
+                    const buf = await file.arrayBuffer();
+                    const res = await (window as any).electron.savePastedImage(buf, file.type);
+                    if (res?.ok && res.path) paths.push(res.path);
+                    else if (res?.error) console.warn('[Paste] Save failed:', res.error);
+                } catch (err) {
+                    console.warn('[Paste] Read failed:', err);
+                }
+            }
+            if (paths.length > 0) await processDroppedFiles(paths);
+            return;
+        }
+        // Branch 2: File Explorer file paste — only if no image bytes were
+        // present. Falls back to OS clipboard inspection via main.
+        if (remaining <= 0) return;
+        try {
+            const clip = await (window as any).electron?.readClipboard?.();
+            const filePaths: string[] = Array.isArray(clip?.filePaths) ? clip.filePaths : [];
+            if (filePaths.length === 0) return;
+            // We have real paths — swallow the paste so the textarea
+            // doesn't get the file URL/text representation too.
+            e.preventDefault();
+            await processDroppedFiles(filePaths.slice(0, remaining));
+        } catch { /* clipboard read failed → leave default paste behavior */ }
+    };
+
     const handleAttachClick = async () => {
         const paths = await (window as any).electron.openFileDialog();
         if (paths && paths.length > 0) {
@@ -85,6 +145,7 @@ export function useAttachments() {
         handleDragLeave,
         handleDragOver,
         handleDrop,
+        handlePaste,
         handleAttachClick,
         removeAttachedFile,
         clearAttachments,

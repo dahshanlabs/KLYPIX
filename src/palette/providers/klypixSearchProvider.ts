@@ -14,7 +14,7 @@
 // frecency persists.
 
 import type { PaletteProvider, PaletteResult, PaletteProviderContext } from './types';
-import { Square, MessageSquare, FileText, Wrench, Pin } from 'lucide-react';
+import { Square, MessageSquare, FileText, Wrench, Pin, Settings as SettingsIcon } from 'lucide-react';
 import React from 'react';
 import { fuzzyFilter } from '../search';
 
@@ -244,6 +244,35 @@ function agentToolResult(tool: { name: string; desc: string }): PaletteResult {
     };
 }
 
+// ── Built-in app commands ─────────────────────────────────────────────
+// One-off commands shipped with the palette (Open Settings, etc.). These
+// are matched by fuzzy search like any other row.
+
+const APP_COMMANDS: Array<{ id: string; title: string; subtitle: string; chord?: string; handler: () => void }> = [
+    {
+        id: 'open-settings',
+        title: 'Open Settings',
+        subtitle: 'Hotkeys, clipboard, AI provider, privacy',
+        chord: 'Ctrl+,',
+        handler: () => window.dispatchEvent(new CustomEvent('klypix:open-settings')),
+    },
+];
+
+function appCommandResult(cmd: typeof APP_COMMANDS[number]): PaletteResult {
+    return {
+        id: `klypix:command:${cmd.id}`,
+        title: cmd.title,
+        subtitle: cmd.subtitle,
+        accent: '#10b981',
+        icon: React.createElement(SettingsIcon, { size: 14 }),
+        primaryAction: {
+            label: 'Open',
+            chord: cmd.chord,
+            handler: cmd.handler,
+        },
+    };
+}
+
 // ── Provider ────────────────────────────────────────────────────────
 
 export const klypixSearchProvider: PaletteProvider = {
@@ -289,6 +318,9 @@ export const klypixSearchProvider: PaletteProvider = {
 
         // Agent tools
         for (const t of AGENT_TOOLS) candidates.push(agentToolResult(t));
+
+        // Built-in app commands ("Open Settings" etc.)
+        for (const cmd of APP_COMMANDS) candidates.push(appCommandResult(cmd));
 
         // Fuse-rank the merged candidate list against the user's query.
         // Cap to 10 results so the palette stays scannable.

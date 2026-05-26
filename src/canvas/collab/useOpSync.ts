@@ -70,6 +70,11 @@ export interface UseOpSyncArgs {
      *  remote ops (so the local state stays current) but we stop sending
      *  to avoid background tabs spamming the channel. */
     active: boolean;
+    /** True when the user is signed in. When false, we still broadcast over
+     *  Realtime and queue offline ops, but skip the canvas_ops REST
+     *  reads/writes (pullOps/pushOps) — those would only return
+     *  CLOUD_AUTH_REQUIRED noise in the console. */
+    authed: boolean;
     /** Optional: fired when a remote UPDATE or DELETE arrives within
      *  ~1.5s of a local edit on the same item — used by the UI to
      *  toast the user that their concurrent edit was overwritten or
@@ -186,7 +191,7 @@ const COALESCE_KEYS: Partial<Record<CanvasAction['type'], (a: CanvasAction) => s
  * queue drains at 20Hz so a long offline burst doesn't immediately
  * blow the channel's rate limit.
  */
-export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
+export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs): void {
     const { dispatch, subscribeActions } = useCanvasStore();
     const channelRef = useRef<RealtimeChannel | null>(null);
     // Lamport clock — persisted per-blob so it survives reload. On mount
@@ -200,6 +205,11 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
     const recentLocalEditsRef = useRef<Map<string, { at: number; type: 'update' | 'delete' }>>(new Map());
     const onConflictRef = useRef(onConflict);
     onConflictRef.current = onConflict;
+    // Mirror authed into a ref so the cloudApi guards inside the effect see
+    // the live signed-in state without remounting the channel on every
+    // sign-in / sign-out (which would tear down Realtime mid-session).
+    const authedRef = useRef(authed);
+    authedRef.current = authed;
 
     useEffect(() => {
         if (!blobId) return;
@@ -348,6 +358,7 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
         // Standalone push (used by drainQueue). Mirrors persistOpsToServer
         // defined below, but available before the flush helper closes over it.
         const persistOpsToServerStandalone = async (batch: QueuedOp[]): Promise<void> => {
+            if (!authedRef.current) return; // skip REST writes when signed out
             const cloudApi: any = (window as any).electron?.cloud;
             if (!cloudApi?.pushOps || batch.length === 0) return;
             try {
@@ -452,6 +463,7 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
         // Closes the "joined mid-session, missed the last 60 minutes of
         // edits" gap that pure-broadcast collab can't solve.
         const backfillFromServer = async (): Promise<void> => {
+            if (!authedRef.current) return; // skip REST reads when signed out
             const cloudApi: any = (window as any).electron?.cloud;
             if (!cloudApi?.pullOps) return;
             try {
@@ -592,6 +604,7 @@ export function useOpSync({ blobId, active, onConflict }: UseOpSyncArgs): void {
         };
 
         const persistOpsToServer = async (batch: QueuedOp[]): Promise<void> => {
+            if (!authedRef.current) return; // skip REST writes when signed out
             const cloudApi: any = (window as any).electron?.cloud;
             if (!cloudApi?.pushOps) return;
             if (batch.length === 0) return;
