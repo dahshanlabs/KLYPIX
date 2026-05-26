@@ -107,7 +107,11 @@ export function WhatISeeSkeleton({ onDismiss, onRefresh, onStop, initialStopped 
                 </div>
 
                 {/* Buttons */}
-                <div className="flex items-center gap-1 no-drag" style={{ position: 'relative', zIndex: 50 }}>
+                {/* No inline z-index: an explicit zIndex:50 here escaped the
+                    card's stacking context and bled through the legacy
+                    settings overlay (also z-50), making these controls appear
+                    as stray X/refresh icons on top of unrelated panels. */}
+                <div className="flex items-center gap-1 no-drag">
                     {stopped ? (
                         /* Stopped state: refresh + dismiss */
                         <>
