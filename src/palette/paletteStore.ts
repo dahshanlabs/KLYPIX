@@ -49,6 +49,12 @@ interface PaletteState {
      *  resolves successfully. Auto-clears after ~1.6s. id forces React
      *  reconciliation so back-to-back identical texts still re-animate. */
     toast: { text: string; id: number } | null;
+    /** Sticky detail-pane visibility. Defaults false. Auto-flips true on
+     *  the first row-with-detail the user highlights; stays true for the
+     *  rest of this palette open even when arrowing to detail-less rows
+     *  ("No preview" placeholder renders instead). Toggle off via the
+     *  eye button in the header. Reset on palette close. */
+    detailPaneSticky: boolean;
     /** Smart-paste target — captured at palette open() so the primary
      *  Paste action can SendKeys ^v straight into the app the user just
      *  came from. Null when no recent non-Klypix foreground is known
@@ -77,6 +83,7 @@ let state: PaletteState = {
     secondaryCursor: 0,
     clipFilter: null,
     toast: null,
+    detailPaneSticky: false,
     target: null,
 };
 
@@ -115,6 +122,17 @@ function emit() {
  *  check fires. */
 function set(patch: Partial<PaletteState>) {
     state = { ...state, ...patch };
+    // Auto-flip detailPaneSticky to true when the user lands on a row
+    // that has a detail factory. Once flipped on, the pane stays open
+    // for the rest of this palette session — eliminates the "modal
+    // width jumps every time I arrow between previewable / not" UX
+    // wart. Eye button or palette close reset it back to false.
+    if (!state.detailPaneSticky) {
+        const cur = state.ranked[state.selectedIndex];
+        if (cur?.detail) {
+            state = { ...state, detailPaneSticky: true };
+        }
+    }
     emit();
 }
 
@@ -221,7 +239,7 @@ export function close() {
     if (!state.open) return;
     queryAbort?.abort();
     queryAbort = null;
-    set({ open: false, secondaryCursor: 0, target: null });
+    set({ open: false, secondaryCursor: 0, target: null, detailPaneSticky: false });
 }
 
 export function toggle() {
@@ -283,6 +301,11 @@ export function jumpSelection(to: 'top' | 'bottom' | number) {
         }
     }
     set({ selectedIndex: next, secondaryCursor: 0 });
+}
+
+/** Toggle the sticky detail-pane visibility (the eye button in the header). */
+export function toggleDetailPane() {
+    set({ detailPaneSticky: !state.detailPaneSticky });
 }
 
 /** Show a brief confirmation banner inside the palette. Auto-clears after

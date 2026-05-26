@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, ArrowDown, ArrowUp, CornerDownLeft } from 'lucide-react';
+import { Search, ArrowDown, ArrowUp, CornerDownLeft, Eye, EyeOff } from 'lucide-react';
 import { t, useLocale } from '../i18n/strings';
 import {
     subscribe,
@@ -12,6 +12,7 @@ import {
     cycleSecondary,
     setClipFilter,
     showToast,
+    toggleDetailPane,
 } from './paletteStore';
 import { intentFromKey } from './keyboardModel';
 import { recordHit } from './frecency';
@@ -56,6 +57,7 @@ function InlineActions({
                     style={{
                         width: 28,
                         height: 28,
+                        position: 'relative',          // for the click-sink overlay below
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -65,12 +67,6 @@ function InlineActions({
                         color: a.inlineIconAccent ?? 'rgba(255,255,255,0.7)',
                         cursor: 'pointer',
                         padding: 0,
-                        // Make the inner SVG transparent to pointer events so
-                        // every click on the visible icon-square lands on the
-                        // BUTTON itself. Without this, lucide's SVG paths
-                        // intercept clicks in the icon's center and the
-                        // button.onClick never fires for hits there — which
-                        // showed up as 'clicks only register at the bottom edge'.
                         pointerEvents: 'auto',
                     }}
                     onMouseEnter={(e) => {
@@ -86,12 +82,28 @@ function InlineActions({
                         e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
                     }}
                 >
-                    {/* pointerEvents:none so the inner SVG path/stroke
-                        never wins the hit-test over the button — every
-                        click on the icon-square fires button.onClick. */}
+                    {/* Visible icon — pointer-events:none on the span,
+                        BUT lucide SVG paths can still override and steal
+                        clicks. The transparent overlay below is the
+                        guaranteed click sink. */}
                     <span style={{ pointerEvents: 'none', display: 'flex' }}>
                         {a.inlineIcon}
                     </span>
+                    {/* Click-sink: absolutely positioned over the entire
+                        button surface, ON TOP of the icon visually but
+                        having no content. Clicks land here, bubble to
+                        button.onClick. Defeats the SVG-hit-test issue
+                        unconditionally (including for PinOff and any
+                        future icons with their own pointer-events). */}
+                    <span
+                        style={{
+                            position: 'absolute',
+                            inset: 0,
+                            // Background must be transparent — we just want
+                            // the rectangle to exist for hit-testing.
+                            background: 'transparent',
+                        }}
+                    />
                 </button>
             ))}
         </div>
@@ -237,7 +249,12 @@ export function CommandPalette() {
                 role="dialog"
                 aria-label={t('palette.title')}
                 style={{
-                    width: snap.ranked[snap.selectedIndex]?.detail ? 880 : 640,
+                    // Detail pane visibility is STICKY (paletteStore auto-
+                    // flips detailPaneSticky=true on first row with detail
+                    // + stays on for the session; eye button toggles).
+                    // Modal width follows the sticky flag, NOT the current
+                    // row — fixes "width jumps when arrowing".
+                    width: snap.detailPaneSticky ? 880 : 640,
                     maxWidth: '92vw',
                     // Phase 23 polish: FIXED height instead of max-height so
                     // the modal doesn't visually jump as the result count
@@ -286,6 +303,34 @@ export function CommandPalette() {
                         spellCheck={false}
                         autoComplete="off"
                     />
+                    {/* Eye toggle: show/hide the detail preview pane.
+                        Pinned visibility means arrowing between rows
+                        with and without detail doesn't make the modal
+                        jump width. Click to dismiss the pane when not
+                        wanted. */}
+                    <button
+                        type="button"
+                        onClick={toggleDetailPane}
+                        title={snap.detailPaneSticky ? t('palette.hide_preview') : t('palette.show_preview')}
+                        aria-label={snap.detailPaneSticky ? t('palette.hide_preview') : t('palette.show_preview')}
+                        style={{
+                            background: snap.detailPaneSticky ? 'rgba(16,185,129,0.12)' : 'rgba(255,255,255,0.04)',
+                            border: '1px solid ' + (snap.detailPaneSticky ? 'rgba(16,185,129,0.3)' : 'rgba(255,255,255,0.08)'),
+                            color: snap.detailPaneSticky ? '#10b981' : 'rgba(255,255,255,0.55)',
+                            borderRadius: 6,
+                            width: 28,
+                            height: 28,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: 'pointer',
+                            padding: 0,
+                        }}
+                    >
+                        <span style={{ pointerEvents: 'none', display: 'flex' }}>
+                            {snap.detailPaneSticky ? <Eye size={14} /> : <EyeOff size={14} />}
+                        </span>
+                    </button>
                     {snap.exclusiveProvider && (
                         <span
                             style={{
@@ -385,11 +430,11 @@ export function CommandPalette() {
                     <div
                         ref={listRef}
                         style={{
-                            flex: snap.ranked[snap.selectedIndex]?.detail ? '0 0 480px' : 1,
+                            flex: snap.detailPaneSticky ? '0 0 480px' : 1,
                             overflowY: 'auto',
                             padding: 4,
                             minHeight: 0,
-                            borderRight: snap.ranked[snap.selectedIndex]?.detail ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                            borderRight: snap.detailPaneSticky ? '1px solid rgba(255,255,255,0.05)' : 'none',
                         }}
                     >
                         {snap.ranked.length === 0 ? (
@@ -408,7 +453,7 @@ export function CommandPalette() {
                             ))
                         )}
                     </div>
-                    {snap.ranked[snap.selectedIndex]?.detail && (
+                    {snap.detailPaneSticky && (
                         <DetailPane result={snap.ranked[snap.selectedIndex]} />
                     )}
                 </div>
@@ -452,13 +497,13 @@ function PaletteToast({ text }: { text: string }) {
     );
 }
 
-function DetailPane({ result }: { result: RankedResult }) {
-    // Provider supplied detail() — call it to render the preview content.
+function DetailPane({ result }: { result: RankedResult | undefined }) {
+    // Provider-supplied detail() — call it to render the preview content.
     // Wrapped in error boundary semantics via try/catch so a bad provider
     // doesn't break the whole palette.
     let content: React.ReactNode = null;
     try {
-        content = result.detail?.();
+        content = result?.detail?.();
     } catch {
         content = null;
     }
@@ -474,7 +519,9 @@ function DetailPane({ result }: { result: RankedResult }) {
         >
             {content ?? (
                 <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11, textAlign: 'center', marginTop: 40 }}>
-                    No preview
+                    {result
+                        ? 'No preview for this item'
+                        : 'Select an item to preview'}
                 </div>
             )}
         </div>
