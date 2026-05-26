@@ -21,6 +21,7 @@ import { getApiKeySync } from '../api/gemini';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import clsx, { type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { KlypixEyes } from './KlypixEyes';
 
 const cn = (...inputs: ClassValue[]) => twMerge(clsx(inputs));
 
@@ -32,6 +33,12 @@ interface ActionDef {
     sublabel: string;
     icon: typeof Globe;
     accent: string;
+    /** Tailwind class applied to the icon tile on group-hover. Each action
+     *  mirrors its meaning: Translate rotates (globe spinning to a new
+     *  language), Improve tilts (pencil editing), Fix grammar spins
+     *  (correcting), Continue slides right (moving forward), etc.
+     *  Subtle — duration is 300-400ms, easing soft. */
+    hoverAnim: string;
     promptFor(text: string, custom?: string): string;
 }
 
@@ -42,6 +49,7 @@ const ACTIONS: ActionDef[] = [
         sublabel: 'Auto-detect language',
         icon: Globe,
         accent: '#38bdf8',
+        hoverAnim: 'group-hover:rotate-[20deg]',
         promptFor: (text) => `Translate the following text. If it's in English, translate to Arabic. If it's in any other language, translate to English. Output ONLY the translation, no commentary, no quotes around it, no "Translation:" prefix. Preserve formatting (line breaks, bullets).\n\n---\n${text}`,
     },
     {
@@ -50,6 +58,7 @@ const ACTIONS: ActionDef[] = [
         sublabel: 'Clearer, more direct',
         icon: Pencil,
         accent: '#a78bfa',
+        hoverAnim: 'group-hover:-rotate-12 group-hover:-translate-y-0.5',
         promptFor: (text) => `Rewrite the following text to be clearer, more direct, and better-flowing. Keep the original meaning, tone, and approximate length. Output ONLY the rewritten text, no commentary, no quotes.\n\n---\n${text}`,
     },
     {
@@ -58,6 +67,7 @@ const ACTIONS: ActionDef[] = [
         sublabel: 'Key points only',
         icon: FileText,
         accent: '#fb7185',
+        hoverAnim: 'group-hover:scale-y-[0.85] group-hover:translate-y-0.5',
         promptFor: (text) => `Summarize the following text into the most important points. Use short bullet points (3-6 bullets). If the source is one paragraph, give a single tight sentence instead. Output ONLY the summary, no preamble.\n\n---\n${text}`,
     },
     {
@@ -66,6 +76,7 @@ const ACTIONS: ActionDef[] = [
         sublabel: 'Spelling & syntax',
         icon: Sparkles,
         accent: '#34d399',
+        hoverAnim: 'group-hover:rotate-[180deg] group-hover:scale-110',
         promptFor: (text) => `Fix any spelling, grammar, and punctuation errors in the following text. Do NOT change the meaning, tone, or word choices beyond what's required for correctness. Output ONLY the corrected text, no commentary.\n\n---\n${text}`,
     },
     {
@@ -74,6 +85,8 @@ const ACTIONS: ActionDef[] = [
         sublabel: 'What this means',
         icon: Lightbulb,
         accent: '#fbbf24',
+        // Lightbulb "turns on" — scales up, gets a glow halo via hover ring on parent tile.
+        hoverAnim: 'group-hover:scale-125 group-hover:drop-shadow-[0_0_8px_rgba(251,191,36,0.6)]',
         promptFor: (text) => `Explain the following clearly and concisely (3-5 sentences). If it's code, explain what it does and why. If it's a concept, give a plain-English explanation a smart non-expert could follow. Output the explanation only, no commentary.\n\n---\n${text}`,
     },
     {
@@ -82,6 +95,7 @@ const ACTIONS: ActionDef[] = [
         sublabel: 'Keep writing',
         icon: ArrowRight,
         accent: '#f472b6',
+        hoverAnim: 'group-hover:translate-x-1',
         promptFor: (text) => `Continue the following text in the same voice, tone, and style. Pick up exactly where it ends — your output will be appended directly so do NOT repeat the original. Output the continuation only.\n\n---\n${text}`,
     },
 ];
@@ -92,6 +106,7 @@ const CUSTOM_ACTION: ActionDef = {
     sublabel: 'Your instruction',
     icon: Wand2,
     accent: '#10b981',
+    hoverAnim: 'group-hover:rotate-[20deg]',
     promptFor: (text, custom) => `${(custom || '').trim()}\n\nText:\n---\n${text}`,
 };
 
@@ -246,24 +261,37 @@ export function QuickActionBar({ selection, targetHwnd, sourceApp, onClose }: Pr
             {/* Outer glass shell — same theme as palette. `relative` so the
                 apply-toast can anchor to the bottom of this card. */}
             <div className="relative w-full h-full flex flex-col bg-zinc-900/95 backdrop-blur-2xl border border-white/10 rounded-2xl overflow-hidden shadow-[0_20px_60px_rgba(0,0,0,0.6)] drag">
-                {/* Header / selection preview — taller, more readable preview
-                    (sans-serif, 3 lines, better contrast). Sparkle icon gets
-                    a subtle pulsing ring while streaming for ambient feedback. */}
+                {/* Header / selection preview.
+                    Typography hierarchy (top → bottom by importance):
+                      1. Selection text (15px, semibold, white/95) — THE anchor
+                      2. Meta line (10px, tracked, white/40) — context only
+                    Old version inverted this — the bold uppercase meta header
+                    pulled focus from the actual selected text. KlypixEyes
+                    mascot replaces the generic sparkle for brand presence.
+                    Eyes are slightly larger (24) so they read as a presence
+                    in the panel, not just an icon. */}
                 <div className="px-4 pt-3.5 pb-3 flex items-start gap-3 border-b border-white/5 no-drag" dir="ltr">
+                    {/* KlypixEyes naked — no colored frame, the mascot is the
+                        brand. While streaming, a soft emerald glow radiates
+                        from behind the eyes (radial blur, no hard ring).
+                        Container has a tiny hover lift for affordance — the
+                        eyes follow the cursor anyway via the look-around
+                        animation. */}
                     <div className={cn(
-                        'relative flex items-center justify-center w-8 h-8 rounded-xl bg-emerald-500/15 text-emerald-400 shrink-0',
-                        isStreaming && 'after:absolute after:inset-0 after:rounded-xl after:ring-2 after:ring-emerald-400/40 after:animate-ping',
+                        'relative shrink-0 self-start mt-1 transition-transform duration-200 hover:scale-110',
+                        isStreaming && 'after:absolute after:inset-[-6px] after:rounded-full after:bg-emerald-400/25 after:blur-md after:animate-pulse after:-z-10',
                     )}>
-                        <Sparkles size={15} />
+                        <KlypixEyes size={18} />
                     </div>
                     <div className="flex-1 min-w-0">
-                        <div className="text-[10px] uppercase tracking-[0.18em] text-white/45 font-semibold flex items-center gap-1.5">
-                            <span className="truncate">{sourceApp ? `Selected from ${sourceApp}` : 'Selected text'}</span>
-                            {selection && <span className="text-white/25">·</span>}
-                            {selection && <span className="text-white/35 tabular-nums shrink-0">{selection.length} chars</span>}
+                        <div className="text-[14.5px] leading-[1.4] font-semibold text-white/95 line-clamp-2 tracking-tight" dir="auto">
+                            {selection || <span className="text-white/45 font-normal italic text-[13px]">No text selected — type a custom instruction below</span>}
                         </div>
-                        <div className="text-[13px] leading-[1.45] text-white/85 mt-1 line-clamp-3" dir="auto">
-                            {selection || <span className="italic text-white/40 text-[12.5px]">No text selected — type a custom instruction below or pick an action to retry capture</span>}
+                        <div className="text-[10px] uppercase tracking-[0.2em] text-white/40 font-medium mt-1.5 flex items-center gap-1.5">
+                            {sourceApp && <span className="truncate">From {sourceApp}</span>}
+                            {selection && sourceApp && <span className="text-white/20">·</span>}
+                            {selection && <span className="text-white/45 tabular-nums shrink-0">{selection.length} chars</span>}
+                            {!sourceApp && !selection && <span className="italic normal-case tracking-normal text-[11px]">Quick AI</span>}
                         </div>
                     </div>
                     <button
@@ -295,31 +323,51 @@ export function QuickActionBar({ selection, targetHwnd, sourceApp, onClose }: Pr
                                         onMouseEnter={() => setHighlightedAction(a.id)}
                                         style={{ animationDelay: `${i * 30}ms` }}
                                         className={cn(
-                                            'group relative flex items-center gap-3 px-3 py-3 rounded-xl border text-left transition-all duration-150 animate-in fade-in slide-in-from-bottom-1',
-                                            'hover:bg-white/[0.07] hover:border-white/15 hover:scale-[1.01]',
+                                            'group relative flex items-center gap-3 px-3 py-3 rounded-xl border text-left transition-all duration-200 animate-in fade-in slide-in-from-bottom-1 overflow-hidden',
+                                            'hover:border-white/20 hover:scale-[1.015]',
                                             isHighlighted
                                                 ? 'bg-white/[0.07] border-emerald-500/40 ring-1 ring-emerald-500/20 shadow-[0_4px_20px_-8px_rgba(16,185,129,0.4)]'
                                                 : 'bg-white/[0.025] border-white/8',
                                             isSmart && !isHighlighted && 'border-emerald-500/25',
                                         )}
                                     >
-                                        {isSmart && (
-                                            <span className="absolute -top-1.5 -right-1.5 text-[8.5px] uppercase tracking-[0.12em] px-1.5 py-0.5 rounded-full bg-emerald-500 text-zinc-900 font-bold shadow-[0_2px_8px_rgba(16,185,129,0.5)] z-10">
-                                                Best
-                                            </span>
-                                        )}
+                                        {/* Gradient sweep on hover — subtle accent-tinted wash
+                                            from left to right that fades in. Pure CSS, no JS. */}
                                         <div
-                                            className="flex items-center justify-center w-9 h-9 rounded-lg shrink-0 transition-transform group-hover:scale-110"
+                                            className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+                                            style={{ background: `linear-gradient(135deg, ${a.accent}14 0%, transparent 60%)` }}
+                                        />
+                                        <div
+                                            className="relative flex items-center justify-center w-9 h-9 rounded-lg shrink-0 z-10"
                                             style={{ background: `${a.accent}22`, color: a.accent, boxShadow: isHighlighted ? `0 0 0 1px ${a.accent}40` : 'none' }}
                                         >
-                                            <Icon size={16} />
+                                            {/* Inner span carries the per-action hover motion.
+                                                Transition is on transform + filter so animations
+                                                stack (scale + rotate + drop-shadow). */}
+                                            <span className={cn('transition-all duration-300 ease-out inline-block', a.hoverAnim)}>
+                                                <Icon size={16} />
+                                            </span>
+                                            {/* Tiny "Best" indicator dot anchored to the icon
+                                                corner — INSIDE the card so overflow-hidden
+                                                doesn't clip it. The dot pulses softly so it
+                                                catches the eye without shouting. */}
+                                            {isSmart && (
+                                                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-zinc-900 animate-pulse" />
+                                            )}
                                         </div>
-                                        <div className="flex-1 min-w-0">
-                                            <div className="text-[13px] font-semibold text-white/95 leading-tight">{a.label}</div>
-                                            <div className="text-[10.5px] text-white/50 truncate mt-0.5">{a.sublabel}</div>
+                                        <div className="flex-1 min-w-0 relative z-10">
+                                            <div className="flex items-center gap-1.5">
+                                                <span className="text-[13.5px] font-semibold text-white tracking-tight leading-[1.2] truncate">{a.label}</span>
+                                                {isSmart && (
+                                                    <span className="text-[8.5px] uppercase tracking-[0.12em] px-1.5 py-px rounded bg-emerald-500/20 text-emerald-300 font-bold shrink-0 ring-1 ring-emerald-500/30">
+                                                        Best
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="text-[11px] text-white/55 truncate mt-1 leading-tight">{a.sublabel}</div>
                                         </div>
                                         <kbd className={cn(
-                                            'text-[10.5px] px-1.5 py-0.5 rounded font-mono shrink-0 transition-colors',
+                                            'relative z-10 text-[11px] w-5 h-5 flex items-center justify-center rounded font-mono shrink-0 transition-colors',
                                             isHighlighted ? 'bg-emerald-500/25 text-emerald-200' : 'bg-white/8 text-white/60',
                                         )}>{i + 1}</kbd>
                                     </button>
@@ -348,7 +396,7 @@ export function QuickActionBar({ selection, targetHwnd, sourceApp, onClose }: Pr
                                 onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); runCustom(); } }}
                                 placeholder="Or type a custom instruction…"
                                 dir="auto"
-                                className="flex-1 px-2 py-2.5 bg-transparent text-[13px] text-white placeholder:text-white/40 focus:outline-none"
+                                className="flex-1 px-2 py-2.5 bg-transparent text-[13.5px] text-white placeholder:text-white/50 focus:outline-none"
                             />
                             <button
                                 onClick={runCustom}
