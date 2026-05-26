@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { DEEPSEEK_MODELS } from '../core/agent/modelAdapter';
 import { EvalRunner } from '../evals/EvalRunner';
-import { useLocale, t, type Locale } from '../i18n/strings';
+import { useLocale, t } from '../i18n/strings';
 
 const PROVIDERS = [
   { id: 'claude', name: 'Claude', placeholder: 'sk-ant-...', color: 'text-orange-400' },
@@ -195,15 +195,12 @@ export const AgentSettings: React.FC = () => {
         </div>
       )}
 
-      {/* Language toggle — flips app to RTL when Arabic is picked. Stored
-          in localStorage as 'klypix:locale'; setLocale() in i18n/strings.ts
-          also updates document.documentElement.dir/lang so the whole tree
-          re-lays-out. */}
-      <LanguageToggleRow />
-
       {/* Power User mode — gates advanced UX surfaces (currently: the WSL2
           sandbox setup banner). Off by default so first-time installs aren't
-          prompted to install Linux. */}
+          prompted to install Linux.
+          Note: the app-wide Language toggle lives in its own sidebar tab in
+          SettingsPanel — not here. It used to be inline above this row but
+          was hidden inside Agent Engine, which made it hard to discover. */}
       <PowerUserRow />
 
       {/* Cross-device clipboard sync — pinned items only, opt-in. Synced
@@ -224,11 +221,6 @@ export const AgentSettings: React.FC = () => {
     </div>
   );
 };
-
-const LANGUAGES: { id: Locale; labelKey: 'settings.language.english' | 'settings.language.arabic' }[] = [
-  { id: 'en', labelKey: 'settings.language.english' },
-  { id: 'ar', labelKey: 'settings.language.arabic' },
-];
 
 const PowerUserRow: React.FC = () => {
   useLocale();
@@ -280,29 +272,3 @@ const ClipboardSyncRow: React.FC = () => {
   );
 };
 
-const LanguageToggleRow: React.FC = () => {
-  const [locale, setLocaleFn] = useLocale();
-  return (
-    <div className="space-y-1.5">
-      <label className="text-xs text-gray-400">{t('settings.language.label')}</label>
-      <div className="grid grid-cols-2 gap-1.5">
-        {LANGUAGES.map(lang => (
-          <button
-            key={lang.id}
-            onClick={() => setLocaleFn(lang.id)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-              locale === lang.id
-                ? 'bg-purple-500/20 border border-purple-500/40 text-purple-300'
-                : 'bg-white/5 border border-white/10 text-gray-500 hover:text-white/70 hover:bg-white/10'
-            }`}
-            // Reset direction on the button itself so the Arabic label still
-            // reads naturally regardless of the app-level dir attribute.
-            dir={lang.id === 'ar' ? 'rtl' : 'ltr'}
-          >
-            {t(lang.labelKey)}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-};
