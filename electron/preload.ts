@@ -182,7 +182,7 @@ contextBridge.exposeInMainWorld('electron', {
         },
         apply: (args: { mode: 'replace' | 'insert' | 'copy'; text: string; hwnd?: string }) =>
             ipcRenderer.invoke('quick-action:apply', args),
-        close: () => ipcRenderer.send('quick-action:close'),
+        close: (opts?: { keepOpen?: boolean }) => ipcRenderer.send('quick-action:close', opts || {}),
     },
     // Unified hotkey bindings (Settings → Hotkeys section).
     hotkey: {

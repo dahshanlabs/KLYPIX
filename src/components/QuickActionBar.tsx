@@ -16,7 +16,7 @@
 //     accidentally Replace a half-finished response.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Globe, Pencil, FileText, Sparkles, Lightbulb, ArrowRight, X, Clipboard, MessageSquare, ArrowDownToLine, Loader2, Wand2 } from 'lucide-react';
+import { Globe, Pencil, FileText, Sparkles, Lightbulb, ArrowRight, X, Clipboard, MessageSquare, ArrowDownToLine, Loader2, Wand2, LayoutGrid } from 'lucide-react';
 import { getApiKeySync } from '../api/gemini';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import clsx, { type ClassValue } from 'clsx';
@@ -25,7 +25,7 @@ import { KlypixEyes } from './KlypixEyes';
 
 const cn = (...inputs: ClassValue[]) => twMerge(clsx(inputs));
 
-type ActionId = 'translate' | 'improve' | 'summarize' | 'grammar' | 'explain' | 'continue' | 'custom';
+type ActionId = 'translate' | 'improve' | 'summarize' | 'grammar' | 'explain' | 'continue' | 'send_chat' | 'send_canvas' | 'custom';
 
 interface ActionDef {
     id: ActionId;
@@ -39,6 +39,10 @@ interface ActionDef {
      *  (correcting), Continue slides right (moving forward), etc.
      *  Subtle — duration is 300-400ms, easing soft. */
     hoverAnim: string;
+    /** When true, the action skips the AI streaming entirely — the user's
+     *  raw selection is dispatched directly to chat / canvas / clipboard
+     *  via runDirect(). Frictionless "I just want this somewhere" path. */
+    skipAI?: boolean;
     promptFor(text: string, custom?: string): string;
 }
 
@@ -98,6 +102,32 @@ const ACTIONS: ActionDef[] = [
         hoverAnim: 'group-hover:translate-x-1',
         promptFor: (text) => `Continue the following text in the same voice, tone, and style. Pick up exactly where it ends — your output will be appended directly so do NOT repeat the original. Output the continuation only.\n\n---\n${text}`,
     },
+    // ── No-AI shortcuts ──────────────────────────────────────────────
+    // These skip the streaming step and hand off the raw selection
+    // directly to chat or canvas. Visual style mirrors the AI actions
+    // so they feel part of the same menu, but they have a distinct
+    // accent (slate vs the warm AI colors) signaling "transport,
+    // not transform".
+    {
+        id: 'send_chat',
+        label: 'Ask in chat',
+        sublabel: 'Open chat with this text',
+        icon: MessageSquare,
+        accent: '#94a3b8',
+        hoverAnim: 'group-hover:scale-110',
+        skipAI: true,
+        promptFor: () => '',
+    },
+    {
+        id: 'send_canvas',
+        label: 'Add to canvas',
+        sublabel: 'Drop as a card',
+        icon: LayoutGrid,
+        accent: '#94a3b8',
+        hoverAnim: 'group-hover:scale-110',
+        skipAI: true,
+        promptFor: () => '',
+    },
 ];
 
 const CUSTOM_ACTION: ActionDef = {
@@ -114,21 +144,33 @@ interface Props {
     selection: string;
     targetHwnd: string;
     sourceApp?: string;
+    /** Default onClose used for X / Esc — fully hides Klypix.
+     *  Internal handlers that want to land the user in chat/canvas use
+     *  closeKeepOpen() (sent via the electron bridge directly) instead. */
     onClose: () => void;
 }
 
+// Closes the QA popup but keeps the Klypix window VISIBLE — used by all
+// "send to elsewhere in Klypix" actions (Ask in chat, Add to canvas,
+// output-bar Chat/Canvas). The renderer has already switched activeTab
+// via the dispatched event; main exits QA mode, restores chat-default
+// bounds, and the natural render takes over. No window flash.
+function closeKeepOpen() {
+    (window as any).electron?.quickAction?.close?.({ keepOpen: true });
+}
+
+// Smart default only ever picks from AI transformations — the skip-AI
+// shortcuts (send_chat / send_canvas) are user-intent actions, not
+// suggestions. Returning their id would mislead users into thinking
+// they should ship raw text to chat by default.
 function detectSmartDefault(selection: string): ActionId {
     const s = selection.trim();
     if (!s) return 'translate';
-    // Arabic / RTL detection — Unicode range U+0600..U+06FF (Arabic) and U+FB50..U+FDFF (presentation forms)
     const arabicChars = (s.match(/[؀-ۿﭐ-﷿]/g) || []).length;
     if (arabicChars / s.length > 0.3) return 'translate';
-    // Code-ish: contains common code tokens AND multiple lines OR ends with });/]/}.
     const codeTokens = /\b(function|const|let|var|class|import|export|return|async|await|if|else|for|while|public|private)\b/;
     if (codeTokens.test(s) && (/[{}();]/.test(s) || s.includes('=>'))) return 'explain';
-    // Long → summarize. Threshold ~600 chars (about a screenful).
     if (s.length > 600) return 'summarize';
-    // Unfinished sentence — ends with letter or comma, no terminal punct in last 40 chars.
     const tail = s.slice(-40);
     if (!/[.!?…]/.test(tail) && s.length > 40) return 'continue';
     return 'improve';
@@ -184,7 +226,7 @@ export function QuickActionBar({ selection, targetHwnd, sourceApp, onClose }: Pr
             // Don't intercept number keys when the user is typing in the
             // custom-prompt input.
             if (document.activeElement === customInputRef.current) return;
-            if (!chosenAction && /^[1-6]$/.test(e.key)) {
+            if (!chosenAction && /^[1-8]$/.test(e.key)) {
                 e.preventDefault();
                 const idx = parseInt(e.key, 10) - 1;
                 const action = ACTIONS[idx];
@@ -210,6 +252,23 @@ export function QuickActionBar({ selection, targetHwnd, sourceApp, onClose }: Pr
         if (!selection && action.id !== 'custom') {
             // No selection → force custom prompt path with text-as-instruction.
             customInputRef.current?.focus();
+            return;
+        }
+        // Skip-AI shortcut: dispatch the raw selection to chat/canvas
+        // directly. No streaming, no token spend, no response view —
+        // popup closes immediately.
+        if (action.skipAI) {
+            if (action.id === 'send_chat') {
+                // Use chat-input-append (paste to textarea) so the user can
+                // edit/extend their question before sending. Different from
+                // the output-bar Chat button (which dispatches a primed
+                // 2-message conversation around an AI result).
+                window.dispatchEvent(new CustomEvent('klypix:chat-input-append', { detail: { text: selection } }));
+            } else if (action.id === 'send_canvas') {
+                window.dispatchEvent(new CustomEvent('klypix:canvas-add-text', { detail: { text: selection } }));
+            }
+            // keepOpen: land the user IN chat/canvas, don't hide Klypix.
+            closeKeepOpen();
             return;
         }
         setChosenAction(action.id);
@@ -258,9 +317,29 @@ export function QuickActionBar({ selection, targetHwnd, sourceApp, onClose }: Pr
 
     return (
         <div className="h-screen w-screen flex items-stretch justify-center text-white">
-            {/* Outer glass shell — same theme as palette. `relative` so the
-                apply-toast can anchor to the bottom of this card. */}
-            <div className="relative w-full h-full flex flex-col bg-zinc-900/95 backdrop-blur-2xl border border-white/10 rounded-2xl overflow-hidden shadow-[0_20px_60px_rgba(0,0,0,0.6)] drag">
+            {/* Outer glass shell — Klypix-branded green-tinted background.
+                Three layers:
+                  1. Top-left radial emerald glow (where the eyes/header sits)
+                     — gives the panel a warm "energy source" feel that points
+                     at the mascot.
+                  2. Bottom-right softer emerald glow — balances the
+                     composition and pulls the eye to the output bar.
+                  3. Diagonal base gradient (zinc-950 → zinc-900) for depth.
+                Border picks up a faint emerald tint, outer drop-shadow has
+                a subtle emerald halo, and the inset top highlight gives the
+                glass a real beveled edge. `relative` so the apply-toast can
+                anchor to the bottom of this card. */}
+            <div
+                className="relative w-full h-full flex flex-col backdrop-blur-2xl border border-emerald-500/20 rounded-2xl overflow-hidden drag"
+                style={{
+                    background: `
+                        radial-gradient(circle at 0% 0%, rgba(16,185,129,0.20) 0%, transparent 45%),
+                        radial-gradient(circle at 100% 100%, rgba(16,185,129,0.10) 0%, transparent 55%),
+                        linear-gradient(135deg, rgba(12,16,18,0.96) 0%, rgba(20,24,27,0.96) 100%)
+                    `,
+                    boxShadow: '0 20px 60px rgba(0,0,0,0.7), 0 0 80px -20px rgba(16,185,129,0.35), inset 0 1px 0 rgba(255,255,255,0.06)',
+                }}
+            >
                 {/* Header / selection preview.
                     Typography hierarchy (top → bottom by importance):
                       1. Selection text (15px, semibold, white/95) — THE anchor
@@ -321,14 +400,15 @@ export function QuickActionBar({ selection, targetHwnd, sourceApp, onClose }: Pr
                                         key={a.id}
                                         onClick={() => runAction(a)}
                                         onMouseEnter={() => setHighlightedAction(a.id)}
-                                        style={{ animationDelay: `${i * 30}ms` }}
+                                        style={{ animationDelay: `${i * 25}ms` }}
                                         className={cn(
-                                            'group relative flex items-center gap-3 px-3 py-3 rounded-xl border text-left transition-all duration-200 animate-in fade-in slide-in-from-bottom-1 overflow-hidden',
+                                            'group relative flex items-center gap-2.5 px-2.5 py-2 rounded-xl border text-left transition-all duration-200 animate-in fade-in slide-in-from-bottom-1 overflow-hidden',
                                             'hover:border-white/20 hover:scale-[1.015]',
                                             isHighlighted
                                                 ? 'bg-white/[0.07] border-emerald-500/40 ring-1 ring-emerald-500/20 shadow-[0_4px_20px_-8px_rgba(16,185,129,0.4)]'
                                                 : 'bg-white/[0.025] border-white/8',
                                             isSmart && !isHighlighted && 'border-emerald-500/25',
+                                            a.skipAI && 'border-dashed',
                                         )}
                                     >
                                         {/* Gradient sweep on hover — subtle accent-tinted wash
@@ -338,14 +418,14 @@ export function QuickActionBar({ selection, targetHwnd, sourceApp, onClose }: Pr
                                             style={{ background: `linear-gradient(135deg, ${a.accent}14 0%, transparent 60%)` }}
                                         />
                                         <div
-                                            className="relative flex items-center justify-center w-9 h-9 rounded-lg shrink-0 z-10"
+                                            className="relative flex items-center justify-center w-8 h-8 rounded-lg shrink-0 z-10"
                                             style={{ background: `${a.accent}22`, color: a.accent, boxShadow: isHighlighted ? `0 0 0 1px ${a.accent}40` : 'none' }}
                                         >
                                             {/* Inner span carries the per-action hover motion.
                                                 Transition is on transform + filter so animations
                                                 stack (scale + rotate + drop-shadow). */}
                                             <span className={cn('transition-all duration-300 ease-out inline-block', a.hoverAnim)}>
-                                                <Icon size={16} />
+                                                <Icon size={14} />
                                             </span>
                                             {/* Tiny "Best" indicator dot anchored to the icon
                                                 corner — INSIDE the card so overflow-hidden
@@ -520,8 +600,41 @@ export function QuickActionBar({ selection, targetHwnd, sourceApp, onClose }: Pr
                                 accent="#fb7185"
                                 disabled={!responseText || isStreaming || !!streamError}
                                 onClick={() => {
-                                    window.dispatchEvent(new CustomEvent('klypix:chat-input-append', { detail: { text: responseText } }));
-                                    onClose();
+                                    // Frictionless: instead of pasting the result into the
+                                    // chat textarea (which forces the user to press Enter),
+                                    // inject the full exchange as a 2-message conversation —
+                                    // user "prompt" + assistant response. The user lands in
+                                    // chat with a primed thread and can ask follow-ups
+                                    // ("now make it shorter", "what's a synonym for X").
+                                    const action = ACTIONS.find(x => x.id === chosenAction) || CUSTOM_ACTION;
+                                    const userPrompt = chosenAction === 'custom'
+                                        ? `${customPrompt.trim()}\n\n> ${selection}`
+                                        : `${action.label} this${sourceApp ? ` (from ${sourceApp})` : ''}:\n\n> ${selection}`;
+                                    window.dispatchEvent(new CustomEvent('klypix:chat-inject-conversation', {
+                                        detail: {
+                                            messages: [
+                                                { role: 'user', content: userPrompt },
+                                                { role: 'assistant', content: responseText },
+                                            ],
+                                        },
+                                    }));
+                                    closeKeepOpen();
+                                }}
+                            />
+                            <OutputButton
+                                label="Canvas"
+                                icon={LayoutGrid}
+                                accent="#10b981"
+                                disabled={!responseText || isStreaming || !!streamError}
+                                onClick={() => {
+                                    // Drop the result onto the infinite canvas as a new
+                                    // TextItem (same pipeline the chat "send to canvas"
+                                    // hover button uses). Reuses pendingCanvasItems queue
+                                    // so a not-yet-mounted canvas still receives it.
+                                    window.dispatchEvent(new CustomEvent('klypix:canvas-add-text', {
+                                        detail: { text: responseText },
+                                    }));
+                                    closeKeepOpen();
                                 }}
                             />
                         </div>
@@ -538,7 +651,7 @@ export function QuickActionBar({ selection, targetHwnd, sourceApp, onClose }: Pr
                     <div className="flex items-center gap-3">
                         {!showingResponse ? (
                             <>
-                                <span><kbd className="px-1 py-px rounded bg-white/8 text-white/60 font-mono">1–6</kbd> action</span>
+                                <span><kbd className="px-1 py-px rounded bg-white/8 text-white/60 font-mono">1–8</kbd> action</span>
                                 <span><kbd className="px-1 py-px rounded bg-white/8 text-white/60 font-mono">⏎</kbd> run</span>
                             </>
                         ) : (

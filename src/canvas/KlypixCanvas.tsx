@@ -776,6 +776,19 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     // where the actual artifact already exists on the canvas — no need to
     // offer "pin" since there's nothing useful to pin.
     const [toast, setToast] = useState<{ text: string; id: number; kind?: 'simple' } | null>(null);
+    // Auto-dismiss the rich toast (the "Added from chat" / agent answer
+    // banner with pin + close) after 5s. Without this it stuck around
+    // forever until the user clicked X — disruptive on first canvas
+    // visit. Resets on every new toast so a fresh one always gets the
+    // full 5s window. AgentToast already handles `simple` kind's own
+    // auto-dismiss internally, so we skip those here.
+    useEffect(() => {
+        if (!toast || toast.kind === 'simple') return;
+        const t = window.setTimeout(() => {
+            setToast(prev => (prev && prev.id === toast.id ? null : prev));
+        }, 5000);
+        return () => window.clearTimeout(t);
+    }, [toast]);
     const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
     // Final on-screen rect of the right-click context menu, reported by
     // ContextMenu after its own viewport-edge clamp (it can flip upward

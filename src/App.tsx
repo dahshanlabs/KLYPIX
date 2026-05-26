@@ -906,11 +906,21 @@ function AppMain() {
                 }
             });
         };
+        // AI Quick Action → "Canvas" button. Reuses the same hand-off
+        // pipeline the chat-message hover button uses (pendingCanvasItems
+        // queue + tab flip), so we don't duplicate the drain logic.
+        const onCanvasAddText = (e: any) => {
+            const text = e?.detail?.text;
+            if (typeof text !== 'string' || !text.trim()) return;
+            handleSendToCanvas(text);
+        };
         window.addEventListener('klypix:chat-attach', onAttach as EventListener);
         window.addEventListener('klypix:chat-input-append', onAppend as EventListener);
+        window.addEventListener('klypix:canvas-add-text', onCanvasAddText as EventListener);
         return () => {
             window.removeEventListener('klypix:chat-attach', onAttach as EventListener);
             window.removeEventListener('klypix:chat-input-append', onAppend as EventListener);
+            window.removeEventListener('klypix:canvas-add-text', onCanvasAddText as EventListener);
         };
     }, []);
 
@@ -1030,6 +1040,30 @@ function AppMain() {
         setIsDeepFileMode: deepMode.setIsDeepFileMode,
         clearStack: screenshot.clearStack,
     });
+
+    // AI Quick Action → "Chat" button listener. Frictionless flow:
+    // injects the exchange as a 2-message conversation (user prompt +
+    // assistant reply) so the user lands in chat with a primed thread
+    // and can ask follow-ups ("now make it shorter", "what does this
+    // idiom mean?"). NOT a clipboard paste — these enter the chat
+    // history as real messages, so Gemini has proper context on the
+    // next turn. Placed after `chat` is defined so we can call
+    // chat.setMessages directly via a ref (the chat object identity
+    // changes every render).
+    const chatRef = useRef(chat);
+    chatRef.current = chat;
+    useEffect(() => {
+        const onInjectConv = (e: any) => {
+            const msgs = Array.isArray(e?.detail?.messages) ? e.detail.messages : [];
+            if (msgs.length === 0) return;
+            const valid = msgs.filter((m: any) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string');
+            if (valid.length === 0) return;
+            setActiveTab('chat');
+            chatRef.current.setMessages((prev: any[]) => [...prev, ...valid]);
+        };
+        window.addEventListener('klypix:chat-inject-conversation', onInjectConv as EventListener);
+        return () => window.removeEventListener('klypix:chat-inject-conversation', onInjectConv as EventListener);
+    }, []);
 
     const pinnedChats = usePinnedChats({
         messages: chat.messages,

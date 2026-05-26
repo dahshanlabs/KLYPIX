@@ -841,9 +841,18 @@ function exitQuickActionMode(opts: { hide: boolean }): void {
         preBoundsBeforeQuickAction = null;
     };
     if (opts.hide) {
-        mainWindow.hide();
+        // Restore BEFORE hide. On Windows, setBounds on a hidden window
+        // can be ignored — next show() then reuses the QA bounds and the
+        // chat/canvas overlay appears tiny. Restoring while still visible
+        // bakes the size into the window state reliably; the user sees
+        // it briefly expand back to chat bounds before hiding (~50ms),
+        // which feels intentional (like the window collapses into the
+        // tray after handing off).
         restoreBounds();
+        mainWindow.hide();
     } else {
+        // keepOpen path — defer 50ms so the renderer can unmount the QA
+        // branch first, avoiding a flash of half-sized chat chrome.
         setTimeout(restoreBounds, 50);
     }
 }
@@ -1309,9 +1318,14 @@ Add-Type -AssemblyName System.Windows.Forms
         }
     });
 
-    ipcMain.on('quick-action:close', () => {
+    ipcMain.on('quick-action:close', (_e: any, opts?: { keepOpen?: boolean }) => {
         if (!quickActionMode) return;
-        exitQuickActionMode({ hide: true });
+        // keepOpen: true → exit QA mode without hiding the window, restore
+        // chat-default bounds, and let the renderer take over (Ask in chat
+        // / Add to canvas already switched activeTab via their events). The
+        // window morphs from compact QA popup into the normal chat/canvas
+        // overlay — no flash, no need for a second Alt+Space.
+        exitQuickActionMode({ hide: !opts?.keepOpen });
     });
 
     // ── Unified hotkey settings (chat / palette / quickAction) ─────────────
