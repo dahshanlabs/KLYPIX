@@ -24,14 +24,32 @@ interface InviterIdentity {
     email: string | null;
 }
 
+// 2026-05-28: surface the *recipient* (you, the person accepting) on the
+// invite page so a user with multiple browser profiles can't mistakenly
+// accept under the wrong account. Pulled from supabase.auth.getUser()
+// once the recipient is signed in.
+interface AcceptorIdentity {
+    name: string | null;
+    email: string | null;
+}
+
 type ViewState =
     | { status: 'loading' }
     | { status: 'invalid'; reason: string }
-    | { status: 'preview'; titleHint: string | null; blobId: string; inviter: InviterIdentity }
+    | { status: 'preview'; titleHint: string | null; blobId: string; inviter: InviterIdentity; acceptor: AcceptorIdentity | null }
     | { status: 'sign-in'; titleHint: string | null; inviter: InviterIdentity }
     | { status: 'accepting' }
-    | { status: 'accepted'; titleHint: string | null; inviter: InviterIdentity }
+    | { status: 'accepted'; titleHint: string | null; inviter: InviterIdentity; acceptor: AcceptorIdentity | null }
     | { status: 'error'; message: string };
+
+function readAcceptorFromUser(user: unknown): AcceptorIdentity | null {
+    if (!user || typeof user !== 'object') return null;
+    const u = user as { email?: string | null; user_metadata?: { full_name?: string | null; name?: string | null } | null };
+    const name = u.user_metadata?.full_name ?? u.user_metadata?.name ?? null;
+    const email = u.email ?? null;
+    if (!name && !email) return null;
+    return { name, email };
+}
 
 export default function AcceptInvitePage() {
     const params = useParams<{ token: string }>();
@@ -108,7 +126,11 @@ export default function AcceptInvitePage() {
                 return;
             }
             if (isAuthed) {
-                setView({ status: 'preview', titleHint, blobId, inviter });
+                // Read the recipient's identity from the active session so we
+                // can show "Signed in as <you>" on the preview card.
+                const { data: userData } = await supabase.auth.getUser();
+                const acceptor = readAcceptorFromUser(userData?.user);
+                setView({ status: 'preview', titleHint, blobId, inviter, acceptor });
             } else {
                 setView({ status: 'sign-in', titleHint, inviter });
             }
@@ -141,7 +163,11 @@ export default function AcceptInvitePage() {
                 name: row?.inviter_display_name ?? previewInviter.name,
                 email: row?.inviter_email ?? previewInviter.email,
             };
-            setView({ status: 'accepted', titleHint, inviter });
+            // Also fetch the acceptor's identity so the success card can
+            // confirm which account just accepted (multi-profile safety).
+            const { data: userData } = await supabase.auth.getUser();
+            const acceptor = readAcceptorFromUser(userData?.user);
+            setView({ status: 'accepted', titleHint, inviter, acceptor });
         } catch (e: any) {
             setView({ status: 'error', message: e?.message || 'Could not accept invitation' });
         }
@@ -169,6 +195,7 @@ export default function AcceptInvitePage() {
                         <PreviewCard
                             titleHint={view.titleHint}
                             inviter={view.inviter}
+                            acceptor={view.acceptor}
                             onAccept={accept}
                         />
                     )}
@@ -176,7 +203,7 @@ export default function AcceptInvitePage() {
                         <SignInCard titleHint={view.titleHint} inviter={view.inviter} />
                     )}
                     {view.status === 'accepting' && <LoadingCard label="Accepting…" />}
-                    {view.status === 'accepted' && <AcceptedCard titleHint={view.titleHint} inviter={view.inviter} />}
+                    {view.status === 'accepted' && <AcceptedCard titleHint={view.titleHint} inviter={view.inviter} acceptor={view.acceptor} />}
                     {view.status === 'error' && <ErrorCard message={view.message} />}
                 </div>
                 <Footer />
@@ -249,8 +276,48 @@ function InviterLine({ inviter }: { inviter: InviterIdentity }) {
     );
 }
 
-function PreviewCard({ titleHint, inviter, onAccept }: { titleHint: string | null; inviter: InviterIdentity; onAccept: () => void }) {
+// Recipient pill shown on the preview / accepted cards. Lets the user
+// confirm which account they're acting under before / after accepting —
+// critical when they're juggling multiple browser profiles or accounts.
+// onSwitch is offered only when the user CAN still bail out (preview),
+// not after the invitation has already been consumed.
+function AcceptorLine({ acceptor, onSwitch }: { acceptor: AcceptorIdentity | null; onSwitch?: () => void }) {
+    if (!acceptor) return null;
+    const display = acceptor.name || acceptor.email || '';
+    if (!display) return null;
+    return (
+        <div className="flex items-center gap-2 mt-3 rounded-lg bg-white/[0.03] border border-white/5 px-2.5 py-2">
+            <div className="w-6 h-6 rounded-full bg-sky-500/15 border border-sky-500/30 flex items-center justify-center text-sky-300 text-[11px] font-medium">
+                {display.slice(0, 1).toUpperCase()}
+            </div>
+            <div className="min-w-0 flex-1">
+                <div className="text-white/45 text-[9px] uppercase tracking-wider">Signed in as</div>
+                <div className="text-white/85 text-xs font-medium truncate">{display}</div>
+                {acceptor.name && acceptor.email && (
+                    <div className="text-white/40 text-[10px] truncate">{acceptor.email}</div>
+                )}
+            </div>
+            {onSwitch && (
+                <button
+                    type="button"
+                    onClick={onSwitch}
+                    className="text-white/45 hover:text-white/75 text-[10px] underline-offset-2 hover:underline whitespace-nowrap"
+                >
+                    Switch account
+                </button>
+            )}
+        </div>
+    );
+}
+
+function PreviewCard({ titleHint, inviter, acceptor, onAccept }: { titleHint: string | null; inviter: InviterIdentity; acceptor: AcceptorIdentity | null; onAccept: () => void }) {
     const hasInviter = !!(inviter.name || inviter.email);
+    // "Switch account" signs out, reloads the page → the loader sees no
+    // session → renders SignInCard so the user can pick a different one.
+    const handleSwitch = async () => {
+        try { await supabase.auth.signOut(); } catch { /* swallow */ }
+        if (typeof window !== 'undefined') window.location.reload();
+    };
     return (
         <div className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
             <div className="px-5 py-4 border-b border-white/5">
@@ -262,6 +329,7 @@ function PreviewCard({ titleHint, inviter, onAccept }: { titleHint: string | nul
                     {hasInviter && <span className="text-white/40 text-xs font-normal mr-1">on</span>}
                     {titleHint || 'Untitled canvas'}
                 </div>
+                <AcceptorLine acceptor={acceptor} onSwitch={handleSwitch} />
             </div>
             <div className="px-5 py-5">
                 <button
@@ -278,7 +346,7 @@ function PreviewCard({ titleHint, inviter, onAccept }: { titleHint: string | nul
     );
 }
 
-function AcceptedCard({ titleHint, inviter }: { titleHint: string | null; inviter: InviterIdentity }) {
+function AcceptedCard({ titleHint, inviter, acceptor }: { titleHint: string | null; inviter: InviterIdentity; acceptor: AcceptorIdentity | null }) {
     const hasInviter = !!(inviter.name || inviter.email);
     return (
         <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] px-5 py-6">
@@ -293,6 +361,10 @@ function AcceptedCard({ titleHint, inviter }: { titleHint: string | null; invite
                 {hasInviter && <> — shared by <span className="text-white font-medium">{inviter.name || inviter.email}</span></>}.
                 Open the KLYPIX desktop app — the canvas will appear in your library shortly.
             </div>
+            {/* Post-accept confirmation of the recipient identity. No switch-
+                account link here — the invitation has already been consumed
+                under this account; switching would leave them stranded. */}
+            <AcceptorLine acceptor={acceptor} />
             <div className="text-white/40 text-[10px] mt-4 leading-relaxed">
                 Don't have KLYPIX yet? <a href="https://klypix.com" className="text-emerald-400/80 hover:text-emerald-400">Get it at klypix.com →</a>
             </div>
