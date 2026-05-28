@@ -874,10 +874,30 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     // signals. Conflicts now accumulate into a small ring buffer rendered
     // as an unobtrusive "Conflicts (N)" badge in the canvas chrome,
     // clickable to inspect the history.
-    type ConflictEntry = { id: string; kind: 'overwritten' | 'deleted'; itemId: string; ts: number };
+    type ConflictEntry = {
+        id: string;
+        kind: 'overwritten' | 'deleted';
+        itemId: string;
+        ts: number;
+        /** Friendly peer name resolved from collab.peers at log time. */
+        peerName?: string;
+        peerColor?: string;
+        /** Field set the peer touched (only for 'overwritten' kind). */
+        fields?: string[];
+        /** Best-effort label for the item (first 40 chars of text, else id). */
+        itemLabel?: string;
+    };
     const [conflictLog, setConflictLog] = useState<ConflictEntry[]>([]);
     const [conflictPanelOpen, setConflictPanelOpen] = useState(false);
     const CONFLICT_LOG_MAX = 50;
+    // Hold the latest peers + state in refs so the onConflict callback can
+    // resolve peer name + item label at fire time (not at hook-registration
+    // time, when peers is the initial empty array and the item may not yet
+    // exist locally).
+    const peersForConflictRef = useRef(collab.peers);
+    peersForConflictRef.current = collab.peers;
+    const stateForConflictRef = useRef(state);
+    stateForConflictRef.current = state;
     useOpSync({
         blobId: cloudShare?.blobId ?? null,
         active: tabActive,
@@ -887,11 +907,24 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         // to open the panel when they actually care.
         onConflict: (info) => {
             setConflictLog((prev) => {
+                const peer = info.fromDeviceId
+                    ? peersForConflictRef.current.find(p => p.deviceId === info.fromDeviceId)
+                    : undefined;
+                const item: any = (stateForConflictRef.current.items as any)[info.itemId];
+                let itemLabel: string | undefined = undefined;
+                if (item) {
+                    const t = typeof item.text === 'string' ? item.text : '';
+                    itemLabel = t ? (t.length > 40 ? t.slice(0, 40) + '…' : t) : undefined;
+                }
                 const next: ConflictEntry = {
                     id: 'c_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
                     kind: info.kind,
                     itemId: info.itemId,
                     ts: Date.now(),
+                    peerName: peer?.displayName,
+                    peerColor: peer?.color,
+                    fields: info.fields,
+                    itemLabel,
                 };
                 const merged = [next, ...prev];
                 return merged.length > CONFLICT_LOG_MAX ? merged.slice(0, CONFLICT_LOG_MAX) : merged;
@@ -1665,6 +1698,16 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     // just created (ADD_ITEM + UPDATE_ITEM burst can briefly see the
     // container with no children before the child-reparents commit).
     useEffect(() => {
+        // 2026-05-28 collab fix: SKIP this auto-cleanup on shared
+        // canvases. It was written for solo-user behavior — it has no
+        // concept of "item arrived from a peer, kids in-flight." On a
+        // collab canvas, PC1 creates a group → broadcast ADD_ITEM
+        // (container) → PC2 receives empty container → grace expires
+        // → PC2 deletes it → broadcasts DELETE_ITEMS → PC1's group
+        // vanishes. Disabling for collab is the cheapest correct fix;
+        // a future version with per-item origin tracking can re-enable
+        // selective cleanup if/when needed.
+        if (cloudShare?.blobId) return;
         const EMPTY_CONTAINER_GRACE_MS = 2000;
         const now = Date.now();
         const emptyIds: string[] = [];
@@ -1691,7 +1734,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         if (emptyIds.length > 0) {
             dispatch({ type: 'DELETE_ITEMS', ids: emptyIds });
         }
-    }, [state.items, state.order, state.lines, state.strokes, dispatch]);
+    }, [state.items, state.order, state.lines, state.strokes, dispatch, cloudShare?.blobId]);
 
     // Empty-placeholder sweeper: removes any text item that has no content and
     // isn't currently being edited. onBlur isn't reliable when React unmounts a
@@ -1699,7 +1742,15 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     // textarea's blur fires), so this useEffect is the source of truth. If
     // undo restores empty items, the sweeper re-removes them — net effect: a
     // single Ctrl+Z undoes the whole create+type session.
+    //
+    // 2026-05-28 collab fix: SKIP on shared canvases — same reason as
+    // the empty-container sweeper above. PC2 receives ADD_ITEM for a
+    // text card PC1 just created; PC2's editingId is null for it;
+    // grace expires; PC2 deletes the card; broadcasts DELETE_ITEMS;
+    // PC1's brand-new card vanishes mid-type. Better to leak an empty
+    // text item than to fight peer creation.
     useEffect(() => {
+        if (cloudShare?.blobId) return;
         const now = Date.now();
         const stale: string[] = [];
         for (const id of state.order) {
@@ -1716,7 +1767,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             stale.push(id);
         }
         if (stale.length > 0) dispatch({ type: 'DELETE_ITEMS', ids: stale });
-    }, [state.editingId, state.items, state.order, dispatch]);
+    }, [state.editingId, state.items, state.order, dispatch, cloudShare?.blobId]);
 
     // `/` opens the agent command bar. Only when not already in a field.
     useEffect(() => {
@@ -3136,19 +3187,44 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                                     : ago < 3600
                                         ? `${Math.floor(ago / 60)}m ago`
                                         : `${Math.floor(ago / 3600)}h ago`;
+                                // Human-readable summary: "Bob changed text on 'Project plan'"
+                                // or "Alice deleted Untitled card". Falls back to generic
+                                // copy when peer or item details aren't available.
+                                const peerLabel = c.peerName || 'A collaborator';
+                                const itemPart = c.itemLabel
+                                    ? <> on <span className="text-white/95 italic">"{c.itemLabel}"</span></>
+                                    : null;
+                                const fieldsPart = c.kind === 'overwritten' && c.fields && c.fields.length > 0
+                                    ? <> · changed <span className="text-white/65">{c.fields.join(', ')}</span></>
+                                    : null;
                                 return (
-                                    <div key={c.id} className="px-3 py-2 flex items-center justify-between gap-2 hover:bg-white/[0.02]">
+                                    <div key={c.id} className="px-3 py-2 flex items-start justify-between gap-2 hover:bg-white/[0.02]">
+                                        {c.peerColor && (
+                                            <div
+                                                className="w-1 self-stretch rounded-full mt-0.5 flex-shrink-0"
+                                                style={{ background: c.peerColor }}
+                                            />
+                                        )}
                                         <div className="min-w-0 flex-1">
-                                            <div className="text-[11px] text-white/80 truncate">
-                                                {c.kind === 'overwritten'
-                                                    ? 'Item overwritten by a collaborator'
-                                                    : 'Item deleted by a collaborator'}
+                                            <div className="text-[11px] text-white/85 leading-snug">
+                                                <span
+                                                    className="font-medium"
+                                                    style={c.peerColor ? { color: c.peerColor } : undefined}
+                                                >
+                                                    {peerLabel}
+                                                </span>
+                                                {' '}
+                                                {c.kind === 'overwritten' ? 'overwrote' : 'deleted'}
+                                                {itemPart}
+                                                {fieldsPart}
                                             </div>
-                                            <div className="text-[9px] text-white/35 truncate font-mono">
-                                                {c.itemId}
-                                            </div>
+                                            {!c.itemLabel && (
+                                                <div className="text-[9px] text-white/30 truncate font-mono mt-0.5">
+                                                    {c.itemId}
+                                                </div>
+                                            )}
                                         </div>
-                                        <div className="text-[10px] text-white/40 whitespace-nowrap">{agoLabel}</div>
+                                        <div className="text-[10px] text-white/40 whitespace-nowrap mt-0.5">{agoLabel}</div>
                                     </div>
                                 );
                             })}

@@ -401,7 +401,16 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
             if (Math.abs(nw - item.w) > 1) patch.w = nw;
             if (Math.abs(nh - item.h) > 1) patch.h = nh;
             if (Object.keys(patch).length) {
-                dispatch({ type: 'UPDATE_ITEM', id: item.id, patch });
+                // 2026-05-28 collab fix: this dispatch comes from a DOM
+                // measurement — it's cosmetic, not a user action. Marking
+                // __remote prevents useOpSync's outbound listener from
+                // broadcasting it. Without this guard each peer's
+                // ResizeObserver produces a slightly different value
+                // (font rendering, DPI, zoom drift) and the broadcast
+                // ping-pong becomes an infinite UPDATE_ITEM loop
+                // hammering the channel until edits start getting
+                // clobbered. Peers do their own local measurement.
+                dispatch({ type: 'UPDATE_ITEM', id: item.id, patch, __remote: true } as any);
             }
         };
         measure();
@@ -435,7 +444,10 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
             if (Math.abs(nw - item.w) > 1) patch.w = nw;
             if (Math.abs(nh - item.h) > 1) patch.h = nh;
             if (Object.keys(patch).length) {
-                dispatch({ type: 'UPDATE_ITEM', id: item.id, patch });
+                // 2026-05-28 collab fix: local DOM-measurement only —
+                // do NOT broadcast. See the matching note in the
+                // bordered-editing observer above for full rationale.
+                dispatch({ type: 'UPDATE_ITEM', id: item.id, patch, __remote: true } as any);
             }
         };
         measure();
@@ -468,7 +480,10 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
             const nh = el.offsetHeight + 1;
             if (nh < 2) return;
             if (Math.abs(nh - item.h) > 1) {
-                dispatch({ type: 'UPDATE_ITEM', id: item.id, patch: { h: nh } });
+                // 2026-05-28 collab fix: local DOM-measurement only —
+                // do NOT broadcast. Same broadcast-loop avoidance as
+                // the two w/h observers above.
+                dispatch({ type: 'UPDATE_ITEM', id: item.id, patch: { h: nh }, __remote: true } as any);
             }
         };
         measure();

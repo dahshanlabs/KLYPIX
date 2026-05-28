@@ -86,6 +86,15 @@ export interface ConflictInfo {
     kind: 'overwritten' | 'deleted';
     /** Item id affected. */
     itemId: string;
+    /** Phase 23.x: stable device id of the peer who sent the conflicting
+     *  op. The UI uses this to resolve a friendly peer name via
+     *  collab.peers (which has displayName + color). Optional for
+     *  back-compat with older callers. */
+    fromDeviceId?: string;
+    /** Fields the peer's UPDATE touched (only set for kind:'overwritten').
+     *  Lets the conflict log show "Bob changed text" instead of generic
+     *  "Item overwritten". */
+    fields?: string[];
 }
 
 // How recent a local edit must be for an inbound op on the same item
@@ -461,7 +470,14 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
                     const overlap = remotePatchKeys.some(k => entry.fields!.has(k));
                     if (!overlap) return;
                 }
-                try { onConflictRef.current?.({ kind: remoteKind, itemId }); } catch { /* swallow */ }
+                try {
+                    onConflictRef.current?.({
+                        kind: remoteKind,
+                        itemId,
+                        fromDeviceId: p.device_id,
+                        fields: remotePatchKeys ? Array.from(remotePatchKeys) : undefined,
+                    });
+                } catch { /* swallow */ }
             };
             if (action.type === 'UPDATE_ITEM') {
                 const patch = (action as any).patch;
