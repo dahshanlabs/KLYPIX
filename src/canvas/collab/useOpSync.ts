@@ -472,6 +472,7 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
             }
             // Mark + dispatch. The listener below will see __remote and skip.
             (action as any).__remote = true;
+            console.log(`[opSync] broadcast INBOUND type=${action.type} from device=${p.device_id.slice(0, 12)}…`, action.type === 'UPDATE_ITEM' ? `id=${(action as any).id} patchKeys=${Object.keys((action as any).patch ?? {}).join(',')}` : '');
             try {
                 dispatch(action);
             } catch (err) {
@@ -479,23 +480,45 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
             }
         });
 
-        // 2026-05-28 hardening: on a FIRST connect (loadSeq == 0) we
-        // assume the blob's snapshot already contains everything in
-        // canvas_ops and advance sinceSeq past the entire log without
-        // applying any rows. Subsequent backfill on this session only
-        // pulls genuinely new ops broadcast by peers.
+        // 2026-05-28 hardening: on the FIRST SUBSCRIBED event of this
+        // mount (regardless of any stale localStorage value from
+        // previous sessions), advance sinceSeq to the server's current
+        // head and trust the blob's snapshot as source of truth. The
+        // initial connect MUST NOT replay the full historical op log
+        // on top of the freshly-loaded blob — that race wiped live
+        // typing because every dispatched UPDATE_ITEM row from history
+        // overwrote the user's in-progress text.
         //
-        // Without this, every fresh install / first-time-on-this-canvas
-        // would replay the full op history on top of the freshly-loaded
-        // blob — racing the user's typing and wiping in-progress edits.
+        // We use a ref (NOT loadSeq) to detect "first connect this
+        // mount" because:
+        //   - Stale localStorage from prior sessions (dev mode, prior
+        //     installer versions) means loadSeq is rarely 0 in practice
+        //   - The semantic we want is "I just mounted, trust the blob",
+        //     not "I have no record of this canvas"
+        // Reconnects (CHANNEL_ERROR → SUBSCRIBED) skip this and run
+        // normal backfill — that's correct: we need to pick up ops
+        // peers made during our disconnect window.
+        const fastForwardOnFirstConnectRef = { ran: false };
         const fastForwardIfFresh = async (): Promise<void> => {
-            if (loadSeq(blobId) !== 0) return; // reconnect, not initial
-            if (!authedRef.current) return;
+            if (fastForwardOnFirstConnectRef.ran) {
+                console.log('[opSync] fast-forward skipped (reconnect)');
+                return;
+            }
+            fastForwardOnFirstConnectRef.ran = true;
+            const prevSeq = loadSeq(blobId);
+            if (!authedRef.current) {
+                console.log('[opSync] fast-forward skipped (not authed)');
+                return;
+            }
             const cloudApi: any = (window as any).electron?.cloud;
-            if (!cloudApi?.getOpHead) return; // older main, no fast-forward
+            if (!cloudApi?.getOpHead) {
+                console.warn('[opSync] fast-forward skipped (getOpHead IPC missing — old main process?)');
+                return;
+            }
             try {
                 const res = await cloudApi.getOpHead(blobId);
                 const head = typeof res?.headSeq === 'number' ? res.headSeq : 0;
+                console.log(`[opSync] fast-forward: prevSinceSeq=${prevSeq}, serverHead=${head}, will save head as new sinceSeq → backfill will pull only ops > ${head}`);
                 if (head > 0) {
                     saveSeq(blobId, head);
                     if (head > lamportRef.current) {
@@ -504,8 +527,6 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
                     }
                 }
             } catch (err) {
-                // Non-fatal — backfill below will still run with sinceSeq=0
-                // (old behavior). Log so a server-side issue surfaces.
                 console.warn('[opSync] fast-forward failed (will fall back to full backfill):', err);
             }
         };
@@ -515,6 +536,7 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
         // Closes the "joined mid-session, missed the last 60 minutes of
         // edits" gap that pure-broadcast collab can't solve.
         const backfillFromServer = async (): Promise<void> => {
+            console.log(`[opSync] backfill starting (sinceSeq=${loadSeq(blobId)}, deviceId=${deviceId.slice(0, 12)}…)`);
             if (!authedRef.current) return; // skip REST reads when signed out
             const cloudApi: any = (window as any).electron?.cloud;
             if (!cloudApi?.pullOps) return;
@@ -525,6 +547,7 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
                 for (let pages = 0; pages < 50; pages++) {
                     const rows: Array<{ seq: number; device_id: string; op: any }> = await cloudApi.pullOps({ blobId, sinceSeq });
                     if (!Array.isArray(rows) || rows.length === 0) break;
+                    console.log(`[opSync] backfill page ${pages}: ${rows.length} rows since seq ${sinceSeq}`);
                     for (const row of rows) {
                         // Skip our own historical ops — they're already in
                         // our state from the moment we dispatched them.
@@ -532,6 +555,7 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
                             if (row.seq > sinceSeq) sinceSeq = row.seq;
                             continue;
                         }
+                        console.log(`[opSync] backfill APPLYING op seq=${row.seq} from device=${row.device_id?.slice(0, 12)}… type=${(row.op as any)?.type}`);
                         const action = row.op as CanvasAction;
                         if (action && typeof action === 'object' && 'type' in action) {
                             (action as any).__remote = true;
