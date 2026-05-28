@@ -4,6 +4,7 @@ import { FilePlus2, FolderOpen, Clock, X as XIcon, Users, Undo2 } from 'lucide-r
 import { useRecentCanvases } from '../../hooks/useRecentCanvases';
 import { t, useLocale } from '../../i18n/strings';
 import { useSharedCanvases, type SharedCanvas } from '../../hooks/useSharedCanvases';
+import { listCloudShares } from '../cloud/cloudShareStore';
 import { removeRecentCanvas } from './recentCanvasesStore';
 import type { RecentCanvas } from './recentCanvasesStore';
 import { openSharedCanvas } from '../sync/openSharedCanvas';
@@ -54,6 +55,30 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
     const { canvases: shared, loading: sharedLoading, leave: leaveShared } = useSharedCanvases();
     const [dismissed, setDismissed] = useState(false);
     const [openingPath, setOpeningPath] = useState<string | null>(null);
+
+    // "Shared by you" — canvases the user OWNS that have been pushed to the
+    // cloud (i.e. they have a cloudShareStore entry without `invitedBy`).
+    // Cross-referenced with recents to surface a friendly title; entries
+    // without a matching recent row are still listed (basename of path).
+    const sharedByYou = React.useMemo(() => {
+        const allShares = listCloudShares();
+        const recentByPath = new Map(recents.map(r => [r.filePath, r]));
+        return allShares
+            .filter(s => !s.invitedBy) // exclude canvases received from peers
+            .map(s => {
+                const rec = recentByPath.get(s.filePath);
+                const basename = s.filePath.split(/[\\/]/).pop() || s.filePath;
+                return {
+                    filePath: s.filePath,
+                    blobId: s.blobId,
+                    title: rec?.title || basename.replace(/\.(any|klypix)$/i, ''),
+                    lastPushedAt: s.lastPushedAt,
+                    shareUrl: s.shareUrl,
+                };
+            })
+            // Newest push first — same recency sort the recents list uses.
+            .sort((a, b) => b.lastPushedAt - a.lastPushedAt);
+    }, [recents]);
 
     // Esc closes when this is a manual Home-button open (onDismiss is set).
     // For the empty-canvas auto-show case, Esc is a no-op — there's nothing
@@ -305,12 +330,37 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                             ))}
                         </>
                     )}
-                    {(shared.length > 0 || sharedLoading) && (
+                    {sharedByYou.length > 0 && (
                         <>
                             <div style={{
                                 fontSize: 10, color: 'rgba(255,255,255,0.4)',
                                 textTransform: 'uppercase', letterSpacing: '0.08em',
                                 marginTop: recents.length > 0 ? 16 : 0,
+                                marginBottom: 8, paddingLeft: 4,
+                                display: 'flex', alignItems: 'center', gap: 6,
+                            }}>
+                                <Users size={10} />
+                                Shared by you
+                            </div>
+                            {sharedByYou.map(entry => (
+                                <SharedByYouRow
+                                    key={entry.blobId}
+                                    entry={entry}
+                                    opening={openingPath === entry.filePath}
+                                    onOpen={() => {
+                                        setOpeningPath(entry.filePath);
+                                        onOpenRecent(entry.filePath);
+                                    }}
+                                />
+                            ))}
+                        </>
+                    )}
+                    {(shared.length > 0 || sharedLoading) && (
+                        <>
+                            <div style={{
+                                fontSize: 10, color: 'rgba(255,255,255,0.4)',
+                                textTransform: 'uppercase', letterSpacing: '0.08em',
+                                marginTop: (recents.length > 0 || sharedByYou.length > 0) ? 16 : 0,
                                 marginBottom: 8, paddingLeft: 4,
                                 display: 'flex', alignItems: 'center', gap: 6,
                             }}>
@@ -344,6 +394,75 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
         </div>
     ), document.body);
 };
+
+interface SharedByYouEntry {
+    filePath: string;
+    blobId: string;
+    title: string;
+    lastPushedAt: number;
+    shareUrl: string;
+}
+
+interface SharedByYouRowProps {
+    entry: SharedByYouEntry;
+    opening: boolean;
+    onOpen: () => void;
+}
+
+/**
+ * Row in the "Shared by you" launcher section — canvases the user OWNS and
+ * has pushed to the cloud. Visually distinct from the "Shared with you"
+ * (recipient) rows by using an emerald accent (mirrors the owner-side
+ * "you are owner" badge inside an open canvas). Click → opens the local
+ * .klypix file via the existing onOpenRecent path.
+ */
+function SharedByYouRow({ entry, opening, onOpen }: SharedByYouRowProps) {
+    const pushedAgo = formatRelativeTime(entry.lastPushedAt);
+    return (
+        <div
+            onPointerDown={(e) => { e.stopPropagation(); if (!opening) onOpen(); }}
+            style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 12px',
+                borderRadius: 8,
+                cursor: opening ? 'wait' : 'pointer',
+                opacity: opening ? 0.5 : 1,
+                transition: 'background 0.1s',
+            }}
+            onMouseEnter={(e) => {
+                if (!opening) e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+            }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            title={`${entry.filePath}\nShared by you · last push ${pushedAgo}`}
+        >
+            <div style={{
+                width: 36, height: 36, borderRadius: 8,
+                background: 'rgba(16, 185, 129, 0.12)',
+                color: '#10b981',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0, fontSize: 10, fontWeight: 600, letterSpacing: '0.04em',
+            }}>
+                {entry.title.slice(0, 2).toUpperCase()}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                    fontSize: 13, fontWeight: 500, color: '#e8e8ed',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>{entry.title}</div>
+                <div style={{
+                    fontSize: 10, color: 'rgba(255,255,255,0.4)',
+                    display: 'flex', alignItems: 'center', gap: 6, marginTop: 2,
+                }}>
+                    <span>last shared {pushedAgo}</span>
+                    <span style={{ opacity: 0.4 }}>·</span>
+                    <span style={{ color: 'rgba(16, 185, 129, 0.7)' }}>owner</span>
+                </div>
+            </div>
+        </div>
+    );
+}
 
 interface SharedRowProps {
     entry: SharedCanvas;

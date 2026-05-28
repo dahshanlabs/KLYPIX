@@ -238,8 +238,16 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
     }, []);
 
     useEffect(() => {
+        // 2026-05-28 collab diagnostics: surface the gate decision so the
+        // user can SEE why presence/cursor isn't running on this PC. The
+        // most common silent failure was userId being null (auth not yet
+        // restored from DPAPI) — useOpSync would still run (only needs
+        // blobId) but useCanvasCollab would silently exit, leaving the
+        // user with no chips, no cursors, and no obvious cause.
+        console.log(`[collab] effect: blobId=${blobId ? blobId.slice(0, 8) + '…' : 'null'} userId=${userId ? userId.slice(0, 8) + '…' : 'null'} displayName=${displayName ?? 'null'} active=${active}`);
         // Collab requires: a shared canvas (blob id) + a signed-in user.
         if (!blobId || !userId) {
+            console.warn(`[collab] DISABLED — ${!blobId ? 'no blobId (canvas not shared yet)' : 'no userId (not signed in or auth still loading)'}`);
             setPeers([]);
             setConnected(false);
             setMessages([]);
@@ -304,14 +312,18 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                 setConnected(true);
                 // Only broadcast our presence when the tab is active.
                 if (active) {
+                    console.log(`[collab] channel SUBSCRIBED — calling track() as ${myName} (${userId.slice(0, 8)}…) on device ${deviceId.slice(0, 12)}…`);
                     void channel.track({
                         user_id: userId,
                         device_id: deviceId,
                         display_name: myName,
                         joined_at: Date.now(),
                     } satisfies PresenceRow);
+                } else {
+                    console.log(`[collab] channel SUBSCRIBED but active=false → NOT tracking presence (background tab?)`);
                 }
             } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                console.warn(`[collab] channel status: ${status}`);
                 setConnected(false);
             }
         };
@@ -370,6 +382,12 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
             const liveDeviceIds = new Set(Object.values(presenceState).flat().map((r: any) => r?.device_id).filter(Boolean));
             for (const k of Array.from(ephemeralRef.keys())) {
                 if (!liveDeviceIds.has(k)) ephemeralRef.delete(k);
+            }
+            // 2026-05-28 diagnostics: log peer-count changes so the user
+            // can see in DevTools when presence_state is/isn't getting
+            // populated by remote track() calls.
+            if (flat.length > 0) {
+                console.log(`[collab] peers=${flat.length}:`, flat.map(p => `${p.displayName}(${p.deviceId.slice(0, 8)}…)`).join(', '));
             }
             setPeers(flat);
         };
