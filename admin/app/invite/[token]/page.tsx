@@ -350,14 +350,17 @@ function AcceptedCard({ titleHint, inviter, acceptor }: { titleHint: string | nu
     const hasInviter = !!(inviter.name || inviter.email);
     // Recovery escape hatch: if the user realizes post-accept that they
     // were signed into the wrong account, give them a one-click way to
-    // sign out and start over. We send them to the marketing site
-    // (klypix.com) rather than back to the consumed token — going back
-    // would just show "already used", which is more confusing than
-    // helpful. The user can ask the inviter for a fresh link.
+    // sign out. We just reload the invite page (NOT redirect to
+    // klypix.com — that's the admin gate and a regular user can't sign
+    // in there). After reload + missing session, the loader will show
+    // either the SignInCard (so the user can try a different account)
+    // or the "already used" error (so they know they need a fresh
+    // invite from the sender). Either path is more honest than dumping
+    // them at an admin login.
     const handleSignOut = async () => {
         try { await supabase.auth.signOut(); } catch { /* swallow */ }
         if (typeof window !== 'undefined') {
-            window.location.href = 'https://klypix.com';
+            window.location.reload();
         }
     };
     return (
