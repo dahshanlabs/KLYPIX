@@ -492,6 +492,34 @@ export function registerCloudHandlers(ipcMain: IpcMain): void {
         return { seqs: (data ?? []).map(r => r.seq as number) };
     });
 
+    // Fast-forward helper: returns the current max(seq) for a blob without
+    // pulling the rows. Used by useOpSync on initial mount to advance the
+    // local sinceSeq past everything the blob's snapshot already
+    // includes — prevents the historical-replay race that wiped live
+    // typing on a fresh install (when localStorage sinceSeq starts at 0
+    // and pullOps would otherwise re-apply every op ever recorded).
+    ipcMain.handle('canvas-cloud:get-op-head', async (_e, args: { blobId: string }) => {
+        await requireUserId();
+        const supabase = getSupabase();
+        const { data, error } = await supabase
+            .from(OPS_TABLE)
+            .select('seq')
+            .eq('blob_id', args.blobId)
+            .order('seq', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (error) {
+            // Missing table / RLS denial → treat as "no ops yet"; the
+            // client can proceed without fast-forward and the existing
+            // pull-ops path still works.
+            if (/relation .* does not exist|0 rows|not found/i.test(error.message)) {
+                return { headSeq: 0 };
+            }
+            throw new Error(`Get op head failed: ${error.message}`);
+        }
+        return { headSeq: data?.seq ?? 0 };
+    });
+
     // Pull ops since a seq high-water mark. Limited to 500 ops per call
     // so the client can paginate on very-stale canvases without OOM.
     ipcMain.handle('canvas-cloud:pull-ops', async (_e, args: { blobId: string; sinceSeq: number }) => {

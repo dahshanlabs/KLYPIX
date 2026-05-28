@@ -385,17 +385,23 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
             if (cancelled) return;
             if (status === 'SUBSCRIBED') {
                 connectedRef.current = true;
-                // Pull-then-drain order: get the server's view of history
-                // first, THEN flush our local queue. This way our queued
-                // ops carry higher lamports than anything we just imported.
-                // queueMicrotask defers past the synchronous tail of this
-                // useEffect so backfillFromServer/drainQueue (defined below)
-                // are in scope — required because the registry fires this
-                // callback synchronously when the channel is already
-                // subscribed by another hook.
+                // 2026-05-28 hardening: on INITIAL connect (no prior
+                // sinceSeq saved locally), fast-forward sinceSeq to the
+                // server's current head BEFORE backfill runs. Trusts the
+                // blob's snapshot as the source of truth and prevents
+                // the historical-op-replay race that wiped live typing
+                // on a fresh install (loadSeq=0 → backfill pulled every
+                // op ever recorded → each dispatch overwrote the user's
+                // in-progress edits).
+                //
+                // On reconnect (sinceSeq > 0), the existing backfill path
+                // catches up on anything missed during the disconnect
+                // window. No behavior change for that path.
                 queueMicrotask(() => {
                     if (cancelled) return;
                     void (async () => {
+                        if (cancelled) return;
+                        await fastForwardIfFresh();
                         if (cancelled) return;
                         await backfillFromServer();
                         if (cancelled) return;
@@ -472,6 +478,37 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
                 console.warn('[opSync] failed to apply remote op:', err, action);
             }
         });
+
+        // 2026-05-28 hardening: on a FIRST connect (loadSeq == 0) we
+        // assume the blob's snapshot already contains everything in
+        // canvas_ops and advance sinceSeq past the entire log without
+        // applying any rows. Subsequent backfill on this session only
+        // pulls genuinely new ops broadcast by peers.
+        //
+        // Without this, every fresh install / first-time-on-this-canvas
+        // would replay the full op history on top of the freshly-loaded
+        // blob — racing the user's typing and wiping in-progress edits.
+        const fastForwardIfFresh = async (): Promise<void> => {
+            if (loadSeq(blobId) !== 0) return; // reconnect, not initial
+            if (!authedRef.current) return;
+            const cloudApi: any = (window as any).electron?.cloud;
+            if (!cloudApi?.getOpHead) return; // older main, no fast-forward
+            try {
+                const res = await cloudApi.getOpHead(blobId);
+                const head = typeof res?.headSeq === 'number' ? res.headSeq : 0;
+                if (head > 0) {
+                    saveSeq(blobId, head);
+                    if (head > lamportRef.current) {
+                        lamportRef.current = head;
+                        scheduleLamportSave();
+                    }
+                }
+            } catch (err) {
+                // Non-fatal — backfill below will still run with sinceSeq=0
+                // (old behavior). Log so a server-side issue surfaces.
+                console.warn('[opSync] fast-forward failed (will fall back to full backfill):', err);
+            }
+        };
 
         // Phase 7: late-joiner backfill from canvas_ops. On subscribe we
         // pull every op with seq > our high-water mark and apply them.

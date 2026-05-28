@@ -414,6 +414,8 @@ contextBridge.exposeInMainWorld('electron', {
             ipcRenderer.invoke('canvas-cloud:push-ops', args),
         pullOps: (args: { blobId: string; sinceSeq: number }) =>
             ipcRenderer.invoke('canvas-cloud:pull-ops', args),
+        getOpHead: (blobId: string) =>
+            ipcRenderer.invoke('canvas-cloud:get-op-head', { blobId }),
         listShared: () =>
             ipcRenderer.invoke('canvas-cloud:list-shared'),
         leaveShared: (blobId: string) =>
