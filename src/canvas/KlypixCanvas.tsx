@@ -57,7 +57,7 @@ import { saveTemplate } from './file/templates';
 import { setOpenCanvasLinkHandler } from './items/CanvasLinkItem';
 import { CanvasDashboard } from './dashboard/CanvasDashboard';
 import { ShareModal } from './cloud/ShareModal';
-import { Share2, MessageSquare } from 'lucide-react';
+import { Share2, MessageSquare, AlertTriangle } from 'lucide-react';
 import { useCanvasCollab } from './collab/useCanvasCollab';
 import { useOpSync } from './collab/useOpSync';
 import { useAssetSync } from './collab/useAssetSync';
@@ -868,17 +868,34 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     // Phase 3: live op streaming — broadcasts mutation actions to peers and
     // applies inbound ones via dispatch. Background tabs receive but don't
     // send. Inert when the canvas hasn't been shared (no blob id).
+    // Phase 9 + 23.x: in-memory conflict log. Replaces the previous
+    // intrusive toast — concurrent edits happen all the time during live
+    // collab and toasting on each one drowns out actually-important UI
+    // signals. Conflicts now accumulate into a small ring buffer rendered
+    // as an unobtrusive "Conflicts (N)" badge in the canvas chrome,
+    // clickable to inspect the history.
+    type ConflictEntry = { id: string; kind: 'overwritten' | 'deleted'; itemId: string; ts: number };
+    const [conflictLog, setConflictLog] = useState<ConflictEntry[]>([]);
+    const [conflictPanelOpen, setConflictPanelOpen] = useState(false);
+    const CONFLICT_LOG_MAX = 50;
     useOpSync({
         blobId: cloudShare?.blobId ?? null,
         active: tabActive,
         authed: !!auth.user?.id,
-        // Phase 9: surface concurrent-edit conflicts so the user knows
-        // when a remote update or delete overlapped their own edit.
+        // Phase 9: capture concurrent-edit conflicts into the log instead
+        // of toasting. The badge surfaces the count; the user can choose
+        // to open the panel when they actually care.
         onConflict: (info) => {
-            const key = info.kind === 'overwritten'
-                ? 'canvas.collab_conflict_overwritten'
-                : 'canvas.collab_conflict_deleted';
-            setToast({ text: tLocale(key), id: Date.now() });
+            setConflictLog((prev) => {
+                const next: ConflictEntry = {
+                    id: 'c_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+                    kind: info.kind,
+                    itemId: info.itemId,
+                    ts: Date.now(),
+                };
+                const merged = [next, ...prev];
+                return merged.length > CONFLICT_LOG_MAX ? merged.slice(0, CONFLICT_LOG_MAX) : merged;
+            });
         },
     });
     // Phase 4: asset sync — encrypts + broadcasts asset bytes for newly
@@ -923,31 +940,6 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             });
         },
     });
-
-    // Phase 23.x: soft-lock plumbing for concurrent text editing.
-    // (1) Broadcast OUR active editingId so peers can lock their UI on
-    //     the same item. publishEditingItem dedupes same-value calls
-    //     internally, so firing on every render is cheap.
-    // (2) Build a lock map from peers' editingItemId and push it into
-    //     canvas state — SET_EDITING in the reducer refuses to set the
-    //     editingId for any item in this map, preventing the last-
-    //     write-wins clobber that made concurrent typing unusable.
-    useEffect(() => {
-        if (!collab.connected) return;
-        collab.publishEditingItem(state.editingId);
-    }, [state.editingId, collab.connected]);
-    useEffect(() => {
-        const locks: Record<string, { name: string; color: string }> = {};
-        for (const peer of collab.peers) {
-            if (peer.editingItemId) {
-                locks[peer.editingItemId] = {
-                    name: peer.displayName || 'Peer',
-                    color: peer.color,
-                };
-            }
-        }
-        dispatch({ type: 'SET_PEER_LOCKS', locks });
-    }, [collab.peers, dispatch]);
 
     // Phase 5: surface connection lifecycle for the user. The collab strip
     // already dims on disconnect; this adds a brief banner when a real
@@ -3036,6 +3028,29 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                         />
                     </>
                 )}
+                {/* Phase 23.x: conflict log badge. Replaces the noisy toast
+                    that fired on every overlapping edit. Shows only when
+                    we've logged at least one conflict this session. Click
+                    opens a small popover listing recent ones — the user
+                    can inspect them if curious but they're not constantly
+                    pulled out of their flow. */}
+                {conflictLog.length > 0 && (
+                    <button
+                        type="button"
+                        onClick={() => setConflictPanelOpen(v => !v)}
+                        title={`${conflictLog.length} concurrent edit${conflictLog.length === 1 ? '' : 's'} this session`}
+                        className="relative no-drag flex items-center justify-center w-6 h-6 rounded-md hover:bg-white/8 transition-colors cursor-pointer"
+                        style={{ color: conflictPanelOpen ? '#f59e0b' : 'rgba(255,255,255,0.6)' }}
+                    >
+                        <AlertTriangle size={13} />
+                        <span
+                            className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] rounded-full bg-amber-500 text-black text-[8px] font-bold flex items-center justify-center px-[3px] tracking-normal"
+                            style={{ lineHeight: 1 }}
+                        >
+                            {conflictLog.length > 9 ? '9+' : conflictLog.length}
+                        </span>
+                    </button>
+                )}
                 {/* Phase 21: canvas chat. Shown only when this canvas is in
                     cloud-share land (otherwise there's nobody to chat with). */}
                 {cloudShare?.blobId && (
@@ -3071,6 +3086,76 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 <span className="w-px h-4 bg-white/10 mx-0.5" />
                 <CanvasSettingsPopover />
             </div>
+
+            {/* Conflict log popover — appears below the toolbar when the
+                user clicks the AlertTriangle badge. Lists the most recent
+                concurrent-edit events with a relative-time label. Bottom
+                row clears the log entirely. Capped at CONFLICT_LOG_MAX
+                items by the writer, so this is bounded. */}
+            {conflictPanelOpen && (
+                <div
+                    data-canvas-ui="1"
+                    className="absolute top-12 left-3 z-30 no-drag w-80 max-h-80 overflow-y-auto rounded-lg bg-[#0e0e14] border border-white/10 shadow-2xl"
+                    style={{ backdropFilter: 'blur(8px)' }}
+                >
+                    <div className="flex items-center justify-between px-3 py-2 border-b border-white/5 sticky top-0 bg-[#0e0e14]">
+                        <div className="flex items-center gap-2">
+                            <AlertTriangle size={12} className="text-amber-400" />
+                            <span className="text-[11px] font-medium text-white/85">Concurrent edits</span>
+                            <span className="text-[10px] text-white/40">{conflictLog.length}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                            <button
+                                type="button"
+                                onClick={() => setConflictLog([])}
+                                className="text-[10px] px-2 py-0.5 rounded text-white/40 hover:text-white/75 hover:bg-white/5 transition-colors"
+                                title="Clear log"
+                            >
+                                Clear
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setConflictPanelOpen(false)}
+                                className="text-white/40 hover:text-white/75 transition-colors p-0.5"
+                                title="Close"
+                            >
+                                <CloseIcon size={12} />
+                            </button>
+                        </div>
+                    </div>
+                    {conflictLog.length === 0 ? (
+                        <div className="px-3 py-6 text-center text-[11px] text-white/40">
+                            No concurrent edits yet
+                        </div>
+                    ) : (
+                        <div className="divide-y divide-white/5">
+                            {conflictLog.map((c) => {
+                                const ago = Math.floor((Date.now() - c.ts) / 1000);
+                                const agoLabel = ago < 60
+                                    ? `${ago}s ago`
+                                    : ago < 3600
+                                        ? `${Math.floor(ago / 60)}m ago`
+                                        : `${Math.floor(ago / 3600)}h ago`;
+                                return (
+                                    <div key={c.id} className="px-3 py-2 flex items-center justify-between gap-2 hover:bg-white/[0.02]">
+                                        <div className="min-w-0 flex-1">
+                                            <div className="text-[11px] text-white/80 truncate">
+                                                {c.kind === 'overwritten'
+                                                    ? 'Item overwritten by a collaborator'
+                                                    : 'Item deleted by a collaborator'}
+                                            </div>
+                                            <div className="text-[9px] text-white/35 truncate font-mono">
+                                                {c.itemId}
+                                            </div>
+                                        </div>
+                                        <div className="text-[10px] text-white/40 whitespace-nowrap">{agoLabel}</div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* Navigation cluster — sits directly under the top toolbar's
                 Home button. Search + Outline are view/navigation tools, not

@@ -121,6 +121,12 @@ export interface CanvasState {
     tool: CanvasTool;
     selectedIds: string[];
     editingId: string | null;                   // item currently in text-edit mode
+    /** Phase 23.x: soft-lock map — itemId → who's editing it on a peer.
+     *  Updated by KlypixCanvas via SET_PEER_LOCKS as collab.peers change.
+     *  SET_EDITING refuses to enter edit mode on any id in this map so
+     *  concurrent typing can't clobber the peer's patches. UI overlay
+     *  reads from here to render the "X is editing" badge. */
+    peerLocks: Record<string, { name: string; color: string }>;
     drawingId: string | null;                   // box being drawn in-flight
     color: string;                              // active color for new items
     strokeWidth: number;
@@ -217,6 +223,7 @@ const INITIAL_STATE: CanvasState = {
     tool: 'type',
     selectedIds: [],
     editingId: null,
+    peerLocks: {},
     drawingId: null,
     color: '#10b981',
     // Default 5 world-px: thin enough for precise marks, thick enough to
@@ -285,6 +292,7 @@ export type CanvasAction =
     | { type: 'SELECT'; ids: string[]; additive?: boolean }
     | { type: 'CLEAR_SELECTION' }
     | { type: 'SET_EDITING'; id: string | null }
+    | { type: 'SET_PEER_LOCKS'; locks: Record<string, { name: string; color: string }> }
     | { type: 'SET_DRAWING'; id: string | null }
     | { type: 'SET_COLOR'; color: string }
     | { type: 'SET_STROKE_WIDTH'; width: number }
@@ -654,7 +662,14 @@ function reducerImpl(state: CanvasState, action: CanvasAction): CanvasState {
                 textCapsuleAnchorId: null,
             };
 
-        case 'SET_EDITING':
+        case 'SET_EDITING': {
+            // Soft-lock gate (Phase 23.x): block local entry into edit
+            // mode if a peer is already editing this item. Prevents the
+            // last-write-wins clobbering on concurrent `text` patches
+            // that made same-card typing unusable in collab.
+            if (action.id != null && state.peerLocks[action.id]) {
+                return state;
+            }
             return {
                 ...state,
                 editingId: action.id,
@@ -663,6 +678,35 @@ function reducerImpl(state: CanvasState, action: CanvasAction): CanvasState {
                 // pointer events.
                 textCapsuleAnchorId: action.id != null ? null : state.textCapsuleAnchorId,
             };
+        }
+
+        case 'SET_PEER_LOCKS': {
+            // Shallow-equality early-out so a no-op SET (KlypixCanvas
+            // refreshing the same map after a cursor tick) doesn't
+            // cascade into a re-render of every consumer.
+            const prev = state.peerLocks;
+            const next = action.locks;
+            const prevKeys = Object.keys(prev);
+            const nextKeys = Object.keys(next);
+            if (prevKeys.length === nextKeys.length) {
+                let same = true;
+                for (const k of nextKeys) {
+                    const a = prev[k];
+                    const b = next[k];
+                    if (!a || a.name !== b.name || a.color !== b.color) { same = false; break; }
+                }
+                if (same) return state;
+            }
+            // If we were currently editing an item that just got
+            // locked by a peer (extremely unlikely race — but handle it),
+            // bail out of edit mode rather than fight the peer.
+            const editingNowLocked = state.editingId != null && next[state.editingId];
+            return {
+                ...state,
+                peerLocks: next,
+                editingId: editingNowLocked ? null : state.editingId,
+            };
+        }
 
         case 'SET_TEXT_CAPSULE_ANCHOR': {
             if (state.textCapsuleAnchorId === action.id) return state;

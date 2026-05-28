@@ -202,7 +202,7 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
     const drainingRef = useRef(false);
     // Recent local edits keyed by item id, used for conflict detection.
     // Pruned opportunistically; expected size stays small (<20 entries).
-    const recentLocalEditsRef = useRef<Map<string, { at: number; type: 'update' | 'delete' }>>(new Map());
+    const recentLocalEditsRef = useRef<Map<string, { at: number; type: 'update' | 'delete'; fields?: Set<string> }>>(new Map());
     const onConflictRef = useRef(onConflict);
     onConflictRef.current = onConflict;
     // Mirror authed into a ref so the cloudApi guards inside the effect see
@@ -431,21 +431,36 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
             }
             const action = p.action as CanvasAction;
             if (!action || typeof action !== 'object' || !('type' in action)) return;
-            // Conflict detection (Phase 9): if this remote op touches an
-            // item the local user edited within CONFLICT_WINDOW_MS, fire
-            // the onConflict callback so the UI can warn them. Done BEFORE
-            // dispatch so the toast describes what's about to be overwritten,
-            // not what already was.
+            // Conflict detection (Phase 9, refined 2026-05-28): only flag
+            // a conflict when the remote op touches the SAME FIELD as our
+            // recent local edit — not when both clients are editing the
+            // same item from different angles (e.g. local moves it while
+            // peer types in it). Previous "any touch = conflict" produced
+            // dozens of false positives during normal concurrent work and
+            // drowned out the rare real-conflict signal.
             const now = Date.now();
             const recent = recentLocalEditsRef.current;
-            const checkConflict = (itemId: string, remoteKind: 'overwritten' | 'deleted') => {
+            const checkConflict = (
+                itemId: string,
+                remoteKind: 'overwritten' | 'deleted',
+                remotePatchKeys?: ReadonlyArray<string>,
+            ) => {
                 const entry = recent.get(itemId);
                 if (!entry) return;
                 if (now - entry.at > CONFLICT_WINDOW_MS) return;
+                // Deletes are always-conflict (the whole item is gone, not
+                // just a field). For UPDATE overwrites, require at least one
+                // overlapping field between local + remote patches.
+                if (remoteKind === 'overwritten' && entry.fields && remotePatchKeys) {
+                    const overlap = remotePatchKeys.some(k => entry.fields!.has(k));
+                    if (!overlap) return;
+                }
                 try { onConflictRef.current?.({ kind: remoteKind, itemId }); } catch { /* swallow */ }
             };
             if (action.type === 'UPDATE_ITEM') {
-                checkConflict(action.id, 'overwritten');
+                const patch = (action as any).patch;
+                const keys = patch && typeof patch === 'object' ? Object.keys(patch) : [];
+                checkConflict(action.id, 'overwritten', keys);
             } else if (action.type === 'DELETE_ITEMS') {
                 for (const id of action.ids) checkConflict(id, 'deleted');
             }
@@ -519,7 +534,14 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
                 if (now - v.at > CONFLICT_WINDOW_MS * 2) recent.delete(k);
             }
             if (action.type === 'UPDATE_ITEM') {
-                recent.set(action.id, { at: now, type: 'update' });
+                // Track which FIELDS we just touched, so conflict detection
+                // can ignore peer ops that touch DIFFERENT fields on the
+                // same item (e.g. peer types text while we move the item).
+                const patch = (action as any).patch;
+                const fields = patch && typeof patch === 'object'
+                    ? new Set<string>(Object.keys(patch))
+                    : undefined;
+                recent.set(action.id, { at: now, type: 'update', fields });
             } else if (action.type === 'DELETE_ITEMS') {
                 for (const id of action.ids) recent.set(id, { at: now, type: 'delete' });
             }

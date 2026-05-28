@@ -62,6 +62,11 @@ export interface CollabPeer {
     /** Item ids currently selected on the peer's side — used to draw
      *  colored selection halos. */
     selectionIds?: string[];
+    /** Soft lock — the item id the peer is actively editing (text or
+     *  any focused field). Null/undefined = peer is not editing.
+     *  Lets us block local edit-mode on the same item to prevent
+     *  last-write-wins clobbering on concurrent text input. */
+    editingItemId?: string | null;
 }
 
 /** Shape of a single presence-state slot in Supabase's `presence_state` map.
@@ -131,6 +136,13 @@ export interface UseCanvasCollabResult {
      *  Throttled to ~10Hz — selection changes are far less frequent
      *  than cursor moves so we don't need cursor-grade rates. */
     publishSelection: (selectionIds: string[]) => void;
+    /** Phase 23.x: broadcast which item this device is actively editing
+     *  (text field focus, etc.). Peers use it to soft-lock their UI on
+     *  that item — no concurrent typing means no last-write-wins
+     *  clobbering on `text` patches. Pass null to clear the lock when
+     *  the user blurs / finishes editing. State changes infrequently
+     *  (once per focus/blur) so no throttle needed. */
+    publishEditingItem: (itemId: string | null) => void;
     /** Phase 21: messages from peers (excludes own — we keep an optimistic
      *  echo via the same `messages` slot when we call sendMessage so the
      *  UI gets instant feedback). Most recent last. Capped to last 200 in
@@ -313,7 +325,7 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         // arrive at ~30Hz and we want a single coalesced render. Stored on a
         // Map, then merged into peers via setPeers on each presence change OR
         // broadcast tick (rAF-coalesced below).
-        const ephemeralRef = new Map<string, { cursorX?: number; cursorY?: number; cursorAt?: number; selectionIds?: string[] }>();
+        const ephemeralRef = new Map<string, { cursorX?: number; cursorY?: number; cursorAt?: number; selectionIds?: string[]; editingItemId?: string | null }>();
         let renderScheduled = false;
         const scheduleRender = () => {
             if (renderScheduled) return;
@@ -350,6 +362,7 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                         cursorY: cursorFresh ? eph?.cursorY : undefined,
                         cursorAt: cursorFresh ? eph?.cursorAt : undefined,
                         selectionIds: eph?.selectionIds,
+                        editingItemId: eph?.editingItemId ?? null,
                     });
                 }
             }
@@ -398,6 +411,19 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                 if (p.device_id === deviceId) return;
                 const prev = ephemeralRef.get(p.device_id) || {};
                 ephemeralRef.set(p.device_id, { ...prev, selectionIds: Array.isArray(p.ids) ? p.ids : [] });
+                scheduleRender();
+            })
+            // Phase 23.x: soft-lock signal — peer is actively editing a
+            // specific item. Locally we'll block our own SET_EDITING on
+            // the same id so concurrent typing can't race the patch.
+            .on('broadcast', { event: 'editing' }, (msg) => {
+                if (cancelled) return;
+                const p = (msg as any)?.payload;
+                if (!p || typeof p.device_id !== 'string') return;
+                if (p.device_id === deviceId) return;
+                const prev = ephemeralRef.get(p.device_id) || {};
+                const next = typeof p.item_id === 'string' ? p.item_id : null;
+                ephemeralRef.set(p.device_id, { ...prev, editingItemId: next });
                 scheduleRender();
             })
             // Phase 21: per-canvas DM. Ephemeral broadcast-only; no server
@@ -511,6 +537,25 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         }, CURSOR_THROTTLE_MS - sinceLast);
     };
 
+    // Phase 23.x: soft-lock publisher — sent on edit-start / blur. State
+    // changes once per focus, so no throttle. The receiver caches the
+    // value in ephemeralRef and the canvas-level effect builds a lock
+    // map from it. Cleared automatically on channel teardown via
+    // presence-leave (eph entry deleted in computeAndSet cleanup).
+    const lastPublishedEditingRef = useRef<string | null>(null);
+    const publishEditingItem = (itemId: string | null): void => {
+        if (lastPublishedEditingRef.current === itemId) return;
+        lastPublishedEditingRef.current = itemId;
+        const channel = channelRef.current;
+        if (!channel) return;
+        const deviceId = getDeviceId();
+        channel.send({
+            type: 'broadcast',
+            event: 'editing',
+            payload: { device_id: deviceId, item_id: itemId },
+        });
+    };
+
     const publishSelection = (selectionIds: string[]): void => {
         const channel = channelRef.current;
         if (!channel) return;
@@ -606,6 +651,7 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         connected: connected || ghostPeers.length > 0,
         publishCursor,
         publishSelection,
+        publishEditingItem,
         messages,
         sendMessage,
     };

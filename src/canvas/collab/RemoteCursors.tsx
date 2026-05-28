@@ -154,6 +154,66 @@ export function RemoteCursors({ peers, view }: Props) {
  *  peer has selected. Lives inside the world transform so the rectangles
  *  pan/zoom with the canvas. Renders nothing for peers with no selection
  *  or for selections that reference items no longer in the local state. */
+/**
+ * Phase 23.x: soft-lock visual indicator. Each item in canvasState.peerLocks
+ * gets a small "🔒 Peer Name" pill anchored at its top-right corner, in the
+ * peer's color. Rendered in the SCREEN-space overlay layer so the pill stays
+ * a fixed-pixel size regardless of zoom — that's why it lives here next to
+ * RemoteCursors rather than inside the world-transform tree.
+ *
+ * Driven by canvasState.peerLocks (the soft-lock map maintained by the
+ * KlypixCanvas-level effect that watches collab.peers). Locked items also
+ * refuse SET_EDITING at the reducer level — this UI just communicates the
+ * lock so the user understands WHY their double-click did nothing.
+ */
+export function RemoteLockBadges({ view }: { view: ViewState }) {
+    const { state } = useCanvasStore();
+    const lockEntries = Object.entries(state.peerLocks);
+    if (lockEntries.length === 0) return null;
+    return (
+        <>
+            {lockEntries.map(([itemId, lock]) => {
+                const item = state.items[itemId] as any;
+                if (!item) return null;
+                // Anchor at top-right corner of the item. world → screen
+                // projection uses the same helper everything else does, so
+                // the badge never drifts from the item under zoom/pan.
+                const corner = worldToScreen({ x: item.x + (item.w ?? 0), y: item.y }, view);
+                return (
+                    <div
+                        key={`lock-${itemId}`}
+                        style={{
+                            position: 'absolute',
+                            left: corner.x,
+                            top: corner.y - 22,
+                            transform: 'translate(-100%, 0)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            padding: '2px 6px 2px 5px',
+                            borderRadius: 999,
+                            background: lock.color,
+                            color: 'white',
+                            fontSize: 10,
+                            fontWeight: 600,
+                            letterSpacing: 0.2,
+                            whiteSpace: 'nowrap',
+                            boxShadow: '0 2px 6px rgba(0,0,0,0.35)',
+                            pointerEvents: 'none',
+                        }}
+                    >
+                        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <rect x="3" y="11" width="18" height="11" rx="2" />
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                        </svg>
+                        <span>{lock.name}</span>
+                    </div>
+                );
+            })}
+        </>
+    );
+}
+
 export function RemoteSelectionHalos({ peers, viewZoom }: { peers: CollabPeer[]; viewZoom: number }) {
     const { state } = useCanvasStore();
     const haloed: { peer: CollabPeer; rects: { id: string; x: number; y: number; w: number; h: number }[] }[] = [];

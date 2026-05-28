@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useCanvasStore } from './state/canvasStore';
-import { RemoteCursors, RemoteSelectionHalos } from './collab/RemoteCursors';
+import { RemoteCursors, RemoteSelectionHalos, RemoteLockBadges } from './collab/RemoteCursors';
 import type { CollabPeer } from './collab/useCanvasCollab';
 import { TextItemView } from './items/TextItem';
 import { BoxItemView } from './items/BoxItem';
@@ -653,6 +653,13 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeer
                 <RemoteCursors peers={collabPeers} view={view} />
             </div>
         )}
+        {/* Soft-lock badges: small "🔒 Peer Name" pill above any item a
+            peer is actively editing. Screen-space layer so the pill
+            keeps fixed pixel size at any zoom. zIndex just under cursors
+            so a moving cursor reads on top when they overlap. */}
+        <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 999 }}>
+            <RemoteLockBadges view={view} />
+        </div>
         {/* Drawing resize handles — only when exactly ONE drawing is
             selected. Multi-select shows rings only; single select adds
             the 8 interactive handles for scale / stretch. Items already
