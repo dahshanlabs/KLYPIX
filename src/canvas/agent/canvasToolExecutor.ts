@@ -562,6 +562,7 @@ export async function executeToolCall(call: ToolCall, ctx: ToolExecContext): Pro
                 collapsed: false,
                 scopeLocked: false,
                 borderColor: 'rgba(16,185,129,0.35)',
+                autoSized: true,
             };
             ctx.dispatch({ type: 'ADD_ITEM', item: container });
             // Reparent each child; clear stale authoredInParent so the new
@@ -935,6 +936,7 @@ export async function executeToolCall(call: ToolCall, ctx: ToolExecContext): Pro
                     collapsed: false,
                     scopeLocked: false,
                     borderColor: 'rgba(16,185,129,0.35)',
+                    autoSized: true,
                 };
                 ctx.dispatch({ type: 'ADD_ITEM', item: container });
                 createdContainerIds.push(container.id);

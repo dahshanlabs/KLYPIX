@@ -286,6 +286,18 @@ export interface ContainerItem extends BaseItem {
     // PATHOLOGICAL_CAPSULE_SCALE, re-seeds. Bumped once per item to
     // keep load idempotent.
     collapsedWSeedVersion?: number;
+    // Auto-grow lifecycle marker. When true (default for new
+    // containers), gesture-end commits on a child re-evaluate the
+    // container's frame and grow it (never shrink) to keep the
+    // rotated AABB of every child wrapped. Flipped to false the
+    // first time the user resizes the container's OWN corner
+    // handles — from that point the user has explicitly shaped the
+    // frame and we stop poking it. Re-enabled only by the explicit
+    // "Fit to contents" menu action, which also allows shrinking.
+    // Legacy files (field undefined) are treated as true so existing
+    // canvases keep the old auto-grow-on-move behavior they had
+    // before the flag existed.
+    autoSized?: boolean;
 }
 
 // Interactive card the agent uses to ask the user for approval before taking

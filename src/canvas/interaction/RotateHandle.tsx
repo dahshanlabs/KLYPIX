@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { RotateCw } from 'lucide-react';
 import { useCanvasStore } from '../state/canvasStore';
+import { refitContainers } from '../items/containerFit';
 
 // Rotation handle for items that support visual rotation (box / image / text
 // for v1). Renders a small circle ~24 screen-px ABOVE the item's top edge,
@@ -151,6 +152,21 @@ export function RotateHandle({ itemId, x, y, w, h, rotation = 0 }: Props) {
     const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
         dragRef.current = null;
         try { (e.target as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* noop */ }
+        // Gesture-end auto-grow: a rotated child's visible envelope can
+        // poke past its parent's frame even though its stored x/y/w/h
+        // never moved. Refit the parent in grow-only mode so the frame
+        // wraps the rotated AABB. Skipped automatically when the parent
+        // has been user-shaped (autoSized===false).
+        const it = state.items[itemId];
+        if (it?.parentId) {
+            refitContainers([it.parentId], {
+                items: state.items,
+                lines: state.lines,
+                strokes: state.strokes,
+                dispatch,
+                mode: 'grow-only',
+            });
+        }
     };
 
     return (

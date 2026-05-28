@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { RotateCw } from 'lucide-react';
 import { useCanvasStore } from '../state/canvasStore';
 import { getSelectionBBox } from './scaleSelection';
+import { refitContainers, collectAffectedParents } from '../items/containerFit';
 
 // Outer bounding box that wraps the entire multi-selection (items + lines +
 // strokes). Renders only when 2+ entities are selected. All eight handles
@@ -455,6 +456,20 @@ export function MultiSelectionBox() {
             const it = state.items[id];
             if (it) commit({ type: 'UPDATE_ITEM', id, patch: { x: it.x } });
         }
+        // Gesture-end auto-grow: rotation expands each child's visual
+        // envelope. Refit every parent the selection touches so each
+        // group frame wraps its now-rotated children. Skipped per
+        // container when autoSized===false (user-shaped).
+        const parents = collectAffectedParents(state.selectedIds, state.items);
+        if (parents.size > 0) {
+            refitContainers(parents, {
+                items: state.items,
+                lines: state.lines,
+                strokes: state.strokes,
+                dispatch,
+                mode: 'grow-only',
+            });
+        }
     }
 
     function onPointerDown(e: React.PointerEvent<HTMLDivElement>, handle: HandlePos) {
@@ -520,6 +535,20 @@ export function MultiSelectionBox() {
             const id = state.selectedIds[0];
             const it = state.items[id];
             if (it) commit({ type: 'UPDATE_ITEM', id, patch: { x: it.x } });
+        }
+        // Gesture-end auto-grow: scaling enlarges each child's footprint,
+        // which can push past the parent frame. Refit every parent the
+        // selection touches so each group frame wraps its now-larger
+        // children. Skipped per container when autoSized===false.
+        const parents = collectAffectedParents(state.selectedIds, state.items);
+        if (parents.size > 0) {
+            refitContainers(parents, {
+                items: state.items,
+                lines: state.lines,
+                strokes: state.strokes,
+                dispatch,
+                mode: 'grow-only',
+            });
         }
     }
 

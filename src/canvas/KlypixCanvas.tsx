@@ -68,8 +68,8 @@ import { CollabPresenceChips } from './collab/CollabPresenceChips';
 import { getCloudShare } from './cloud/cloudShareStore';
 import { useAuth } from '../components/AuthProvider';
 import { VoiceRecorderPanel } from '../components/VoiceRecorderPanel';
+import { refitContainers } from './items/containerFit';
 import {
-    suppressContainerResizeScaling,
     getContainerRenderMode,
     isTabMode,
     isDottedMode,
@@ -536,10 +536,32 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         for (const id of itemIds) {
             const it = s.items[id];
             if (!it) continue;
-            if (it.x < minX) minX = it.x;
-            if (it.y < minY) minY = it.y;
-            if (it.x + it.w > maxX) maxX = it.x + it.w;
-            if (it.y + it.h > maxY) maxY = it.y + it.h;
+            // Rotation-aware AABB: items render with a CSS transform rotating
+            // around their center, so their visual extent is the rotated AABB,
+            // not the stored x..x+w / y..y+h rect. Without this a rotated
+            // child sticks out past the new group's frame even though it's
+            // semantically inside the group. Mirrors getSelectionBBox in
+            // interaction/scaleSelection.ts so the new container's bounds
+            // match the multi-select rect the user saw at group time.
+            const rot = (it as any).rotation;
+            let ix0 = it.x, iy0 = it.y, ix1 = it.x + it.w, iy1 = it.y + it.h;
+            if (typeof rot === 'number' && rot !== 0) {
+                const cx = it.x + it.w / 2;
+                const cy = it.y + it.h / 2;
+                const rad = (rot * Math.PI) / 180;
+                const cos = Math.abs(Math.cos(rad));
+                const sin = Math.abs(Math.sin(rad));
+                const hw = it.w / 2;
+                const hh = it.h / 2;
+                const rotW = hw * cos + hh * sin;
+                const rotH = hw * sin + hh * cos;
+                ix0 = cx - rotW; iy0 = cy - rotH;
+                ix1 = cx + rotW; iy1 = cy + rotH;
+            }
+            if (ix0 < minX) minX = ix0;
+            if (iy0 < minY) minY = iy0;
+            if (ix1 > maxX) maxX = ix1;
+            if (iy1 > maxY) maxY = iy1;
         }
         for (const id of lineIds) {
             const ln = s.lines[id];
@@ -610,6 +632,10 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             collapsed: false,
             scopeLocked: false,
             borderColor: 'rgba(16,185,129,0.35)',
+            // New groups follow their children's bounds until the user
+            // resizes the frame themselves; flipped to false in
+            // ResizeHandle when a container's own handle is dragged.
+            autoSized: true,
         };
         commit({ type: 'ADD_ITEM', item: container });
         dispatch({ type: 'INCREMENT_GROUP_COUNTER' });
@@ -897,6 +923,31 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             });
         },
     });
+
+    // Phase 23.x: soft-lock plumbing for concurrent text editing.
+    // (1) Broadcast OUR active editingId so peers can lock their UI on
+    //     the same item. publishEditingItem dedupes same-value calls
+    //     internally, so firing on every render is cheap.
+    // (2) Build a lock map from peers' editingItemId and push it into
+    //     canvas state — SET_EDITING in the reducer refuses to set the
+    //     editingId for any item in this map, preventing the last-
+    //     write-wins clobber that made concurrent typing unusable.
+    useEffect(() => {
+        if (!collab.connected) return;
+        collab.publishEditingItem(state.editingId);
+    }, [state.editingId, collab.connected]);
+    useEffect(() => {
+        const locks: Record<string, { name: string; color: string }> = {};
+        for (const peer of collab.peers) {
+            if (peer.editingItemId) {
+                locks[peer.editingItemId] = {
+                    name: peer.displayName || 'Peer',
+                    color: peer.color,
+                };
+            }
+        }
+        dispatch({ type: 'SET_PEER_LOCKS', locks });
+    }, [collab.peers, dispatch]);
 
     // Phase 5: surface connection lifecycle for the user. The collab strip
     // already dims on disconnect; this adds a brief banner when a real
@@ -2605,33 +2656,22 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                         if (state.selectedIds.length !== 1) return;
                         const container = state.items[state.selectedIds[0]];
                         if (!container || container.type !== 'container') return;
-                        // Compute a tight bounding rect around direct children.
-                        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-                        let kids = 0;
-                        for (const id of state.order) {
-                            const c = state.items[id];
-                            if (!c || c.parentId !== container.id) continue;
-                            kids++;
-                            if (c.x < minX) minX = c.x;
-                            if (c.y < minY) minY = c.y;
-                            if (c.x + c.w > maxX) maxX = c.x + c.w;
-                            if (c.y + c.h > maxY) maxY = c.y + c.h;
-                        }
-                        if (kids === 0) return;  // nothing to fit
-                        const PAD = 24;
-                        const TITLE = 28;
-                        // Skip the auto-scaling effect for THIS resize —
-                        // children are already at their final positions.
-                        suppressContainerResizeScaling(container.id);
-                        commit({
-                            type: 'UPDATE_ITEM',
-                            id: container.id,
-                            patch: {
-                                x: minX - PAD,
-                                y: minY - PAD - TITLE,
-                                w: (maxX - minX) + PAD * 2,
-                                h: (maxY - minY) + PAD * 2 + TITLE,
-                            } as any,
+                        // Push one snapshot so the whole refit lands as a
+                        // single undo entry — the helper's dispatch chain
+                        // skips commit() to stay quiet during gestures, so
+                        // we wrap it here.
+                        pushSnapshot();
+                        // 'fit-exact' both shrinks AND grows; bypasses the
+                        // autoSized gate (user explicitly asked); and re-
+                        // enables autoSized so subsequent child gestures
+                        // continue to track. Uses rotated AABB so a tilted
+                        // child's visible envelope is what we fit.
+                        refitContainers([container.id], {
+                            items: state.items,
+                            lines: state.lines,
+                            strokes: state.strokes,
+                            dispatch,
+                            mode: 'fit-exact',
                         });
                     }}
                     onSaveAsTemplate={() => {

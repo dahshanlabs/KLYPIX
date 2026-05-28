@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import { useCanvasStore } from '../state/canvasStore';
+import { refitContainers } from '../items/containerFit';
 
 // 8-handle resize (4 corners + 4 edges) for boxes, images, containers, and
 // text items. Each handle drags in its own direction; opposite edges stay
@@ -502,6 +503,15 @@ function SingleHandle({ itemId, x, y, w, h, minW = 20, minH = 20, preserveAspect
         const userResizedPatch: any = (cur?.type === 'text' && (cur as any).border && heightChanged)
             ? { userResizedHeight: true }
             : {};
+        // When the user is resizing a container's OWN expanded frame
+        // (widthField is 'w' or unset — collapsed-tab cosmetic drags
+        // use 'collapsedW'), they are explicitly shaping the group.
+        // Flip autoSized off so subsequent child gestures stop poking
+        // the frame they just chose. The flag is restored to true only
+        // by the explicit "Fit to contents" menu action.
+        const autoSizedPatch: any = (cur?.type === 'container' && (!widthField || widthField === 'w'))
+            ? { autoSized: false }
+            : {};
         if (widthField && widthField !== 'w') {
             dispatch({
                 type: 'UPDATE_ITEM',
@@ -520,6 +530,7 @@ function SingleHandle({ itemId, x, y, w, h, minW = 20, minH = 20, preserveAspect
                     x: nx, y: ny, w: nw, h: nh, ...contentPatch,
                     ...(aip ? { authoredInParent: aip } : {}),
                     ...userResizedPatch,
+                    ...autoSizedPatch,
                 } as any,
             });
         }
@@ -531,6 +542,25 @@ function SingleHandle({ itemId, x, y, w, h, minW = 20, minH = 20, preserveAspect
     const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
         dragRef.current = null;
         try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch {}
+        // Gesture-end auto-grow: if the resized item lives inside a
+        // container, its new bounds may have pushed past the parent's
+        // frame. Run a grow-only refit so the parent wraps the new
+        // shape. Skipped automatically when the parent has been
+        // user-shaped (autoSized===false). Resizing a container's
+        // OWN frame doesn't refit it (autoSized was just cleared);
+        // but its grandparent — if any — should still grow to wrap
+        // the now-larger child container, so we pass the parentId
+        // of whichever item was dragged.
+        const it = state.items[itemId];
+        if (it?.parentId) {
+            refitContainers([it.parentId], {
+                items: state.items,
+                lines: state.lines,
+                strokes: state.strokes,
+                dispatch,
+                mode: 'grow-only',
+            });
+        }
     };
 
     // Screen-constant handle chrome. Previously SIZE was in world-px

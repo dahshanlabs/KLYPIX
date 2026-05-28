@@ -1293,6 +1293,14 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
             for (const parentId of affectedParentIds) {
                 const parent = s.items[parentId];
                 if (!parent || parent.type !== 'container') continue;
+                // Respect explicit user sizing. Once the user has resized
+                // the container's own corner handles, autoSized flips to
+                // false and we stop poking the frame even if a child now
+                // pokes outside it — the user shaped this; visible
+                // overflow is acceptable until they ask for "Fit to
+                // contents" or resize again. Legacy containers (no flag)
+                // default to true so saved files keep auto-growing.
+                if ((parent as any).autoSized === false) continue;
                 // Skip pure-translation parents. This was the root of
                 // the "move father → child height grows" bug: dragging
                 // Group 3 pulled Group 1 / Group 2 / inner texts along
@@ -1324,10 +1332,31 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
                 const parentHeaderBottom = parent.y + TITLE;
                 for (const child of Object.values(s.items)) {
                     if (child.parentId !== parentId) continue;
-                    if (child.x < parent.x) { minX = child.x - PAD; needsGrow = true; }
-                    if (child.y < parentHeaderBottom) { minY = child.y - PAD - TITLE; needsGrow = true; }
-                    if (child.x + child.w > parentRight) { maxX = child.x + child.w + PAD; needsGrow = true; }
-                    if (child.y + child.h > parentBottom) { maxY = child.y + child.h + PAD; needsGrow = true; }
+                    // Rotation-aware AABB: a rotated child's visible
+                    // envelope is larger than its stored x..x+w / y..y+h
+                    // rect. Without this the parent didn't grow to wrap
+                    // a tilted card's protruding corners, leaving the
+                    // visible content outside the frame. Matches the
+                    // helper in items/containerFit.ts.
+                    const rot = (child as any).rotation;
+                    let cx0 = child.x, cy0 = child.y, cx1 = child.x + child.w, cy1 = child.y + child.h;
+                    if (typeof rot === 'number' && rot !== 0 && child.type !== 'container') {
+                        const ccx = child.x + child.w / 2;
+                        const ccy = child.y + child.h / 2;
+                        const rad = (rot * Math.PI) / 180;
+                        const cos = Math.abs(Math.cos(rad));
+                        const sin = Math.abs(Math.sin(rad));
+                        const hw = child.w / 2;
+                        const hh = child.h / 2;
+                        const rotW = hw * cos + hh * sin;
+                        const rotH = hw * sin + hh * cos;
+                        cx0 = ccx - rotW; cy0 = ccy - rotH;
+                        cx1 = ccx + rotW; cy1 = ccy + rotH;
+                    }
+                    if (cx0 < parent.x) { minX = cx0 - PAD; needsGrow = true; }
+                    if (cy0 < parentHeaderBottom) { minY = cy0 - PAD - TITLE; needsGrow = true; }
+                    if (cx1 > parentRight) { maxX = cx1 + PAD; needsGrow = true; }
+                    if (cy1 > parentBottom) { maxY = cy1 + PAD; needsGrow = true; }
                 }
                 for (const ln of Object.values(s.lines)) {
                     if (ln.parentId !== parentId) continue;
