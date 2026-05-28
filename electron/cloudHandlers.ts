@@ -300,6 +300,32 @@ export function registerCloudHandlers(ipcMain: IpcMain): void {
         if (error) throw new Error(`Remove collaborator failed: ${error.message}`);
     });
 
+    // Desktop-first invite handoff. The web invite page (klypix.com/invite/
+    // <token>) can fire klypix://invite/<token>; main forwards the token
+    // here via IPC. We call accept_canvas_invitation under the desktop's
+    // currently signed-in session — guaranteeing the user accepts as the
+    // SAME identity they're already operating under in the desktop.
+    // Eliminates the browser-vs-desktop mismatch class of bug.
+    ipcMain.handle('canvas-cloud:accept-invitation', async (_e, args: { token: string }) => {
+        const userId = await requireUserId();
+        const supabase = getSupabase();
+        const token = (args?.token ?? '').trim();
+        if (!token) throw new Error('Invitation token is required');
+        const { data, error } = await supabase.rpc('accept_canvas_invitation', { p_token: token });
+        if (error) {
+            // Surface a friendlier error when the token's already been used —
+            // common case when the user revisits a consumed link.
+            if (/expired|revoked|already used|not found|no rows/i.test(error.message)) {
+                throw new Error('This invitation is no longer valid (expired, revoked, or already used). Ask the sender for a new one.');
+            }
+            throw new Error(error.message);
+        }
+        // RPC returns the accepted canvas's blob_id + title + (newer servers)
+        // inviter identity. Renderer uses this to toast "Joined <title>"
+        // and refresh the library so the canvas appears immediately.
+        return { ok: true, acceptedBy: userId, data };
+    });
+
     // Transfer ownership of a canvas to one of the existing collaborators.
     // Owner-only — the RPC enforces ownership internally via auth.uid().
     // The old owner becomes a collaborator on the same canvas so they

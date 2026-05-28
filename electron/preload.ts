@@ -418,6 +418,18 @@ contextBridge.exposeInMainWorld('electron', {
             ipcRenderer.invoke('canvas-cloud:list-shared'),
         leaveShared: (blobId: string) =>
             ipcRenderer.invoke('canvas-cloud:leave-shared', blobId),
+        // Desktop-first invite handoff. The web invite page can fire
+        // klypix://invite/<token> which main routes here via the
+        // `invite:handoff` IPC. Renderer listens via onInviteHandoff and
+        // calls acceptInvitation to consume the token under the desktop's
+        // currently signed-in session — guarantees identity match.
+        acceptInvitation: (token: string) =>
+            ipcRenderer.invoke('canvas-cloud:accept-invitation', { token }),
+        onInviteHandoff: (callback: (payload: { token: string }) => void) => {
+            const listener = (_: any, payload: { token: string }) => callback(payload);
+            ipcRenderer.on('invite:handoff', listener);
+            return () => ipcRenderer.removeListener('invite:handoff', listener);
+        },
     },
     // Phase 13: server-trusted daily spend tracking. Renderer dual-writes
     // (localStorage + this RPC) and reads from here when checking budget

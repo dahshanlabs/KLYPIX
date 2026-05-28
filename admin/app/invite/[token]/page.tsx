@@ -193,6 +193,7 @@ export default function AcceptInvitePage() {
                     {view.status === 'invalid' && <InvalidCard reason={view.reason} />}
                     {view.status === 'preview' && (
                         <PreviewCard
+                            token={token}
                             titleHint={view.titleHint}
                             inviter={view.inviter}
                             acceptor={view.acceptor}
@@ -200,7 +201,7 @@ export default function AcceptInvitePage() {
                         />
                     )}
                     {view.status === 'sign-in' && (
-                        <SignInCard titleHint={view.titleHint} inviter={view.inviter} />
+                        <SignInCard token={token} titleHint={view.titleHint} inviter={view.inviter} />
                     )}
                     {view.status === 'accepting' && <LoadingCard label="Accepting…" />}
                     {view.status === 'accepted' && <AcceptedCard titleHint={view.titleHint} inviter={view.inviter} acceptor={view.acceptor} />}
@@ -276,6 +277,33 @@ function InviterLine({ inviter }: { inviter: InviterIdentity }) {
     );
 }
 
+// Desktop-first handoff button. Fires `klypix://invite/<token>` which the
+// installed Klypix desktop app catches via its registered protocol
+// handler. The desktop accepts the invitation under its own signed-in
+// session — eliminating the browser-vs-desktop identity mismatch class
+// of bugs entirely. The button always renders: if the desktop isn't
+// installed the OS silently no-ops, and the user can still fall back to
+// the in-browser accept flow below.
+function DesktopHandoffButton({ token }: { token: string }) {
+    return (
+        <button
+            type="button"
+            onClick={() => {
+                if (typeof window === 'undefined') return;
+                window.location.href = `klypix://invite/${encodeURIComponent(token)}`;
+            }}
+            className="w-full rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 transition-colors border border-emerald-500/40 text-emerald-300 text-sm font-medium py-3 flex items-center justify-center gap-2"
+        >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="18" height="14" rx="2" />
+                <path d="M8 21h8" />
+                <path d="M12 17v4" />
+            </svg>
+            Open in Klypix Desktop
+        </button>
+    );
+}
+
 // Recipient pill shown on the preview / accepted cards. Lets the user
 // confirm which account they're acting under before / after accepting —
 // critical when they're juggling multiple browser profiles or accounts.
@@ -310,7 +338,7 @@ function AcceptorLine({ acceptor, onSwitch, switchLabel = 'Switch account' }: { 
     );
 }
 
-function PreviewCard({ titleHint, inviter, acceptor, onAccept }: { titleHint: string | null; inviter: InviterIdentity; acceptor: AcceptorIdentity | null; onAccept: () => void }) {
+function PreviewCard({ token, titleHint, inviter, acceptor, onAccept }: { token: string; titleHint: string | null; inviter: InviterIdentity; acceptor: AcceptorIdentity | null; onAccept: () => void }) {
     const hasInviter = !!(inviter.name || inviter.email);
     // "Switch account" signs out, reloads the page → the loader sees no
     // session → renders SignInCard so the user can pick a different one.
@@ -331,14 +359,23 @@ function PreviewCard({ titleHint, inviter, acceptor, onAccept }: { titleHint: st
                 </div>
                 <AcceptorLine acceptor={acceptor} onSwitch={handleSwitch} />
             </div>
-            <div className="px-5 py-5">
+            <div className="px-5 py-5 flex flex-col gap-3">
+                {/* Recommended path: hand off to the desktop app. Whoever's
+                    signed into the desktop becomes the recipient — no
+                    browser-vs-desktop identity mismatch possible. */}
+                <DesktopHandoffButton token={token} />
+                <div className="flex items-center gap-3 text-white/30 text-[10px]">
+                    <div className="flex-1 h-px bg-white/10" />
+                    <span>or accept here</span>
+                    <div className="flex-1 h-px bg-white/10" />
+                </div>
                 <button
                     onClick={onAccept}
-                    className="w-full rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 transition-colors border border-emerald-500/40 text-emerald-300 text-sm font-medium py-3"
+                    className="w-full rounded-lg bg-white/5 hover:bg-white/10 transition-colors border border-white/10 text-white/85 text-sm font-medium py-2.5"
                 >
-                    Accept invitation
+                    Accept in browser as {acceptor?.name || acceptor?.email || 'this account'}
                 </button>
-                <div className="text-white/40 text-xs mt-3 leading-relaxed">
+                <div className="text-white/40 text-xs leading-relaxed">
                     Accepting adds this canvas to your KLYPIX library with editor access.
                 </div>
             </div>
@@ -388,7 +425,7 @@ function AcceptedCard({ titleHint, inviter, acceptor }: { titleHint: string | nu
     );
 }
 
-function SignInCard({ titleHint, inviter }: { titleHint: string | null; inviter: InviterIdentity }) {
+function SignInCard({ token, titleHint, inviter }: { token: string; titleHint: string | null; inviter: InviterIdentity }) {
     const hasInviter = !!(inviter.name || inviter.email);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -461,7 +498,18 @@ function SignInCard({ titleHint, inviter }: { titleHint: string | null; inviter:
                 </div>
                 <div className="text-white/50 text-xs mt-2">Sign in or create an account to accept.</div>
             </div>
-            <div className="px-5 pt-5 flex flex-col gap-2">
+            <div className="px-5 pt-5 pb-2">
+                {/* Already have the desktop app? One click hands the token
+                    off to it and accepts under the desktop's signed-in
+                    session — no browser login needed at all. */}
+                <DesktopHandoffButton token={token} />
+                <div className="flex items-center gap-3 text-white/30 text-[10px] mt-3">
+                    <div className="flex-1 h-px bg-white/10" />
+                    <span>or sign in here</span>
+                    <div className="flex-1 h-px bg-white/10" />
+                </div>
+            </div>
+            <div className="px-5 pt-2 flex flex-col gap-2">
                 <button
                     type="button"
                     onClick={() => handleOAuth('google')}

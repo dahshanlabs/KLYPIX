@@ -69,7 +69,7 @@ import { QuickActionBar } from './components/QuickActionBar';
 import { SettingsPanel } from './components/SettingsPanel';
 import { useGlobalHotkey } from './palette/useGlobalHotkey';
 import { registerAllProviders } from './palette/registerProviders';
-import { toggle as togglePalette, openWithPrefix as openPaletteWithPrefix, open as openPalette, close as closePalette, subscribe as subscribePalette, getSnapshot as getPaletteSnapshot, setCompact as setPaletteCompact } from './palette/paletteStore';
+import { toggle as togglePalette, openWithPrefix as openPaletteWithPrefix, open as openPalette, close as closePalette, subscribe as subscribePalette, getSnapshot as getPaletteSnapshot, setCompact as setPaletteCompact, showToast as showPaletteToast } from './palette/paletteStore';
 import { KlypixCanvas } from './canvas/KlypixCanvas';
 import { t, useLocale, translateActionLabel } from './i18n/strings';
 
@@ -801,6 +801,32 @@ function AppMain() {
         });
         return unsub;
     }, [paletteOnly]);
+
+    // Desktop-first invite handoff. The web invite page (klypix.com/invite/
+    // <token>) can fire `klypix://invite/<token>`, which main's
+    // handleDeepLink routes here. We accept the invitation under the
+    // desktop's currently signed-in session and refresh the dashboard
+    // via a custom event so the new canvas appears without a full
+    // reload. Toast confirms success / failure to the user.
+    useEffect(() => {
+        const bridge: any = (window as any).electron?.cloud;
+        if (!bridge?.onInviteHandoff || !bridge?.acceptInvitation) return;
+        const cleanup = bridge.onInviteHandoff(async ({ token }: { token: string }) => {
+            if (!token) return;
+            try {
+                const result = await bridge.acceptInvitation(token);
+                const title = result?.data?.title_hint ?? result?.data?.[0]?.title_hint ?? null;
+                showPaletteToast(title ? `Joined "${title}"` : 'Invitation accepted');
+                // Tell the dashboard hook to re-fetch the shared canvases
+                // list so the new one appears immediately.
+                window.dispatchEvent(new CustomEvent('klypix:shared-refresh'));
+            } catch (e: any) {
+                const msg = e?.message || 'Could not accept invitation';
+                showPaletteToast(msg);
+            }
+        });
+        return () => { try { cleanup?.(); } catch {} };
+    }, []);
 
     // Quick AI Action mode (Alt+;). Main captures the selection from the
     // foreground app and sends it here as enter payload; renderer renders

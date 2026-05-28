@@ -140,7 +140,7 @@ export function registerAuthHandlers(getMainWindow: () => BrowserWindow | null) 
     });
 }
 
-// ── Deep Link Handler (for OAuth callbacks) ──────────────────────────────────
+// ── Deep Link Handler (for OAuth callbacks AND invite handoff) ──────────────
 
 export async function handleDeepLink(url: string, mainWindow: BrowserWindow | null): Promise<void> {
     if (url.startsWith('klypix://auth/callback')) {
@@ -152,5 +152,34 @@ export async function handleDeepLink(url: string, mainWindow: BrowserWindow | nu
         if (mainWindow) {
             mainWindow.webContents.send('auth:oauth-complete', result);
         }
+        return;
+    }
+
+    // Desktop-first invite handoff. The web invite page (klypix.com/invite/
+    // <token>) offers an "Open in Klypix Desktop" button that fires
+    // klypix://invite/<token>. The OS routes that URL here. We extract the
+    // token and hand it to the renderer, which calls the
+    // accept_canvas_invitation RPC under the desktop's currently signed-in
+    // session — guaranteeing the user accepts as the right identity (no
+    // browser-vs-desktop mismatch possible).
+    //
+    // Token format: any URL-safe string (we don't validate the shape; the
+    // RPC rejects invalid tokens with a clear error that bubbles back up
+    // through the renderer's toast).
+    if (url.startsWith('klypix://invite/')) {
+        // Show + focus the window first so the user sees the toast/result.
+        if (mainWindow) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.show();
+            mainWindow.focus();
+        }
+        const rest = url.slice('klypix://invite/'.length);
+        // Strip any query string / fragment so trailing "?utm=..." or "#"
+        // don't end up in the token.
+        const token = rest.split(/[?#]/)[0];
+        if (token && mainWindow) {
+            mainWindow.webContents.send('invite:handoff', { token });
+        }
+        return;
     }
 }

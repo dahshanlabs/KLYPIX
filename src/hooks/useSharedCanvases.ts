@@ -51,6 +51,16 @@ export function useSharedCanvases(): UseSharedCanvasesResult {
 
     const refresh = useCallback(() => setTick(t => t + 1), []);
 
+    // Listen for global "shared canvases changed" notifications — fired by
+    // the desktop-first invite handoff in App.tsx after accept_canvas_
+    // invitation lands. Lets the dashboard show the newly-joined canvas
+    // without requiring the user to click away and back.
+    useEffect(() => {
+        const handler = () => refresh();
+        window.addEventListener('klypix:shared-refresh', handler as EventListener);
+        return () => window.removeEventListener('klypix:shared-refresh', handler as EventListener);
+    }, [refresh]);
+
     const leave = useCallback(async (blobId: string) => {
         const bridge: any = (window as any).electron?.cloud;
         if (!bridge?.leaveShared) {
