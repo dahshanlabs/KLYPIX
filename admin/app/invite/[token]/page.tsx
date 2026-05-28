@@ -281,7 +281,7 @@ function InviterLine({ inviter }: { inviter: InviterIdentity }) {
 // critical when they're juggling multiple browser profiles or accounts.
 // onSwitch is offered only when the user CAN still bail out (preview),
 // not after the invitation has already been consumed.
-function AcceptorLine({ acceptor, onSwitch }: { acceptor: AcceptorIdentity | null; onSwitch?: () => void }) {
+function AcceptorLine({ acceptor, onSwitch, switchLabel = 'Switch account' }: { acceptor: AcceptorIdentity | null; onSwitch?: () => void; switchLabel?: string }) {
     if (!acceptor) return null;
     const display = acceptor.name || acceptor.email || '';
     if (!display) return null;
@@ -303,7 +303,7 @@ function AcceptorLine({ acceptor, onSwitch }: { acceptor: AcceptorIdentity | nul
                     onClick={onSwitch}
                     className="text-white/45 hover:text-white/75 text-[10px] underline-offset-2 hover:underline whitespace-nowrap"
                 >
-                    Switch account
+                    {switchLabel}
                 </button>
             )}
         </div>
@@ -348,6 +348,18 @@ function PreviewCard({ titleHint, inviter, acceptor, onAccept }: { titleHint: st
 
 function AcceptedCard({ titleHint, inviter, acceptor }: { titleHint: string | null; inviter: InviterIdentity; acceptor: AcceptorIdentity | null }) {
     const hasInviter = !!(inviter.name || inviter.email);
+    // Recovery escape hatch: if the user realizes post-accept that they
+    // were signed into the wrong account, give them a one-click way to
+    // sign out and start over. We send them to the marketing site
+    // (klypix.com) rather than back to the consumed token — going back
+    // would just show "already used", which is more confusing than
+    // helpful. The user can ask the inviter for a fresh link.
+    const handleSignOut = async () => {
+        try { await supabase.auth.signOut(); } catch { /* swallow */ }
+        if (typeof window !== 'undefined') {
+            window.location.href = 'https://klypix.com';
+        }
+    };
     return (
         <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] px-5 py-6">
             <div className="flex items-center gap-2 mb-2">
@@ -361,10 +373,11 @@ function AcceptedCard({ titleHint, inviter, acceptor }: { titleHint: string | nu
                 {hasInviter && <> — shared by <span className="text-white font-medium">{inviter.name || inviter.email}</span></>}.
                 Open the KLYPIX desktop app — the canvas will appear in your library shortly.
             </div>
-            {/* Post-accept confirmation of the recipient identity. No switch-
-                account link here — the invitation has already been consumed
-                under this account; switching would leave them stranded. */}
-            <AcceptorLine acceptor={acceptor} />
+            {/* Post-accept confirmation of the recipient identity. The pill
+                includes a "Not you?" recovery link — clicking signs out
+                and lands the user on klypix.com so they can ask for a
+                fresh invite under the correct account. */}
+            <AcceptorLine acceptor={acceptor} onSwitch={handleSignOut} switchLabel="Not you? Sign out" />
             <div className="text-white/40 text-[10px] mt-4 leading-relaxed">
                 Don't have KLYPIX yet? <a href="https://klypix.com" className="text-emerald-400/80 hover:text-emerald-400">Get it at klypix.com →</a>
             </div>
