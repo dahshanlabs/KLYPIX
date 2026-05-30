@@ -126,25 +126,39 @@ export function usePendingInvitations(): UsePendingInvitationsResult {
             // Not an error to surface — older preload without the bridge.
             return;
         }
-        setLoading(true);
-        setError(null);
-        bridge.listPendingInvitations()
-            .then((rows: any) => {
+
+        // 2026-05-31: POLL every 20s. usePendingInvitations previously only
+        // fetched on mount + window 'focus' + events. On two SEPARATE physical
+        // machines, PC2's window keeps focus the whole time the user looks at
+        // PC1, so no 'focus' event ever fires and a freshly-created invite
+        // never loads. A light poll makes invites appear on their own (humans
+        // accept invitations at human cadence — 20s is plenty, and the RPC is
+        // cheap + returns [] when signed out). first=true only on the initial
+        // fetch so polls don't flash the loading state.
+        const fetchInvites = async (first: boolean) => {
+            if (cancelled) return;
+            if (first) { setLoading(true); setError(null); }
+            try {
+                const rows = await bridge.listPendingInvitations();
                 if (cancelled) return;
                 setInvitations(Array.isArray(rows) ? rows as PendingInvitation[] : []);
-                setLoading(false);
-            })
-            .catch((e: any) => {
+            } catch (e: any) {
                 if (cancelled) return;
                 const msg = e?.message || String(e);
                 if (/CLOUD_AUTH_REQUIRED|sign[-\s]?in|not authenticated/i.test(msg)) {
                     setInvitations([]);
-                } else {
+                } else if (first) {
                     setError(msg);
                 }
-                setLoading(false);
-            });
-        return () => { cancelled = true; };
+                // Transient poll errors are swallowed — don't surface mid-session.
+            } finally {
+                if (first && !cancelled) setLoading(false);
+            }
+        };
+
+        void fetchInvites(true);
+        const id = window.setInterval(() => void fetchInvites(false), 20_000);
+        return () => { cancelled = true; window.clearInterval(id); };
     }, [tick]);
 
     return { invitations, loading, error, refresh, accept, decline };
