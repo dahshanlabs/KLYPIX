@@ -77,9 +77,15 @@ export interface BaseItem {
 
 export interface Comment {
     id: string;
-    author: string;
+    author: string;            // display name at write time (kept for back-compat)
     text: string;
     timestamp: number;
+    // 2026-05-31 collab enhancements. All optional → existing .klypix files
+    // and older builds round-trip unchanged.
+    authorId?: string;         // real signed-in user id (identity + mention target)
+    authorColor?: string;      // stable per-user color for the avatar dot
+    mentions?: string[];       // display names @-mentioned in text (best-effort)
+    resolved?: boolean;        // thread marked resolved (set on every comment of the item)
 }
 
 export interface ThreadMessage {

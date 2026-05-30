@@ -1,8 +1,46 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Trash2 } from 'lucide-react';
+import { X, Trash2, Check, CheckCircle2 } from 'lucide-react';
 import type { CanvasItem, Comment } from '../items/types';
 import { newId } from '../items/types';
 import { useCanvasStore } from '../state/canvasStore';
+import { useAuth } from '../../components/AuthProvider';
+
+// Stable per-author color (same 12-slot palette idea as collab presence) so a
+// commenter's avatar dot matches their identity across the thread.
+const COMMENT_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ec4899', '#8b5cf6', '#ef4444', '#06b6d4', '#84cc16', '#f97316', '#a855f7', '#14b8a6', '#eab308'];
+function colorForAuthor(key: string): string {
+    let h = 0;
+    for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
+    return COMMENT_COLORS[Math.abs(h) % COMMENT_COLORS.length];
+}
+// Parse @mentions: @name or @"first last". Returns the bare names.
+function parseMentions(text: string): string[] {
+    const out: string[] = [];
+    const re = /@([\w][\w.\-]*)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) out.push(m[1]);
+    return Array.from(new Set(out));
+}
+// Render comment text with @mentions highlighted.
+function renderWithMentions(text: string): React.ReactNode[] {
+    const parts: React.ReactNode[] = [];
+    const re = /(@[\w][\w.\-]*)/g;
+    let last = 0; let m: RegExpExecArray | null; let i = 0;
+    while ((m = re.exec(text)) !== null) {
+        if (m.index > last) parts.push(text.slice(last, m.index));
+        const mention = m[1];
+        const isClaude = /^@claude$/i.test(mention);
+        parts.push(
+            <span key={i++} style={{
+                color: isClaude ? '#a78bfa' : '#10b981',
+                fontWeight: 600,
+            }}>{mention}</span>
+        );
+        last = m.index + mention.length;
+    }
+    if (last < text.length) parts.push(text.slice(last));
+    return parts;
+}
 
 // Floating comments thread for a canvas item. Data model was already in
 // place (BaseItem.comments + right-click "Add comment…" in the context
@@ -33,8 +71,10 @@ function clampToViewport(x: number, y: number): { x: number; y: number } {
 
 export function CommentsPanel({ item, screenX, screenY, itemScreenW, itemScreenH, onClose }: Props) {
     const { state, dispatch } = useCanvasStore();
+    const auth = useAuth();
     const current = (state.items[item.id] as CanvasItem | undefined) || item;
     const comments: Comment[] = current.comments || [];
+    const threadResolved = comments.length > 0 && comments.every(c => c.resolved);
     const [draft, setDraft] = useState('');
     const scrollRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -64,11 +104,29 @@ export function CommentsPanel({ item, screenX, screenY, itemScreenW, itemScreenH
     const add = () => {
         const text = draft.trim();
         if (!text) return;
-        const c: Comment = { id: newId('cmt'), author: 'You', text, timestamp: Date.now() };
+        // Real signed-in identity (was hardcoded 'You'). Falls back to 'You'
+        // when not signed in (solo/offline). authorId + color give peers a
+        // stable identity on the synced comment.
+        const authorName = auth.user?.displayName || auth.user?.email?.split('@')[0] || 'You';
+        const authorId = auth.user?.id;
+        const c: Comment = {
+            id: newId('cmt'),
+            author: authorName,
+            authorId,
+            authorColor: colorForAuthor(authorId || authorName),
+            text,
+            timestamp: Date.now(),
+            mentions: parseMentions(text),
+            // Adding a comment re-opens a resolved thread.
+            resolved: false,
+        };
+        // Adding also clears `resolved` on the existing comments so the thread
+        // re-opens when someone replies after it was resolved.
+        const reopened = comments.map(x => x.resolved ? { ...x, resolved: false } : x);
         dispatch({
             type: 'UPDATE_ITEM',
             id: item.id,
-            patch: { comments: [...comments, c] } as any,
+            patch: { comments: [...reopened, c] } as any,
         });
         setDraft('');
     };
@@ -81,6 +139,18 @@ export function CommentsPanel({ item, screenX, screenY, itemScreenW, itemScreenH
         });
     };
 
+    // Toggle the whole thread resolved/open. Resolving sets `resolved` on
+    // every comment so the item badge can render a resolved state. Synced +
+    // persisted for free (UPDATE_ITEM).
+    const toggleResolved = () => {
+        const next = !threadResolved;
+        dispatch({
+            type: 'UPDATE_ITEM',
+            id: item.id,
+            patch: { comments: comments.map(c => ({ ...c, resolved: next })) } as any,
+        });
+    };
+
     return (
         <div
             data-canvas-ui="1"
@@ -89,9 +159,26 @@ export function CommentsPanel({ item, screenX, screenY, itemScreenW, itemScreenH
         >
             <div className="flex items-center gap-2 px-3 py-2 border-b border-white/5">
                 <div className="flex-1 min-w-0">
-                    <div className="text-[10px] uppercase tracking-wider text-amber-400/80 font-medium">Comments</div>
+                    <div className="text-[10px] uppercase tracking-wider font-medium" style={{ color: threadResolved ? 'rgba(16,185,129,0.85)' : 'rgba(251,191,36,0.8)' }}>
+                        {threadResolved ? 'Resolved' : 'Comments'}
+                    </div>
                     <div className="text-[12px] text-white/80 truncate">{comments.length} {comments.length === 1 ? 'note' : 'notes'}</div>
                 </div>
+                {comments.length > 0 && (
+                    <button
+                        onClick={toggleResolved}
+                        title={threadResolved ? 'Re-open thread' : 'Resolve thread'}
+                        className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-colors"
+                        style={{
+                            background: threadResolved ? 'rgba(16,185,129,0.18)' : 'rgba(255,255,255,0.05)',
+                            border: '1px solid ' + (threadResolved ? 'rgba(16,185,129,0.35)' : 'rgba(255,255,255,0.1)'),
+                            color: threadResolved ? '#10b981' : 'rgba(255,255,255,0.6)',
+                        }}
+                    >
+                        <CheckCircle2 size={11} />
+                        {threadResolved ? 'Resolved' : 'Resolve'}
+                    </button>
+                )}
                 <button
                     onClick={onClose}
                     title="Close"
@@ -107,11 +194,19 @@ export function CommentsPanel({ item, screenX, screenY, itemScreenW, itemScreenH
                         No comments yet. Use the text area below to add one.
                     </div>
                 )}
-                {comments.map(c => (
-                    <div key={c.id} className="group bg-white/5 rounded-lg px-2.5 py-1.5 text-white/85">
+                {comments.map(c => {
+                    const dot = c.authorColor || colorForAuthor(c.authorId || c.author);
+                    return (
+                    <div key={c.id} className="group bg-white/5 rounded-lg px-2.5 py-1.5 text-white/85" style={c.resolved ? { opacity: 0.6 } : undefined}>
                         <div className="flex items-center gap-2 mb-0.5">
-                            <span className="text-[10px] uppercase tracking-wider text-amber-400/80 font-medium">{c.author}</span>
-                            <span className="flex-1 text-[10px] text-white/30">{formatTs(c.timestamp)}</span>
+                            <span className="inline-flex items-center gap-1.5 min-w-0">
+                                <span style={{ width: 7, height: 7, borderRadius: '50%', background: dot, flexShrink: 0 }} />
+                                <span className="text-[10px] uppercase tracking-wider font-medium truncate" style={{ color: dot }}>
+                                    <bdi>{c.author}</bdi>
+                                </span>
+                            </span>
+                            {c.resolved && <Check size={10} className="text-emerald-400 flex-shrink-0" />}
+                            <span className="flex-1 text-[10px] text-white/30 text-right">{formatTs(c.timestamp)}</span>
                             <button
                                 onClick={() => remove(c.id)}
                                 className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/40 hover:text-red-300 transition-all"
@@ -120,9 +215,10 @@ export function CommentsPanel({ item, screenX, screenY, itemScreenW, itemScreenH
                                 <Trash2 size={10} />
                             </button>
                         </div>
-                        <div className="whitespace-pre-wrap break-words">{c.text}</div>
+                        <div className="whitespace-pre-wrap break-words"><bdi>{renderWithMentions(c.text)}</bdi></div>
                     </div>
-                ))}
+                    );
+                })}
             </div>
 
             <div className="p-2 border-t border-white/5">
