@@ -450,8 +450,9 @@ export function useAnyFile(tabActive = true, skipAutosaveCheck = false) {
 
     // --- Autosave ---
     // Saves to the file path when one exists. Otherwise writes a crash-recovery
-    // snapshot to %APPDATA%/klypix/autosave/untitled.any so nothing is lost if
-    // the app dies before the user saves.
+    // snapshot to %APPDATA%/klypix/autosave/untitled.klypix so nothing is lost
+    // if the app dies before the user saves. (Legacy untitled.any is still
+    // checked at startup for one-time migration — see electron/main.ts.)
     //
     // Two triggers:
     //   1) 30s debounced timer while isDirty — the routine path.
