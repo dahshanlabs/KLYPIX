@@ -60,6 +60,7 @@ import { ShareModal } from './cloud/ShareModal';
 import { Share2, MessageSquare, AlertTriangle } from 'lucide-react';
 import { useCanvasCollab } from './collab/useCanvasCollab';
 import { useOpSync } from './collab/useOpSync';
+import { useMembershipGuard } from './collab/useMembershipGuard';
 import { useAssetSync } from './collab/useAssetSync';
 import { useCollabHealth } from './collab/useCollabHealth';
 import { useCollaboratorWatcher } from './collab/useCollaboratorWatcher';
@@ -1011,6 +1012,25 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 text: tLocale('canvas.collab_collaborator_joined').replace('{name}', name),
                 id: Date.now(),
             });
+        },
+    });
+
+    // 2026-05-30 security: recipient-side membership guard. If the OWNER
+    // removes us from this shared canvas, our client otherwise keeps the
+    // (public) Realtime channel and keeps editing — the full fix is private
+    // channels (deferred). This polls our own shared list and, the moment
+    // this canvas vanishes from it (= we were revoked), closes the canvas
+    // with a toast. Recipient-only; owners can't be removed. No channel
+    // broadcast (which would be spoofable on the public channel).
+    useMembershipGuard({
+        blobId: cloudShare?.blobId ?? null,
+        isRecipient: !!cloudShare?.blobId && !!cloudShare.invitedBy,
+        active: tabActive,
+        onRevoked: () => {
+            setToast({ text: tLocale('canvas.access_revoked'), id: Date.now() });
+            // Give the toast a beat to register, then close the canvas — the
+            // unmount tears down the collab channel, fully stopping sync.
+            window.setTimeout(() => { try { onCloseCanvas?.(); } catch { /* ignore */ } }, 1200);
         },
     });
 
