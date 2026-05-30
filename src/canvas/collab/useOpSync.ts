@@ -537,10 +537,14 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
                 console.log(`[opSync] fast-forward: prevSinceSeq=${prevSeq}, serverHead=${head}, will save head as new sinceSeq → backfill will pull only ops > ${head}`);
                 if (head > 0) {
                     saveSeq(blobId, head);
-                    if (head > lamportRef.current) {
-                        lamportRef.current = head;
-                        scheduleLamportSave();
-                    }
+                    // 2026-05-28 FIX: do NOT copy server `head` (a bigserial
+                    // op sequence) into lamportRef (a client action counter).
+                    // They are different clocks. Jamming a large headSeq into
+                    // the lamport made every subsequent peer op (real, smaller
+                    // lamport) look causally OLDER, silently inverting order
+                    // in the last-arriving-wins merge. lamportRef must only
+                    // advance via bumpLamport() (local sends) + the inbound
+                    // clamp. saveSeq alone is the correct fast-forward.
                 }
             } catch (err) {
                 console.warn('[opSync] fast-forward failed (will fall back to full backfill):', err);

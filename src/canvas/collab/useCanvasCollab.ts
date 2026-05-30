@@ -176,6 +176,13 @@ const SELECTION_THROTTLE_MS = 100;
 // network drops, etc. Channel-leave events handle clean exits; this is
 // the safety net for unclean ones.
 const CURSOR_STALE_MS = 5000;
+// 2026-05-28 soft-lock TTL: a peer re-broadcasts its editing item every
+// ~5s (heartbeat). If we haven't heard a refresh in this window, the lock
+// is considered stale (their blur event was lost, or they navigated away
+// without clearing it) and we release it locally so the item doesn't stay
+// permanently locked. Must be > 2x the 5s heartbeat to tolerate one miss.
+const EDITING_STALE_MS = 12000;
+const EDITING_HEARTBEAT_MS = 5000;
 
 const MESSAGE_MAX_TEXT = 2000;
 const MESSAGE_BUFFER_MAX = 200;
@@ -186,6 +193,21 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
     const [connected, setConnected] = useState(false);
     const [messages, setMessages] = useState<CollabMessage[]>([]);
     const channelRef = useRef<RealtimeChannel | null>(null);
+    // 2026-05-28 presence-race fix: hold the latest displayName in a ref so
+    // track() always broadcasts the current name WITHOUT putting displayName
+    // in the main effect's dep array. Previously displayName WAS a dep, so a
+    // name that resolved a tick after userId tore down + re-acquired the
+    // channel (track→untrack→track FLAP) — peers saw the user blink out then
+    // back in, and on the owner's PC the chip often never settled. Now the
+    // channel lifecycle depends only on [blobId, userId, active]; a separate
+    // effect re-calls track() when the name changes or the connection
+    // (re)establishes.
+    const nameRef = useRef(displayName);
+    nameRef.current = displayName;
+    // Track the previous userId so we only blank peers on a REAL
+    // signed-in → signed-out transition, not a transient null during the
+    // DPAPI session restore on cold boot.
+    const prevUserIdRef = useRef<string | null>(userId ?? null);
     // Throttle state: last-publish times + queued payloads. The published
     // value is always the freshest one — partial flushes drop intermediate
     // positions, which is what we want for cursor motion.
@@ -248,13 +270,24 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         // Collab requires: a shared canvas (blob id) + a signed-in user.
         if (!blobId || !userId) {
             console.warn(`[collab] DISABLED — ${!blobId ? 'no blobId (canvas not shared yet)' : 'no userId (not signed in or auth still loading)'}`);
-            setPeers([]);
-            setConnected(false);
-            setMessages([]);
+            // Only blank peers on a genuine signed-in → signed-out transition.
+            // A transient null userId during cold-boot session restore must
+            // NOT clear an already-populated peer list (it would flap the
+            // chips). When userId goes from a value to null, that's a real
+            // sign-out → clear. When it starts null (boot), there's nothing
+            // to clear anyway.
+            const wasSignedIn = prevUserIdRef.current != null;
+            prevUserIdRef.current = userId ?? null;
+            if (!blobId || wasSignedIn) {
+                setPeers([]);
+                setConnected(false);
+                setMessages([]);
+            }
             return;
         }
+        prevUserIdRef.current = userId;
 
-        const myName = displayName || 'Anonymous';
+        const myName = nameRef.current || 'Anonymous';
 
         // Phase 12: hand the current Supabase access token to the Realtime
         // client so it can authenticate channel joins. Required once the
@@ -312,11 +345,12 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                 setConnected(true);
                 // Only broadcast our presence when the tab is active.
                 if (active) {
-                    console.log(`[collab] channel SUBSCRIBED — calling track() as ${myName} (${userId.slice(0, 8)}…) on device ${deviceId.slice(0, 12)}…`);
+                    const trackName = nameRef.current || 'Anonymous';
+                    console.log(`[collab] channel SUBSCRIBED — calling track() as ${trackName} (${userId.slice(0, 8)}…) on device ${deviceId.slice(0, 12)}…`);
                     void channel.track({
                         user_id: userId,
                         device_id: deviceId,
-                        display_name: myName,
+                        display_name: trackName,
                         joined_at: Date.now(),
                     } satisfies PresenceRow);
                 } else {
@@ -337,7 +371,7 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         // arrive at ~30Hz and we want a single coalesced render. Stored on a
         // Map, then merged into peers via setPeers on each presence change OR
         // broadcast tick (rAF-coalesced below).
-        const ephemeralRef = new Map<string, { cursorX?: number; cursorY?: number; cursorAt?: number; selectionIds?: string[]; editingItemId?: string | null }>();
+        const ephemeralRef = new Map<string, { cursorX?: number; cursorY?: number; cursorAt?: number; selectionIds?: string[]; editingItemId?: string | null; editingAt?: number }>();
         let renderScheduled = false;
         const scheduleRender = () => {
             if (renderScheduled) return;
@@ -364,6 +398,11 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                     // Drop stale cursors so a peer that stopped moving doesn't
                     // leave their cursor floating forever after a network drop.
                     const cursorFresh = eph?.cursorAt && (now - eph.cursorAt) < CURSOR_STALE_MS;
+                    // Soft-lock TTL: release a peer's lock if we haven't heard
+                    // a heartbeat refresh within EDITING_STALE_MS (their blur
+                    // was lost / they wandered off). Prevents a permanent
+                    // phantom lock on an item nobody is editing anymore.
+                    const editingFresh = eph?.editingAt != null && (now - eph.editingAt) < EDITING_STALE_MS;
                     flat.push({
                         userId: row.user_id,
                         deviceId: row.device_id,
@@ -374,7 +413,7 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                         cursorY: cursorFresh ? eph?.cursorY : undefined,
                         cursorAt: cursorFresh ? eph?.cursorAt : undefined,
                         selectionIds: eph?.selectionIds,
-                        editingItemId: eph?.editingItemId ?? null,
+                        editingItemId: editingFresh ? (eph?.editingItemId ?? null) : null,
                     });
                 }
             }
@@ -441,7 +480,7 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                 if (p.device_id === deviceId) return;
                 const prev = ephemeralRef.get(p.device_id) || {};
                 const next = typeof p.item_id === 'string' ? p.item_id : null;
-                ephemeralRef.set(p.device_id, { ...prev, editingItemId: next });
+                ephemeralRef.set(p.device_id, { ...prev, editingItemId: next, editingAt: Date.now() });
                 scheduleRender();
             })
             // Phase 21: per-canvas DM. Ephemeral broadcast-only; no server
@@ -488,14 +527,35 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
             const now = Date.now();
             for (const eph of ephemeralRef.values()) {
                 if (eph.cursorAt && (now - eph.cursorAt) >= CURSOR_STALE_MS) { needsSweep = true; break; }
+                // Also recompute when a soft-lock has gone stale so the
+                // RemoteLockBadge + SET_PEER_LOCKS clear without waiting for
+                // a presence event.
+                if (eph.editingAt != null && eph.editingItemId && (now - eph.editingAt) >= EDITING_STALE_MS) { needsSweep = true; break; }
             }
             if (needsSweep) computeAndSet();
         }, 2000);
+
+        // 2026-05-28 presence heartbeat: re-track every 15s while active so a
+        // peer that missed a presence sync (transient socket blip) is
+        // re-announced, and Supabase's presence keepalive stays warm. Cheap
+        // — one track() per 15s is far under the 30 events/sec channel cap.
+        const heartbeatInterval = window.setInterval(() => {
+            if (cancelled || !active) return;
+            const ch = channelRef.current;
+            if (!ch) return;
+            void ch.track({
+                user_id: userId,
+                device_id: deviceId,
+                display_name: nameRef.current || 'Anonymous',
+                joined_at: Date.now(),
+            } satisfies PresenceRow);
+        }, 15000);
 
         return () => {
             cancelled = true;
             channelRef.current = null;
             window.clearInterval(staleInterval);
+            window.clearInterval(heartbeatInterval);
             // untrack just our presence (other hooks on this same channel
             // may still need it alive). Then release our refCount; the
             // registry tears down the channel when refCount hits 0.
@@ -504,7 +564,29 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
             setConnected(false);
             setPeers([]);
         };
-    }, [blobId, userId, displayName, active]);
+        // 2026-05-28: displayName REMOVED from deps. The channel lifecycle
+        // must not churn when only the name changes — that caused the
+        // track→untrack→track flap. Name updates are handled by the
+        // dedicated re-track effect below, reading nameRef.
+    }, [blobId, userId, active]);
+
+    // 2026-05-28 presence-race fix (part 2): re-broadcast presence when the
+    // display name resolves/changes OR when the connection (re)establishes.
+    // This closes the "name arrived a tick after SUBSCRIBED → stuck as
+    // Anonymous forever" hole: the main effect's track() may have fired
+    // with a stale/empty name; this effect re-tracks with the settled name.
+    // Reads channelRef so it reuses the SAME channel the main effect owns.
+    useEffect(() => {
+        if (!connected || !userId || !active) return;
+        const ch = channelRef.current;
+        if (!ch) return;
+        void ch.track({
+            user_id: userId,
+            device_id: getDeviceId(),
+            display_name: displayName || 'Anonymous',
+            joined_at: Date.now(),
+        } satisfies PresenceRow);
+    }, [displayName, connected, userId, active]);
 
     // Throttled cursor publisher. Callers can fire on every pointermove;
     // we coalesce to at most one broadcast per CURSOR_THROTTLE_MS using
@@ -561,9 +643,18 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
     // map from it. Cleared automatically on channel teardown via
     // presence-leave (eph entry deleted in computeAndSet cleanup).
     const lastPublishedEditingRef = useRef<string | null>(null);
+    const lastEditingSendAtRef = useRef(0);
     const publishEditingItem = (itemId: string | null): void => {
-        if (lastPublishedEditingRef.current === itemId) return;
+        const now = Date.now();
+        // Dedupe identical values UNLESS this is a heartbeat: a non-null
+        // value re-sends every EDITING_HEARTBEAT_MS so the peer's TTL stays
+        // refreshed (a lost blur otherwise strands a phantom lock). Null
+        // (blur) always sends immediately on change.
+        const changed = lastPublishedEditingRef.current !== itemId;
+        const heartbeatDue = itemId != null && (now - lastEditingSendAtRef.current) >= EDITING_HEARTBEAT_MS;
+        if (!changed && !heartbeatDue) return;
         lastPublishedEditingRef.current = itemId;
+        lastEditingSendAtRef.current = now;
         const channel = channelRef.current;
         if (!channel) return;
         const deviceId = getDeviceId();

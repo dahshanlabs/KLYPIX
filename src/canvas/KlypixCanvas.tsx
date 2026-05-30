@@ -865,6 +865,46 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         displayName: auth.user?.displayName ?? null,
         active: tabActive,
     });
+
+    // ── Soft-lock wiring (2026-05-28) ────────────────────────────────────
+    // The soft-lock machinery (publishEditingItem, the 'editing' broadcast,
+    // SET_PEER_LOCKS reducer, RemoteLockBadges) was fully BUILT but never
+    // connected — publishEditingItem had zero call sites and SET_PEER_LOCKS
+    // was never dispatched, so the lock did nothing. These two effects are
+    // the missing halves.
+    //
+    // PUBLISHER: broadcast which item WE are editing so peers can lock it.
+    // Only on shared canvases (no peers to lock for otherwise). publish-
+    // EditingItem internally dedupes identical values, so firing on every
+    // editingId change is cheap.
+    useEffect(() => {
+        if (!cloudShare?.blobId) return;
+        collab.publishEditingItem(state.editingId ?? null);
+        // Heartbeat: while we're editing an item, re-broadcast it every 5s
+        // so peers' soft-lock TTL stays refreshed. Without this a peer would
+        // release our lock after EDITING_STALE_MS even though we're still
+        // typing. publishEditingItem is heartbeat-aware (re-sends the same
+        // non-null value past the heartbeat window).
+        if (!state.editingId) return;
+        const hb = window.setInterval(() => {
+            collab.publishEditingItem(state.editingId ?? null);
+        }, 5000);
+        return () => window.clearInterval(hb);
+    }, [state.editingId, cloudShare?.blobId, collab]);
+    // RECEIVER: build the peerLocks map from peers' editingItemId broadcasts
+    // and push it into the store. SET_PEER_LOCKS does a shallow-equality
+    // early-out so an unchanged map doesn't churn renders. The reducer's
+    // SET_EDITING gate then blocks local edit-entry on a peer-locked item.
+    useEffect(() => {
+        const locks: Record<string, { name: string; color: string }> = {};
+        for (const p of collab.peers) {
+            if (p.editingItemId) {
+                locks[p.editingItemId] = { name: p.displayName || 'Peer', color: p.color };
+            }
+        }
+        dispatch({ type: 'SET_PEER_LOCKS', locks });
+    }, [collab.peers, dispatch]);
+
     // Phase 3: live op streaming — broadcasts mutation actions to peers and
     // applies inbound ones via dispatch. Background tabs receive but don't
     // send. Inert when the canvas hasn't been shared (no blob id).
