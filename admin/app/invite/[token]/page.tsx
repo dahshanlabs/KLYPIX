@@ -70,59 +70,47 @@ export default function AcceptInvitePage() {
             const { data: sessionData } = await supabase.auth.getSession();
             const isAuthed = !!sessionData?.session;
 
-            // Phase 18: prefer the new identity-bearing RPC. Falls back to
-            // the old anon table read on stale servers so existing canvases
-            // keep working through the migration window.
+            // 2026-05-30: get_invitation_preview RPC is now the SOLE path.
+            // The legacy anon `.from('canvas_invitations').select()` fallback
+            // was DELETED because migration 20260530120000 drops the
+            // filter-less anon SELECT policy that leaked key_b64 of every
+            // live invitation — so that fallback would now hit an RLS denial
+            // and surface a confusing error. The RPC is SECURITY DEFINER and
+            // granted to anon, so it resolves invites without any table-level
+            // anon access.
             let titleHint: string | null = null;
             let blobId: string | null = null;
             let inviter: InviterIdentity = { name: null, email: null };
-            let fallbackError: string | null = null;
             try {
                 const { data: previewRow, error: previewErr } = await supabase
                     .rpc('get_invitation_preview', { p_token: token });
                 if (previewErr) throw previewErr;
-                if (previewRow && typeof previewRow === 'object') {
-                    const row = Array.isArray(previewRow) ? previewRow[0] : previewRow;
-                    if (row) {
-                        titleHint = row.title_hint ?? null;
-                        blobId = row.blob_id ?? null;
-                        inviter = {
-                            name: row.inviter_display_name ?? null,
-                            email: row.inviter_email ?? null,
-                        };
-                    }
+                const row = Array.isArray(previewRow) ? previewRow[0] : previewRow;
+                if (row && typeof row === 'object') {
+                    titleHint = row.title_hint ?? null;
+                    blobId = row.blob_id ?? null;
+                    inviter = {
+                        name: row.inviter_display_name ?? null,
+                        email: row.inviter_email ?? null,
+                    };
                 }
             } catch (e: any) {
-                // Most likely: RPC missing on the server (404/PGRST). Fall back
-                // to the legacy anon SELECT so older deployments still work.
-                fallbackError = e?.message ?? null;
-            }
-
-            if (!blobId) {
-                const { data, error } = await supabase
-                    .from('canvas_invitations')
-                    .select('blob_id, title_hint')
-                    .eq('token', token)
-                    .maybeSingle();
                 if (cancelled) return;
-                if (error) {
-                    if (/does not exist|placeholder/i.test(error.message)) {
-                        setView({ status: 'error', message: 'Viewer is missing Supabase config.' });
-                    } else {
-                        setView({ status: 'invalid', reason: error.message });
-                    }
-                    return;
+                const msg = e?.message ?? '';
+                // RPC missing → the server hasn't applied the migration yet.
+                if (/does not exist|PGRST202|404|placeholder/i.test(msg)) {
+                    setView({ status: 'error', message: 'Viewer is out of date — the invitation service is unavailable. Please try again shortly.' });
+                } else {
+                    setView({ status: 'invalid', reason: msg || 'Could not resolve invitation.' });
                 }
-                if (!data) {
-                    setView({ status: 'invalid', reason: fallbackError || 'Invitation expired, revoked, or already used.' });
-                    return;
-                }
-                titleHint = data.title_hint ?? null;
-                blobId = data.blob_id ?? null;
+                return;
             }
             if (cancelled) return;
+            // RPC returned null → invite is expired, revoked, declined, used,
+            // or the token is bogus. All look the same to an anon caller by
+            // design (no oracle).
             if (!blobId) {
-                setView({ status: 'invalid', reason: 'Invitation expired, revoked, or already used.' });
+                setView({ status: 'invalid', reason: 'Invitation expired, revoked, declined, or already used.' });
                 return;
             }
             if (isAuthed) {
