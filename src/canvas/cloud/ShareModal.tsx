@@ -266,49 +266,76 @@ function ShareReadyBody({ share, copied, onCopy, onUpdate, isNew }: { share: { s
                 </button>
             </div>
             <InviteCollaboratorsSection share={share} />
-            <PendingInvitationsSection blobId={share.blobId} />
-            <CollaboratorsListSection blobId={share.blobId} />
+            <PeopleWithAccessSection blobId={share.blobId} />
         </>
     );
 }
 
-// ── Phase 20: pending invitations list ────────────────────────────────────
-// Sent-but-not-yet-accepted invitations. Owners can revoke them here so a
-// link goes dead if it leaked to the wrong person, or if the inviter
-// changes their mind. Polls every 10s alongside the collaborators list so
-// "they just accepted" updates ripple across both views.
-function PendingInvitationsSection({ blobId }: { blobId: string }) {
-    const [rows, setRows] = useState<Array<{ token: string; invitee_email: string | null; created_at: string; expires_at: string; accepted_at: string | null; inviteUrl: string }>>([]);
+// ── Unified "People with access" panel (2026-05-30) ───────────────────────
+// Merges the former separate "collaborators" + "pending invitations" sections
+// into one list, OneDrive/Figma-style:
+//   • Accepted collaborators (green) — owner can Remove.
+//   • Pending invites (amber, "Pending · expires in Nd") — owner can copy the
+//     link or Revoke. Hidden if that email already appears as a collaborator
+//     (they accepted — no point showing both).
+//   • Declined invites — folded into a collapsed "Declined (N)" disclosure so
+//     they don't clutter but stay auditable.
+// Owner-only (listCollaborators throws under RLS for non-owners → render
+// nothing). Polls every 8s so "they just accepted/declined" ripples in.
+interface AccessCollab { user_id: string; role: string; accepted_at: string; email?: string | null; display_name?: string | null; }
+interface AccessInvite { token: string; invitee_email: string | null; invitee_user_id?: string | null; created_at: string; expires_at: string; accepted_at: string | null; declined_at?: string | null; inviteUrl: string; }
+
+function PeopleWithAccessSection({ blobId }: { blobId: string }) {
+    const [collabs, setCollabs] = useState<AccessCollab[]>([]);
+    const [invites, setInvites] = useState<AccessInvite[]>([]);
+    const [denied, setDenied] = useState(false);
+    const [removingId, setRemovingId] = useState<string | null>(null);
     const [revoking, setRevoking] = useState<string | null>(null);
+    const [copied, setCopied] = useState<string | null>(null);
+    const [showDeclined, setShowDeclined] = useState(false);
     const [tick, setTick] = useState(0);
-    const refresh = () => setTick(n => n + 1);
+    const bump = () => setTick(n => n + 1);
 
     useEffect(() => {
         if (!blobId) return;
         let cancelled = false;
         const cloud: any = (window as any).electron?.cloud;
-        if (!cloud?.listInvitations) return;
-        const fetch = async () => {
+        if (!cloud?.listCollaborators) return;
+        const fetchAll = async () => {
             if (cancelled) return;
             try {
-                const all = await cloud.listInvitations(blobId);
+                const [c, inv] = await Promise.all([
+                    cloud.listCollaborators(blobId),
+                    cloud.listInvitations ? cloud.listInvitations(blobId) : Promise.resolve([]),
+                ]);
                 if (cancelled) return;
-                // Pending = no accepted_at and not expired. The IPC returns
-                // both accepted + still-pending; filter here so the UI only
-                // shows revocable rows.
-                const now = Date.now();
-                const pending = (Array.isArray(all) ? all : []).filter((r: any) =>
-                    !r.accepted_at && new Date(r.expires_at).getTime() > now
-                );
-                setRows(pending);
-            } catch {
-                // Most likely auth missing — leave the list empty silently.
+                setCollabs(Array.isArray(c) ? c : []);
+                setInvites(Array.isArray(inv) ? inv : []);
+                setDenied(false);
+            } catch (e: any) {
+                const msg = e?.message || String(e);
+                if (/not the canvas owner|Not authenticated|CLOUD_AUTH_REQUIRED/i.test(msg)) {
+                    setDenied(true); cancelled = true; // never allowed → stop
+                }
             }
         };
-        void fetch();
-        const id = window.setInterval(fetch, 10_000);
+        void fetchAll();
+        const id = window.setInterval(fetchAll, 8_000);
         return () => { cancelled = true; window.clearInterval(id); };
     }, [blobId, tick]);
+
+    const remove = async (userId: string, name: string) => {
+        if (!window.confirm(t('canvas.collab_peer.remove_confirm').replace('{name}', name))) return;
+        const cloud: any = (window as any).electron?.cloud;
+        if (!cloud?.removeCollaborator) return;
+        setRemovingId(userId);
+        try {
+            await cloud.removeCollaborator({ blobId, userId });
+            setCollabs(prev => prev.filter(r => r.user_id !== userId));
+        } catch (e: any) {
+            window.alert(`${t('canvas.collab_peer.remove_failed')} — ${e?.message || String(e)}`);
+        } finally { setRemovingId(null); bump(); }
+    };
 
     const revoke = async (token: string) => {
         const cloud: any = (window as any).electron?.cloud;
@@ -316,228 +343,111 @@ function PendingInvitationsSection({ blobId }: { blobId: string }) {
         setRevoking(token);
         try {
             await cloud.revokeInvitation(token);
-            // Optimistic remove — the next fetch will confirm.
-            setRows(prev => prev.filter(r => r.token !== token));
+            setInvites(prev => prev.filter(r => r.token !== token));
         } catch (e: any) {
-            window.alert(`Revoke failed: ${e?.message || String(e)}`);
-        } finally {
-            setRevoking(null);
-            refresh();
-        }
+            window.alert(`${t('share.pending_revoke')} — ${e?.message || String(e)}`);
+        } finally { setRevoking(null); bump(); }
     };
 
-    const copyOne = async (url: string) => {
-        try { await navigator.clipboard.writeText(url); } catch { /* swallow */ }
-    };
-
-    if (rows.length === 0) return null;
-    return (
-        <div style={{
-            marginTop: 14,
-            paddingTop: 12,
-            borderTop: '1px solid rgba(255,255,255,0.08)',
-        }}>
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Mail size={11} />
-                {t('share.pending_section').replace('{n}', String(rows.length))}
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {rows.map((r) => {
-                    const expiresMs = new Date(r.expires_at).getTime() - Date.now();
-                    const expiresDays = Math.max(0, Math.round(expiresMs / 86_400_000));
-                    return (
-                        <div key={r.token} style={{
-                            display: 'flex', alignItems: 'center', gap: 8,
-                            padding: '6px 8px',
-                            borderRadius: 6,
-                            background: 'rgba(255,255,255,0.03)',
-                        }}>
-                            <Mail size={11} style={{ color: 'rgba(255,255,255,0.4)', flexShrink: 0 }} />
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                    {r.invitee_email || t('share.pending_no_recipient')}
-                                </div>
-                                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>
-                                    {t('share.pending_expires_in').replace('{n}', String(expiresDays))}
-                                </div>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={() => copyOne(r.inviteUrl)}
-                                title={t('share.pending_copy_link')}
-                                style={{
-                                    padding: '4px 8px',
-                                    borderRadius: 5,
-                                    background: 'rgba(255,255,255,0.05)',
-                                    border: '1px solid rgba(255,255,255,0.08)',
-                                    color: 'rgba(255,255,255,0.7)',
-                                    cursor: 'pointer',
-                                    fontSize: 10,
-                                }}
-                            >
-                                <Copy size={11} />
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => revoke(r.token)}
-                                disabled={revoking === r.token}
-                                title={t('share.pending_revoke')}
-                                style={{
-                                    padding: '4px 8px',
-                                    borderRadius: 5,
-                                    background: 'rgba(239, 68, 68, 0.12)',
-                                    border: '1px solid rgba(239, 68, 68, 0.25)',
-                                    color: '#fca5a5',
-                                    cursor: revoking === r.token ? 'not-allowed' : 'pointer',
-                                    opacity: revoking === r.token ? 0.5 : 1,
-                                    fontSize: 10,
-                                }}
-                            >
-                                <X size={11} />
-                            </button>
-                        </div>
-                    );
-                })}
-            </div>
-        </div>
-    );
-}
-
-// ── Phase 17: live collaborators list ─────────────────────────────────────
-// Shows accepted collaborators on this canvas so the inviter can see who's
-// joined. Polls every 8s while the modal is open (cheaper than realtime,
-// fast enough that "I just sent the link" turns into "they accepted" within
-// one cadence). Owner-only — non-owners get RLS-denied and we render
-// nothing for them.
-function CollaboratorsListSection({ blobId }: { blobId: string }) {
-    const [rows, setRows] = useState<Array<{ user_id: string; role: string; accepted_at: string; email?: string | null; display_name?: string | null; invited_by?: string | null }>>([]);
-    const [denied, setDenied] = useState(false);
-    const [removingId, setRemovingId] = useState<string | null>(null);
-    const [tickCounter, setTickCounter] = useState(0);
-    const bumpTick = () => setTickCounter(n => n + 1);
-
-    useEffect(() => {
-        if (!blobId) return;
-        let cancelled = false;
-        const cloud: any = (window as any).electron?.cloud;
-        if (!cloud?.listCollaborators) return;
-
-        const tick = async () => {
-            if (cancelled) return;
-            try {
-                const result = await cloud.listCollaborators(blobId);
-                if (cancelled) return;
-                setRows(Array.isArray(result) ? result : []);
-                setDenied(false);
-            } catch (e: any) {
-                const msg = e?.message || String(e);
-                if (/not the canvas owner|Not authenticated|CLOUD_AUTH_REQUIRED/i.test(msg)) {
-                    setDenied(true);
-                    cancelled = true;  // stop polling — we'll never be allowed
-                }
-                // Other failures: silent retry on the next tick.
-            }
-        };
-        void tick();
-        const id = window.setInterval(tick, 8_000);
-        return () => { cancelled = true; window.clearInterval(id); };
-    }, [blobId, tickCounter]);
-
-    const remove = async (userId: string, displayName: string) => {
-        const ok = window.confirm(t('canvas.collab_peer.remove_confirm').replace('{name}', displayName));
-        if (!ok) return;
-        const cloud: any = (window as any).electron?.cloud;
-        if (!cloud?.removeCollaborator) return;
-        setRemovingId(userId);
-        try {
-            await cloud.removeCollaborator({ blobId, userId });
-            // Optimistic remove; next poll will confirm.
-            setRows(prev => prev.filter(r => r.user_id !== userId));
-        } catch (e: any) {
-            window.alert(`${t('canvas.collab_peer.remove_failed')} — ${e?.message || String(e)}`);
-        } finally {
-            setRemovingId(null);
-            bumpTick();
-        }
+    const copyLink = async (url: string) => {
+        try { await navigator.clipboard.writeText(url); setCopied(url); setTimeout(() => setCopied(c => c === url ? null : c), 2000); } catch { /* swallow */ }
     };
 
     if (denied) return null;
-    if (rows.length === 0) return null;
+
+    const now = Date.now();
+    const collabEmails = new Set(collabs.map(c => (c.email || '').toLowerCase()).filter(Boolean));
+    const pending = invites.filter(i =>
+        !i.accepted_at && !i.declined_at && new Date(i.expires_at).getTime() > now
+        && !(i.invitee_email && collabEmails.has(i.invitee_email.toLowerCase()))
+    );
+    const declined = invites.filter(i => !!i.declined_at);
+
+    const total = collabs.length + pending.length;
+    if (total === 0 && declined.length === 0) return null;
 
     return (
-        <div style={{
-            marginTop: 14,
-            paddingTop: 12,
-            borderTop: '1px solid rgba(255,255,255,0.08)',
-        }}>
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Users size={11} />
-                {t('share.collaborators_section').replace('{n}', String(rows.length))}
+                {t('share.people_with_access').replace('{n}', String(total))}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {rows.map((r) => {
+                {/* Accepted collaborators */}
+                {collabs.map((r) => {
                     const name = r.display_name || r.email || r.user_id.slice(0, 12);
                     const subtitle = r.display_name && r.email ? r.email : null;
-                    const when = (() => {
-                        try { return new Date(r.accepted_at).toLocaleDateString(); } catch { return ''; }
-                    })();
                     return (
-                        <div key={r.user_id} style={{
-                            display: 'flex', alignItems: 'center', gap: 10,
-                            padding: '6px 8px',
-                            borderRadius: 6,
-                            background: 'rgba(255,255,255,0.03)',
-                        }}>
-                            <div style={{
-                                width: 24, height: 24, borderRadius: '50%',
-                                background: '#10b98155',
-                                color: '#10b981',
-                                fontSize: 10, fontWeight: 600,
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                flexShrink: 0,
-                            }}>
-                                {(name || '?').slice(0, 1).toUpperCase()}
+                        <div key={`c-${r.user_id}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', borderRadius: 6, background: 'rgba(255,255,255,0.03)' }}>
+                            <div style={{ width: 24, height: 24, borderRadius: '50%', background: '#10b98155', color: '#10b981', fontSize: 10, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                <bdi>{(name || '?').slice(0, 1).toUpperCase()}</bdi>
                             </div>
                             <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.9)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                    {name}
+                                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.9)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><bdi>{name}</bdi></div>
+                                {subtitle && <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><bdi>{subtitle}</bdi></div>}
+                            </div>
+                            <span style={{ fontSize: 9, color: '#10b981', textTransform: 'uppercase', letterSpacing: 0.5, flexShrink: 0 }}>{t('share.access_editor')}</span>
+                            <button type="button" onClick={() => remove(r.user_id, name)} disabled={removingId === r.user_id} title={t('canvas.collab_peer.remove')}
+                                style={{ padding: '4px 8px', borderRadius: 5, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', color: '#fca5a5', cursor: removingId === r.user_id ? 'not-allowed' : 'pointer', opacity: removingId === r.user_id ? 0.5 : 1, fontSize: 10, display: 'flex', alignItems: 'center' }}>
+                                <X size={11} />
+                            </button>
+                        </div>
+                    );
+                })}
+                {/* Pending invites */}
+                {pending.map((r) => {
+                    const expiresDays = Math.max(0, Math.round((new Date(r.expires_at).getTime() - now) / 86_400_000));
+                    return (
+                        <div key={`p-${r.token}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', borderRadius: 6, background: 'rgba(255,255,255,0.03)' }}>
+                            <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'rgba(245,158,11,0.18)', color: '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                <Mail size={11} />
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    <bdi>{r.invitee_email || t('share.pending_no_recipient')}</bdi>
                                 </div>
-                                {subtitle && (
-                                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                        {subtitle}
-                                    </div>
-                                )}
+                                <div style={{ fontSize: 10, color: '#f59e0b' }}>
+                                    {t('share.access_pending')} · {t('share.pending_expires_in').replace('{n}', String(expiresDays))}
+                                </div>
                             </div>
-                            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', whiteSpace: 'nowrap' }}>
-                                {when}
-                            </div>
-                            <button
-                                type="button"
-                                onClick={() => remove(r.user_id, name)}
-                                disabled={removingId === r.user_id}
-                                title={t('canvas.collab_peer.remove')}
-                                style={{
-                                    padding: '4px 8px',
-                                    borderRadius: 5,
-                                    background: 'rgba(239, 68, 68, 0.12)',
-                                    border: '1px solid rgba(239, 68, 68, 0.25)',
-                                    color: '#fca5a5',
-                                    cursor: removingId === r.user_id ? 'not-allowed' : 'pointer',
-                                    opacity: removingId === r.user_id ? 0.5 : 1,
-                                    fontSize: 10,
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                }}
-                            >
+                            <button type="button" onClick={() => copyLink(r.inviteUrl)} title={t('share.pending_copy_link')}
+                                style={{ padding: '4px 8px', borderRadius: 5, background: copied === r.inviteUrl ? 'rgba(16,185,129,0.3)' : 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: copied === r.inviteUrl ? '#fff' : 'rgba(255,255,255,0.7)', cursor: 'pointer', fontSize: 10 }}>
+                                {copied === r.inviteUrl ? <Check size={11} /> : <Copy size={11} />}
+                            </button>
+                            <button type="button" onClick={() => revoke(r.token)} disabled={revoking === r.token} title={t('share.pending_revoke')}
+                                style={{ padding: '4px 8px', borderRadius: 5, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', color: '#fca5a5', cursor: revoking === r.token ? 'not-allowed' : 'pointer', opacity: revoking === r.token ? 0.5 : 1, fontSize: 10 }}>
                                 <X size={11} />
                             </button>
                         </div>
                     );
                 })}
             </div>
+            {/* Declined — collapsed disclosure */}
+            {declined.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                    <button type="button" onClick={() => setShowDeclined(s => !s)}
+                        style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: 10, cursor: 'pointer', padding: '2px 0' }}>
+                        {showDeclined ? '▾' : '▸'} {t('share.declined_disclosure').replace('{n}', String(declined.length))}
+                    </button>
+                    {showDeclined && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+                            {declined.map((r) => (
+                                <div key={`d-${r.token}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderRadius: 6, opacity: 0.6 }}>
+                                    <X size={10} style={{ color: 'rgba(255,255,255,0.35)', flexShrink: 0 }} />
+                                    <div style={{ flex: 1, minWidth: 0, fontSize: 11, color: 'rgba(255,255,255,0.5)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        <bdi>{r.invitee_email || t('share.pending_no_recipient')}</bdi>
+                                    </div>
+                                    <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)' }}>{t('share.access_declined')}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 }
+
 
 // ── Invite collaborators (Phase 7) ────────────────────────────────────────
 // Sender mints a single-use invite link; recipient opens it in a browser,
@@ -557,124 +467,132 @@ interface InviteResult {
     alreadyMember?: boolean;
 }
 
-// Narrowed shape stored in state — only set when a usable invite link exists,
-// so the render path can treat every field as present.
-interface ValidInvite {
-    token: string;
-    inviteUrl: string;
-    expiresAt: string;
+// Per-email outcome after a batch invite. The IPC returns a uniform shape
+// (no registered-vs-not signal, by anti-enumeration design) so we can only
+// distinguish: link created, already a member, or failed.
+interface InviteOutcome {
+    email: string;
+    status: 'invited' | 'already' | 'failed';
+    inviteUrl?: string;
+    error?: string;
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// ── Invite collaborators — multi-email pill input (2026-05-30) ─────────────
+// OneDrive/Figma-style: type or paste emails, comma/space/Enter tokenizes each
+// into a pill (invalid ones flagged red), then one "Invite N" button fires all
+// of them in parallel. Registered Klypix users get the invite in their in-app
+// inbox; for everyone a copy/mailto link is surfaced per result (we have no
+// server mailer, and can't tell registered from not without leaking an
+// enumeration oracle). Owner can add more emails any time the modal is open.
 function InviteCollaboratorsSection({ share }: { share: { blobId: string; keyB64: string } }) {
-    const [email, setEmail] = useState('');
+    // Pills = committed email tokens; draft = what's currently being typed.
+    const [emails, setEmails] = useState<string[]>([]);
+    const [draft, setDraft] = useState('');
     const [busy, setBusy] = useState(false);
-    const [latest, setLatest] = useState<ValidInvite | null>(null);
-    const [alreadyMember, setAlreadyMember] = useState(false);
-    const [err, setErr] = useState<string | null>(null);
-    const [copied, setCopied] = useState(false);
+    const [outcomes, setOutcomes] = useState<InviteOutcome[]>([]);
+    const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
 
-    const handleCreate = async () => {
-        setErr(null);
-        setAlreadyMember(false);
+    // Commit the draft (and anything pasted with separators) into pills.
+    // Dedupes case-insensitively against existing pills. Keeps an invalid
+    // fragment in the draft so the user can fix it rather than losing it.
+    const commitDraft = (raw: string, { keepTail }: { keepTail: boolean }) => {
+        const parts = raw.split(/[\s,;]+/);
+        const tail = keepTail ? (parts.pop() ?? '') : '';
+        const additions: string[] = [];
+        for (const p of parts) {
+            const e = p.trim().toLowerCase();
+            if (!e) continue;
+            if (emails.includes(e) || additions.includes(e)) continue;
+            additions.push(e);
+        }
+        if (additions.length) setEmails(prev => [...prev, ...additions]);
+        setDraft(tail);
+    };
+
+    const onDraftChange = (v: string) => {
+        // If the user typed/pasted a separator, tokenize everything before it.
+        if (/[\s,;]/.test(v)) commitDraft(v, { keepTail: true });
+        else setDraft(v);
+    };
+
+    const onDraftKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 'Enter' || e.key === ',' || e.key === ' ' || e.key === ';') {
+            e.preventDefault();
+            commitDraft(draft + (e.key === 'Enter' ? '' : e.key), { keepTail: false });
+        } else if (e.key === 'Backspace' && draft === '' && emails.length > 0) {
+            // Backspace on empty draft pops the last pill (standard token UX).
+            setEmails(prev => prev.slice(0, -1));
+        }
+    };
+
+    const removePill = (idx: number) => setEmails(prev => prev.filter((_, i) => i !== idx));
+
+    // Fold any leftover valid draft into the pill set, then return the full
+    // list of valid emails to invite.
+    const collectValidEmails = (): string[] => {
+        const all = [...emails];
+        const d = draft.trim().toLowerCase();
+        if (d && !all.includes(d)) all.push(d);
+        return all.filter(e => EMAIL_RE.test(e));
+    };
+
+    const anyInvalid = [...emails, ...(draft.trim() ? [draft.trim().toLowerCase()] : [])]
+        .some(e => !EMAIL_RE.test(e));
+    const validCount = collectValidEmails().length;
+
+    const handleInviteAll = async () => {
+        const targets = collectValidEmails();
+        if (targets.length === 0) return;
         setBusy(true);
-        try {
-            const bridge: any = (window as any).electron?.cloud;
-            if (!bridge?.createInvitation) throw new Error('Invite IPC unavailable');
-            const res: InviteResult = await bridge.createInvitation({
-                blobId: share.blobId,
-                email: email.trim() || undefined,
-                // The canvas decryption key is included so accepted
-                // collaborators can decrypt the cloud blob without a
-                // separate key-exchange step. This is the intentional E2E
-                // trade-off for invite-based collab (share-by-URL stays E2E).
-                keyB64: share.keyB64,
-            });
-            // 2026-05-30: the email may already be a collaborator. The IPC
-            // returns { alreadyMember:true, token:null } in that case — show
-            // a neutral note, not a broken link row.
-            if (res?.alreadyMember || (!res?.inviteUrl && !res?.token)) {
-                setAlreadyMember(true);
-                setLatest(null);
-            } else {
-                // Coerce to the non-null ValidInvite shape — we're in the
-                // branch where token/inviteUrl exist; default expiresAt to
-                // +7d (the server default) if the RPC omitted it.
-                setLatest({
-                    token: res.token!,
-                    inviteUrl: res.inviteUrl!,
-                    expiresAt: res.expiresAt ?? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-                });
-            }
-            // If the email matched a registered Klypix user, the directed
-            // invite is ALREADY in their in-app inbox — the copy/mailto link
-            // below is still shown (uniform UX, no registered-vs-not oracle)
-            // as an out-of-band nudge.
-        } catch (e: any) {
-            setErr(e?.message || t('share.create_invite_failed'));
-        } finally {
-            setBusy(false);
-        }
-    };
-
-    const copyInvite = async () => {
-        if (!latest) return;
-        const text = latest.inviteUrl;
-        let ok = false;
-        try {
-            await navigator.clipboard.writeText(text);
-            ok = true;
-        } catch {
-            // Fallback for environments where clipboard API is blocked
-            // (some Electron contexts, unfocused windows, file:// origin).
+        setOutcomes([]);
+        const bridge: any = (window as any).electron?.cloud;
+        // Fire all invites in parallel; one failure never blocks the rest.
+        const settled = await Promise.allSettled(targets.map(async (em): Promise<InviteOutcome> => {
+            if (!bridge?.createInvitation) return { email: em, status: 'failed', error: 'Invite IPC unavailable' };
             try {
-                const el = document.createElement('textarea');
-                el.value = text;
-                el.style.position = 'fixed';
-                el.style.opacity = '0';
-                document.body.appendChild(el);
-                el.select();
-                document.execCommand('copy');
-                document.body.removeChild(el);
-                ok = true;
-            } catch { /* give up silently */ }
-        }
-        if (ok) {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2200);
-        }
+                const res: InviteResult = await bridge.createInvitation({
+                    blobId: share.blobId,
+                    email: em,
+                    keyB64: share.keyB64,
+                });
+                if (res?.alreadyMember || (!res?.inviteUrl && !res?.token)) {
+                    return { email: em, status: 'already' };
+                }
+                return { email: em, status: 'invited', inviteUrl: res.inviteUrl ?? undefined };
+            } catch (e: any) {
+                return { email: em, status: 'failed', error: e?.message || 'Failed' };
+            }
+        }));
+        const results = settled.map(s => s.status === 'fulfilled'
+            ? s.value
+            : { email: '?', status: 'failed' as const, error: 'Unexpected error' });
+        setOutcomes(results);
+        // Clear the pills that succeeded or were already members; keep failed
+        // ones so the user can retry without re-typing.
+        const failedEmails = new Set(results.filter(r => r.status === 'failed').map(r => r.email));
+        setEmails(prev => prev.filter(e => failedEmails.has(e)));
+        setDraft(d => (failedEmails.has(d.trim().toLowerCase()) ? d : ''));
+        setBusy(false);
     };
 
-    // Phase 19: mailto launcher. Opens the user's default email client with
-    // a pre-filled invitation. No backend mailer required — the user owns
-    // the SMTP. Body includes the invite URL + a soft-sell line about KLYPIX.
-    // shell.openExternal on the mailto: URL routes through Electron's main
-    // process which knows how to dispatch to the OS default handler.
-    const sendViaEmail = () => {
-        if (!latest) return;
+    const copyOne = async (url: string) => {
+        try { await navigator.clipboard.writeText(url); setCopiedUrl(url); setTimeout(() => setCopiedUrl(c => c === url ? null : c), 2000); }
+        catch { /* swallow */ }
+    };
+
+    const mailtoOne = (em: string, url: string) => {
         const subject = t('share.email_subject');
-        const body = t('share.email_body').replace('{url}', latest.inviteUrl);
-        const recipient = email.trim();
-        // RFC 2368 mailto — encodeURIComponent handles &, ?, line breaks.
-        const url = `mailto:${encodeURIComponent(recipient)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+        const body = t('share.email_body').replace('{url}', url);
+        const murl = `mailto:${encodeURIComponent(em)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
         const electron: any = (window as any).electron;
-        if (electron?.openExternal) {
-            try { electron.openExternal(url); return; } catch { /* fall through */ }
-        }
-        // Fallback for environments without the openExternal bridge — works
-        // in plain browsers (admin viewer, hot-reload preview, etc).
-        try { window.open(url, '_blank'); } catch { /* swallow */ }
+        if (electron?.openExternal) { try { electron.openExternal(murl); return; } catch { /* fall through */ } }
+        try { window.open(murl, '_blank'); } catch { /* swallow */ }
     };
-
-    const expiresDays = latest
-        ? Math.max(1, Math.round((new Date(latest.expiresAt).getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
-        : 7;
 
     return (
-        <div style={{
-            marginTop: 18,
-            paddingTop: 14,
-            borderTop: '1px solid rgba(255,255,255,0.08)',
-        }}>
+        <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Users size={11} />
                 {t('share.invite_section')}
@@ -682,143 +600,126 @@ function InviteCollaboratorsSection({ share }: { share: { blobId: string; keyB64
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginBottom: 10, lineHeight: 1.5 }}>
                 {t('share.invite_desc')}
             </div>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+
+            {/* Pill input: pills + inline draft field share one bordered box. */}
+            <div
+                onClick={(e) => { (e.currentTarget.querySelector('input') as HTMLInputElement | null)?.focus(); }}
+                style={{
+                    display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 5,
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    borderRadius: 7, padding: '6px 7px', marginBottom: 8, cursor: 'text',
+                }}
+            >
+                {emails.map((em, i) => {
+                    const valid = EMAIL_RE.test(em);
+                    return (
+                        <span key={`${em}-${i}`} style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            fontSize: 11, padding: '3px 6px 3px 8px', borderRadius: 999,
+                            background: valid ? 'rgba(16,185,129,0.14)' : 'rgba(239,68,68,0.14)',
+                            border: '1px solid ' + (valid ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.35)'),
+                            color: valid ? '#10b981' : '#fca5a5',
+                        }} title={valid ? em : `${em} — not a valid email`}>
+                            <bdi style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{em}</bdi>
+                            <button type="button" onClick={(ev) => { ev.stopPropagation(); removePill(i); }}
+                                style={{ display: 'flex', background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, opacity: 0.7 }}>
+                                <X size={11} />
+                            </button>
+                        </span>
+                    );
+                })}
                 <input
-                    type="email"
-                    placeholder={t('share.email_placeholder')}
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    type="text"
+                    inputMode="email"
+                    placeholder={emails.length === 0 ? t('share.email_placeholder') : ''}
+                    value={draft}
+                    onChange={(e) => onDraftChange(e.target.value)}
+                    onKeyDown={onDraftKeyDown}
+                    onBlur={() => { if (draft.trim()) commitDraft(draft, { keepTail: false }); }}
                     disabled={busy}
                     style={{
-                        flex: 1,
-                        background: 'rgba(255,255,255,0.04)',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        borderRadius: 7,
-                        padding: '8px 10px',
-                        color: '#fff',
-                        fontSize: 11,
-                        outline: 'none',
+                        flex: 1, minWidth: 120,
+                        background: 'transparent', border: 'none', outline: 'none',
+                        color: '#fff', fontSize: 11,
                         fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
+                        padding: '3px 2px',
                     }}
                 />
-                <button
-                    type="button"
-                    onClick={handleCreate}
-                    disabled={busy}
-                    style={{
-                        padding: '8px 12px',
-                        borderRadius: 7,
-                        background: 'rgba(16, 185, 129, 0.15)',
-                        border: '1px solid rgba(16, 185, 129, 0.3)',
-                        color: '#10b981',
-                        fontSize: 11,
-                        fontWeight: 500,
-                        cursor: busy ? 'not-allowed' : 'pointer',
-                        opacity: busy ? 0.5 : 1,
-                        whiteSpace: 'nowrap',
-                    }}
-                >
-                    {busy ? t('share.creating') : t('share.get_invite_link')}
-                </button>
             </div>
-            {err && (
-                <div style={{ color: '#fca5a5', fontSize: 11, marginTop: 4 }}>{err}</div>
-            )}
-            {alreadyMember && (
-                <div style={{
-                    color: 'rgba(255,255,255,0.6)', fontSize: 11, marginTop: 4,
-                    display: 'flex', alignItems: 'center', gap: 6,
-                    padding: '7px 10px', borderRadius: 7,
-                    background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
-                }}>
-                    <Check size={12} style={{ color: '#10b981' }} />
-                    {t('share.already_has_access')}
+
+            <button
+                type="button"
+                onClick={handleInviteAll}
+                disabled={busy || validCount === 0}
+                style={{
+                    width: '100%', padding: '9px 12px', borderRadius: 7,
+                    background: validCount > 0 ? 'rgba(16, 185, 129, 0.18)' : 'rgba(255,255,255,0.04)',
+                    border: '1px solid ' + (validCount > 0 ? 'rgba(16, 185, 129, 0.35)' : 'rgba(255,255,255,0.08)'),
+                    color: validCount > 0 ? '#10b981' : 'rgba(255,255,255,0.4)',
+                    fontSize: 12, fontWeight: 600,
+                    cursor: (busy || validCount === 0) ? 'not-allowed' : 'pointer',
+                    opacity: busy ? 0.6 : 1,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                }}
+            >
+                {busy
+                    ? <><Loader2 size={13} className="animate-spin" /> {t('share.creating')}</>
+                    : validCount > 1
+                        ? t('share.invite_n_people').replace('{n}', String(validCount))
+                        : t('share.invite_one_person')}
+            </button>
+            {anyInvalid && (
+                <div style={{ color: '#fca5a5', fontSize: 10, marginTop: 6 }}>
+                    {t('share.invite_invalid_email')}
                 </div>
             )}
-            {latest && (
-                <>
-                    {/* If the recipient is a Klypix user, this invite is also
-                        waiting in their in-app inbox — they don't strictly
-                        need the link. Shown uniformly (we don't reveal whether
-                        the email matched) as a copy/email fallback. */}
-                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', margin: '6px 2px 6px' }}>
+
+            {/* Per-email results after a batch send. */}
+            {outcomes.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 10 }}>
+                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
                         {t('share.invite_inapp_note')}
                     </div>
-                    <div style={{
-                        display: 'flex', gap: 6, alignItems: 'stretch',
-                        background: 'rgba(255,255,255,0.04)',
-                        border: '1px solid rgba(255,255,255,0.08)',
-                        borderRadius: 7,
-                        padding: 3,
-                    }}>
-                        <div
-                            style={{
-                                flex: 1, minWidth: 0,
-                                fontFamily: 'JetBrains Mono, ui-monospace, monospace',
-                                fontSize: 10,
-                                color: 'rgba(255,255,255,0.85)',
-                                padding: '7px 9px',
-                                whiteSpace: 'nowrap',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                            }}
-                            title={latest.inviteUrl}
-                        >
-                            {latest.inviteUrl}
+                    {outcomes.map((o, i) => (
+                        <div key={`${o.email}-${i}`} style={{
+                            display: 'flex', alignItems: 'center', gap: 8,
+                            padding: '6px 8px', borderRadius: 6,
+                            background: 'rgba(255,255,255,0.03)',
+                        }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.85)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    <bdi>{o.email}</bdi>
+                                </div>
+                                <div style={{
+                                    fontSize: 10,
+                                    color: o.status === 'failed' ? '#fca5a5' : o.status === 'already' ? 'rgba(255,255,255,0.45)' : '#10b981',
+                                }}>
+                                    {o.status === 'invited' && t('share.invite_status_sent')}
+                                    {o.status === 'already' && t('share.already_has_access')}
+                                    {o.status === 'failed' && (o.error || 'Failed')}
+                                </div>
+                            </div>
+                            {o.status === 'invited' && o.inviteUrl && (
+                                <>
+                                    <button type="button" onClick={() => copyOne(o.inviteUrl!)} title={t('share.pending_copy_link')}
+                                        style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 8px', borderRadius: 5, background: copiedUrl === o.inviteUrl ? 'rgba(16,185,129,0.3)' : 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: copiedUrl === o.inviteUrl ? '#fff' : 'rgba(255,255,255,0.7)', cursor: 'pointer', fontSize: 10 }}>
+                                        {copiedUrl === o.inviteUrl ? <Check size={11} /> : <Copy size={11} />}
+                                    </button>
+                                    <button type="button" onClick={() => mailtoOne(o.email, o.inviteUrl!)} title={t('share.email_send_hint')}
+                                        style={{ display: 'flex', alignItems: 'center', padding: '5px 8px', borderRadius: 5, background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.3)', color: '#60a5fa', cursor: 'pointer', fontSize: 10 }}>
+                                        <Mail size={11} />
+                                    </button>
+                                </>
+                            )}
                         </div>
-                        <button
-                            type="button"
-                            onClick={copyInvite}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: 5,
-                                padding: '8px 12px',
-                                borderRadius: 6,
-                                background: copied ? 'rgba(16, 185, 129, 0.3)' : 'rgba(16, 185, 129, 0.12)',
-                                color: copied ? '#ffffff' : '#10b981',
-                                border: copied ? '1px solid rgba(16, 185, 129, 0.6)' : '1px solid transparent',
-                                cursor: 'pointer',
-                                fontSize: 11,
-                                fontWeight: 600,
-                                whiteSpace: 'nowrap',
-                                transition: 'all 0.15s',
-                            }}
-                        >
-                            {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
-                        </button>
-                        {/* Phase 19: send the invite via the user's default email
-                            client. mailto: hand-off avoids requiring a backend
-                            mailer. Highlighted slightly stronger when a recipient
-                            email is filled in — guides the user toward this
-                            action when they've already typed an address. */}
-                        <button
-                            type="button"
-                            onClick={sendViaEmail}
-                            title={t('share.email_send_hint')}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: 5,
-                                padding: '8px 12px',
-                                borderRadius: 6,
-                                background: email.trim() ? 'rgba(59, 130, 246, 0.15)' : 'rgba(255,255,255,0.04)',
-                                color: email.trim() ? '#60a5fa' : 'rgba(255,255,255,0.55)',
-                                border: '1px solid ' + (email.trim() ? 'rgba(59, 130, 246, 0.35)' : 'rgba(255,255,255,0.08)'),
-                                cursor: 'pointer',
-                                fontSize: 11,
-                                fontWeight: 600,
-                                whiteSpace: 'nowrap',
-                                transition: 'all 0.15s',
-                            }}
-                        >
-                            <Mail size={12} /> {t('share.email_send_button')}
-                        </button>
-                    </div>
-                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 6 }}>
-                        Expires in {expiresDays} day{expiresDays === 1 ? '' : 's'} · single-use
-                    </div>
-                </>
+                    ))}
+                </div>
             )}
         </div>
     );
 }
+
 
 function ShareErrorBody({ reason, error, onRetry, canvasFilePath }: { reason: string; error?: string; onRetry: () => void; canvasFilePath: string | null }) {
     const title = {
