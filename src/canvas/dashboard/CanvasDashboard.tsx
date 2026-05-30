@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FilePlus2, FolderOpen, Clock, X as XIcon, Users, Undo2 } from 'lucide-react';
+import { FilePlus2, FolderOpen, Clock, X as XIcon, Users, Undo2, Check } from 'lucide-react';
 import { useRecentCanvases } from '../../hooks/useRecentCanvases';
 import { t, useLocale } from '../../i18n/strings';
 import { useSharedCanvases, type SharedCanvas } from '../../hooks/useSharedCanvases';
+import { usePendingInvitations, type PendingInvitation } from '../../hooks/usePendingInvitations';
 import { listCloudShares } from '../cloud/cloudShareStore';
 import { removeRecentCanvas } from './recentCanvasesStore';
 import type { RecentCanvas } from './recentCanvasesStore';
@@ -53,8 +54,12 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
     const recents = useRecentCanvases();
     const recentlyClosed = useRecentlyClosed();
     const { canvases: shared, loading: sharedLoading, leave: leaveShared } = useSharedCanvases();
+    const { invitations: pendingInvites, accept: acceptInvite, decline: declineInvite } = usePendingInvitations();
     const [dismissed, setDismissed] = useState(false);
     const [openingPath, setOpeningPath] = useState<string | null>(null);
+    // Track which invitation rows are mid-accept/decline so we can show a
+    // spinner + disable the buttons (prevents double-fire).
+    const [busyInvite, setBusyInvite] = useState<string | null>(null);
 
     // "Shared by you" — canvases the user OWNS that have been pushed to the
     // cloud (i.e. they have a cloudShareStore entry without `invitedBy`).
@@ -282,6 +287,40 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                     margin: '0 -8px',
                     padding: '0 8px',
                 }}>
+                    {/* Pending invitations inbox (2026-05-30) — sits at the very
+                        top because it's the most actionable thing: someone is
+                        waiting on you. Accept → becomes a collaborator + the
+                        canvas drops into "Shared with you"; Decline → gone. */}
+                    {pendingInvites.length > 0 && (
+                        <>
+                            <div style={{
+                                fontSize: 10, color: '#10b981',
+                                textTransform: 'uppercase', letterSpacing: '0.08em',
+                                marginBottom: 8, paddingLeft: 4,
+                                display: 'flex', alignItems: 'center', gap: 6,
+                            }}>
+                                <Users size={10} />
+                                {t('canvas.pending_invitations')} · {pendingInvites.length}
+                            </div>
+                            {pendingInvites.map(inv => (
+                                <PendingInviteRow
+                                    key={inv.invitation_id}
+                                    invite={inv}
+                                    busy={busyInvite === inv.invitation_id}
+                                    onAccept={async () => {
+                                        setBusyInvite(inv.invitation_id);
+                                        try { await acceptInvite(inv.invitation_id); }
+                                        finally { setBusyInvite(null); }
+                                    }}
+                                    onDecline={async () => {
+                                        setBusyInvite(inv.invitation_id);
+                                        try { await declineInvite(inv.invitation_id); }
+                                        finally { setBusyInvite(null); }
+                                    }}
+                                />
+                            ))}
+                        </>
+                    )}
                     {/* Recently closed — session-scoped. Sits above Recent because
                         it's the most likely thing the user wants right after an
                         accidental close. Each entry consumes itself on restore
@@ -394,6 +433,92 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
         </div>
     ), document.body);
 };
+
+// ── Pending-invitation inbox row (2026-05-30) ───────────────────────────
+function PendingInviteRow({ invite, busy, onAccept, onDecline }: {
+    invite: PendingInvitation;
+    busy: boolean;
+    onAccept: () => void;
+    onDecline: () => void;
+}) {
+    const title = invite.title_hint || 'Untitled canvas';
+    const inviter = invite.invited_by?.display_name || invite.invited_by?.masked_email || 'Someone';
+    // Relative expiry ("expires in 2h"). expires_at is ISO from the server.
+    let expiresLabel = '';
+    try {
+        const ms = new Date(invite.expires_at).getTime() - Date.now();
+        if (ms > 0) {
+            const hr = Math.floor(ms / 3600000);
+            const day = Math.floor(hr / 24);
+            expiresLabel = day >= 1 ? `expires in ${day}d` : hr >= 1 ? `expires in ${hr}h` : 'expires soon';
+        } else {
+            expiresLabel = 'expired';
+        }
+    } catch { /* leave blank */ }
+    return (
+        <div
+            style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                padding: '10px 12px', borderRadius: 8, marginBottom: 4,
+                background: 'rgba(16, 185, 129, 0.06)',
+                border: '1px solid rgba(16, 185, 129, 0.18)',
+            }}
+        >
+            <div style={{
+                width: 36, height: 36, borderRadius: 8,
+                background: 'rgba(16, 185, 129, 0.14)', color: '#10b981',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0, fontSize: 10, fontWeight: 600, letterSpacing: '0.04em',
+            }}>
+                {/* bdi keeps a non-Latin title/inviter from flipping the box in RTL */}
+                <bdi>{title.slice(0, 2).toUpperCase()}</bdi>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                    fontSize: 13, fontWeight: 500, color: '#e8e8ed',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>
+                    <bdi>{title}</bdi>
+                </div>
+                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', marginTop: 2 }}>
+                    <bdi>{inviter}</bdi> invited you{expiresLabel ? ` · ${expiresLabel}` : ''}
+                </div>
+            </div>
+            {/* Decline (subtle) */}
+            <button
+                onPointerDown={(e) => { e.stopPropagation(); if (!busy) onDecline(); }}
+                disabled={busy}
+                title="Decline"
+                style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    width: 30, height: 30, borderRadius: 7, flexShrink: 0,
+                    background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+                    color: 'rgba(255,255,255,0.55)', cursor: busy ? 'wait' : 'pointer',
+                }}
+            >
+                <XIcon size={14} />
+            </button>
+            {/* Accept (emerald, primary) */}
+            <button
+                onPointerDown={(e) => { e.stopPropagation(); if (!busy) onAccept(); }}
+                disabled={busy}
+                title="Accept"
+                style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    gap: 5, height: 30, padding: '0 12px', borderRadius: 7, flexShrink: 0,
+                    background: 'rgba(16, 185, 129, 0.2)', border: '1px solid rgba(16, 185, 129, 0.4)',
+                    color: '#10b981', fontSize: 12, fontWeight: 600,
+                    cursor: busy ? 'wait' : 'pointer', opacity: busy ? 0.6 : 1,
+                }}
+            >
+                {busy
+                    ? <span style={{ width: 12, height: 12, border: '2px solid rgba(16,185,129,0.3)', borderTopColor: '#10b981', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.6s linear infinite' }} />
+                    : <Check size={14} />}
+                Accept
+            </button>
+        </div>
+    );
+}
 
 interface SharedByYouEntry {
     filePath: string;

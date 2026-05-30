@@ -389,6 +389,12 @@ contextBridge.exposeInMainWorld('electron', {
             ipcRenderer.invoke('canvas-cloud:create-share-token', blobId),
         createInvitation: (args: { blobId: string; email?: string; titleHint?: string; keyB64?: string }) =>
             ipcRenderer.invoke('canvas-cloud:create-invitation', args),
+        // 2026-05-30 direct-invite + in-app inbox
+        listPendingInvitations: () => ipcRenderer.invoke('canvas-cloud:list-pending-invitations'),
+        acceptDirectedInvitation: (invitationId: string) =>
+            ipcRenderer.invoke('canvas-cloud:accept-directed-invitation', invitationId),
+        declineInvitation: (invitationId: string) =>
+            ipcRenderer.invoke('canvas-cloud:decline-invitation', invitationId),
         writeSharedToDisk: (args: { blobId: string; bytesBase64: string; preferredName?: string }) =>
             ipcRenderer.invoke('canvas-shared:write-to-disk', args),
         listInvitations: (blobId: string) =>

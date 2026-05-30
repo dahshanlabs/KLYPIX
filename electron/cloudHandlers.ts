@@ -197,35 +197,109 @@ export function registerCloudHandlers(ipcMain: IpcMain): void {
     // decrypt the cloud blob. See migration 20260515170000 for the E2E
     // trade-off this represents.
     ipcMain.handle('canvas-cloud:create-invitation', async (_e, args: { blobId: string; email?: string; titleHint?: string; keyB64?: string }) => {
-        const userId = await requireUserId();
+        await requireUserId();
         const supabase = getSupabase();
+        // Token is generated in Node and passed to the RPC (no pgcrypto dep).
         const token = generateShareToken();
-        const { data, error } = await supabase
-            .from(INVITATIONS_TABLE)
-            .insert({
-                token,
-                blob_id: args.blobId,
-                invited_by: userId,
-                invitee_email: args.email || null,
-                title_hint: args.titleHint || null,
-                key_b64: args.keyB64 || null,
-            })
-            .select('expires_at')
-            .single();
-        if (error || !data) {
-            if (/relation .* does not exist/i.test(error?.message || '')) {
-                throw new Error(
-                    `Invitations table missing. Apply migration 20260515120000_canvas_collaborators.sql. ` +
-                    `See docs/supabase-cloud-sync-setup.md.`
-                );
+        // 2026-05-30: route through create_canvas_invitation RPC, which
+        // resolves the email → registered user (directed invite, surfaces in
+        // their in-app inbox) or leaves it a link invite, atomically coalesces
+        // duplicate invites, and enforces an audited rate limit. The RPC
+        // returns a UNIFORM shape regardless of registered/unregistered so the
+        // owner can't use it as an email-enumeration oracle.
+        const { data, error } = await supabase.rpc('create_canvas_invitation', {
+            p_blob_id: args.blobId,
+            p_token: token,
+            p_email: args.email || null,
+            p_key_b64: args.keyB64 || null,
+            p_title_hint: args.titleHint || null,
+        });
+        if (error) {
+            const m = error.message || '';
+            // CAPABILITY GATE, not silent fallback: if the RPC is missing the
+            // server hasn't applied the hardening migration. We must NOT fall
+            // back to the legacy direct INSERT — that would write key_b64 under
+            // the un-hardened (leaky) RLS. Surface a clear "update the server".
+            if (/function .*create_canvas_invitation.* does not exist|could not find the function|404|PGRST202/i.test(m)) {
+                throw new Error('Collaboration features need a server update — apply migration 20260530120000_direct_email_invite.sql to Supabase.');
             }
-            throw new Error(`Create invitation failed: ${error?.message ?? 'unknown'}`);
+            if (/P0003/.test(m)) throw new Error('Only the canvas owner can invite collaborators.');
+            if (/P0005/.test(m)) throw new Error('You already own this canvas.');
+            if (/P0008/.test(m)) throw new Error('Invite data too large.');
+            if (/P0004/.test(m)) throw new Error('Invitation rate limit reached. Try again later.');
+            if (/P0002/.test(m)) throw new Error('Canvas not found.');
+            throw new Error(`Create invitation failed: ${m}`);
         }
+        // RPC returns { ok, token, invite_url, expires_at } OR for an existing
+        // collaborator { ok:true, already_member:true, token:null }.
+        const row: any = data;
+        if (row?.already_member) {
+            return { alreadyMember: true, token: null, inviteUrl: null, expiresAt: null };
+        }
+        const outToken = row?.token ?? token;
         return {
-            token,
-            inviteUrl: `${INVITE_URL_HOST}${INVITE_URL_PATH}${token}`,
-            expiresAt: data.expires_at,
+            token: outToken,
+            inviteUrl: row?.invite_url ?? `${INVITE_URL_HOST}${INVITE_URL_PATH}${outToken}`,
+            expiresAt: row?.expires_at ?? null,
         };
+    });
+
+    // 2026-05-30: in-app inbox — list PENDING invitations addressed to the
+    // current user (directed by user_id, OR link invites matching their
+    // confirmed email so register-after-invite still surfaces). SECURITY
+    // DEFINER RPC omits token + key_b64. Returns [] gracefully when signed
+    // out / migration not applied so the dashboard never crashes.
+    ipcMain.handle('canvas-cloud:list-pending-invitations', async () => {
+        try {
+            await requireUserId();
+        } catch {
+            return []; // not signed in → no inbox
+        }
+        const supabase = getSupabase();
+        const { data, error } = await supabase.rpc('list_pending_invitations');
+        if (error) {
+            const m = error.message || '';
+            // Auth expiry between getUser and rpc, or missing migration → [].
+            if (/not authenticated|P0001|JWT|sign[-\s]?in|does not exist|404|PGRST202/i.test(m)) {
+                return [];
+            }
+            throw new Error(`List pending invitations failed: ${m}`);
+        }
+        return Array.isArray(data) ? data : [];
+    });
+
+    // 2026-05-30: accept a DIRECTED invitation by its surrogate id (token-free).
+    // The RPC binds acceptance to invitee_user_id === auth.uid(), so a leaked
+    // id can't be redeemed by the wrong account.
+    ipcMain.handle('canvas-cloud:accept-directed-invitation', async (_e, invitationId: string) => {
+        await requireUserId();
+        const supabase = getSupabase();
+        const { data, error } = await supabase.rpc('accept_directed_invitation', { p_invitation_id: invitationId });
+        if (error) {
+            const m = error.message || '';
+            if (/P0007/.test(m)) throw new Error('This invitation was sent to a different account.');
+            if (/P0002/.test(m)) throw new Error('This invitation is no longer valid (expired, declined, or already used).');
+            if (/does not exist|404|PGRST202/i.test(m)) throw new Error('Server update required (migration 20260530120000).');
+            throw new Error(`Accept invitation failed: ${m}`);
+        }
+        return { ok: true, data };
+    });
+
+    // 2026-05-30: decline a DIRECTED invitation. Link invites cannot be
+    // declined (P0009) to avoid multi-recipient griefing.
+    ipcMain.handle('canvas-cloud:decline-invitation', async (_e, invitationId: string) => {
+        await requireUserId();
+        const supabase = getSupabase();
+        const { data, error } = await supabase.rpc('decline_canvas_invitation', { p_invitation_id: invitationId });
+        if (error) {
+            const m = error.message || '';
+            if (/P0006/.test(m)) throw new Error('This invitation was already accepted.');
+            if (/P0009/.test(m)) throw new Error('Link invitations cannot be declined.');
+            if (/P0007/.test(m)) throw new Error('Not your invitation.');
+            if (/does not exist|404|PGRST202/i.test(m)) throw new Error('Server update required (migration 20260530120000).');
+            throw new Error(`Decline invitation failed: ${m}`);
+        }
+        return { ok: true, data };
     });
 
     // List pending invitations for a canvas. RLS limits to invitations the
@@ -235,7 +309,7 @@ export function registerCloudHandlers(ipcMain: IpcMain): void {
         const supabase = getSupabase();
         const { data, error } = await supabase
             .from(INVITATIONS_TABLE)
-            .select('token, invitee_email, created_at, expires_at, accepted_at, accepted_by')
+            .select('token, invitee_email, invitee_user_id, created_at, expires_at, accepted_at, accepted_by, declined_at, declined_by')
             .eq('blob_id', blobId)
             .order('created_at', { ascending: false });
         if (error) throw new Error(`List invitations failed: ${error.message}`);

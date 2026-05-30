@@ -545,7 +545,21 @@ function CollaboratorsListSection({ blobId }: { blobId: string }) {
 // from the share URL because share URLs grant read-only via the canvas_share_tokens
 // table; invitations grant read-write via canvas_collaborators.
 
+// Raw IPC return shape — any field may be null (e.g. already-member returns
+// all-null + alreadyMember:true).
 interface InviteResult {
+    token: string | null;
+    inviteUrl: string | null;
+    expiresAt: string | null;
+    /** 2026-05-30: set when the typed email already belongs to a collaborator
+     *  on this canvas. The owner sees a neutral "already has access" note
+     *  instead of a (pointless) new link. */
+    alreadyMember?: boolean;
+}
+
+// Narrowed shape stored in state — only set when a usable invite link exists,
+// so the render path can treat every field as present.
+interface ValidInvite {
     token: string;
     inviteUrl: string;
     expiresAt: string;
@@ -554,12 +568,14 @@ interface InviteResult {
 function InviteCollaboratorsSection({ share }: { share: { blobId: string; keyB64: string } }) {
     const [email, setEmail] = useState('');
     const [busy, setBusy] = useState(false);
-    const [latest, setLatest] = useState<InviteResult | null>(null);
+    const [latest, setLatest] = useState<ValidInvite | null>(null);
+    const [alreadyMember, setAlreadyMember] = useState(false);
     const [err, setErr] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
 
     const handleCreate = async () => {
         setErr(null);
+        setAlreadyMember(false);
         setBusy(true);
         try {
             const bridge: any = (window as any).electron?.cloud;
@@ -573,7 +589,26 @@ function InviteCollaboratorsSection({ share }: { share: { blobId: string; keyB64
                 // trade-off for invite-based collab (share-by-URL stays E2E).
                 keyB64: share.keyB64,
             });
-            setLatest(res);
+            // 2026-05-30: the email may already be a collaborator. The IPC
+            // returns { alreadyMember:true, token:null } in that case — show
+            // a neutral note, not a broken link row.
+            if (res?.alreadyMember || (!res?.inviteUrl && !res?.token)) {
+                setAlreadyMember(true);
+                setLatest(null);
+            } else {
+                // Coerce to the non-null ValidInvite shape — we're in the
+                // branch where token/inviteUrl exist; default expiresAt to
+                // +7d (the server default) if the RPC omitted it.
+                setLatest({
+                    token: res.token!,
+                    inviteUrl: res.inviteUrl!,
+                    expiresAt: res.expiresAt ?? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+                });
+            }
+            // If the email matched a registered Klypix user, the directed
+            // invite is ALREADY in their in-app inbox — the copy/mailto link
+            // below is still shown (uniform UX, no registered-vs-not oracle)
+            // as an out-of-band nudge.
         } catch (e: any) {
             setErr(e?.message || t('share.create_invite_failed'));
         } finally {
@@ -689,8 +724,26 @@ function InviteCollaboratorsSection({ share }: { share: { blobId: string; keyB64
             {err && (
                 <div style={{ color: '#fca5a5', fontSize: 11, marginTop: 4 }}>{err}</div>
             )}
+            {alreadyMember && (
+                <div style={{
+                    color: 'rgba(255,255,255,0.6)', fontSize: 11, marginTop: 4,
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    padding: '7px 10px', borderRadius: 7,
+                    background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+                }}>
+                    <Check size={12} style={{ color: '#10b981' }} />
+                    {t('share.already_has_access')}
+                </div>
+            )}
             {latest && (
                 <>
+                    {/* If the recipient is a Klypix user, this invite is also
+                        waiting in their in-app inbox — they don't strictly
+                        need the link. Shown uniformly (we don't reveal whether
+                        the email matched) as a copy/email fallback. */}
+                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', margin: '6px 2px 6px' }}>
+                        {t('share.invite_inapp_note')}
+                    </div>
                     <div style={{
                         display: 'flex', gap: 6, alignItems: 'stretch',
                         background: 'rgba(255,255,255,0.04)',

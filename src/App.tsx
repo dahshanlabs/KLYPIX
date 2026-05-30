@@ -29,6 +29,7 @@ import { ScreenshotStackBar } from './components/ScreenshotStack';
 import { getContextInsight, getContextInsightFromText, type ContextInsight } from './api/gemini';
 import { useAttachments } from './hooks/useAttachments';
 import { usePinnedChats } from './hooks/usePinnedChats';
+import { usePendingInvitations } from './hooks/usePendingInvitations';
 import { useDeepMode } from './hooks/useDeepMode';
 import { useSuggestions } from './hooks/useSuggestions';
 import { useChat } from './hooks/useChat';
@@ -758,6 +759,35 @@ function AppMain() {
 
     // Top-level tab: Chat (current app) vs Canvas (.any workspace)
     const [activeTab, setActiveTab] = useState<AppTab>('chat');
+
+    // 2026-05-30: app-level pending-invitation count so the Canvas tab can
+    // show a badge from Chat/Agent (the inbox itself lives in the canvas
+    // dashboard). Fires an OS notification the first time a NEW invite is
+    // detected so the user isn't blind to it while in another mode. The
+    // dashboard's own usePendingInvitations instance stays event-synced
+    // with this one via klypix:shared-refresh / klypix:invites-refresh.
+    const { invitations: appPendingInvites } = usePendingInvitations();
+    const pendingInviteCount = appPendingInvites.length;
+    const prevInviteCountRef = useRef(0);
+    useEffect(() => {
+        if (pendingInviteCount > prevInviteCountRef.current && prevInviteCountRef.current >= 0) {
+            // Only notify on a genuine increase (new invite arrived), not on
+            // the initial load from 0 within the same boot if it's the first
+            // populate — still worth notifying, so notify whenever it grows.
+            try {
+                if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                    new Notification('Klypix', {
+                        body: pendingInviteCount === 1
+                            ? 'You have a new canvas invitation'
+                            : `You have ${pendingInviteCount} canvas invitations`,
+                    });
+                } else if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+                    void Notification.requestPermission();
+                }
+            } catch { /* notifications unavailable — badge still shows */ }
+        }
+        prevInviteCountRef.current = pendingInviteCount;
+    }, [pendingInviteCount]);
 
     // Palette-only mode — when true, the entire chat/canvas chrome is
     // hidden and only the Command Palette modal renders. Set by the main
@@ -2412,7 +2442,7 @@ function AppMain() {
                         )}
                     </div>
                     {/* Chat / Canvas mode tabs — centered in title bar */}
-                    <ModeTabs active={activeTab} onChange={setActiveTab} />
+                    <ModeTabs active={activeTab} onChange={setActiveTab} canvasBadge={pendingInviteCount} />
                     <div className="flex items-center gap-2">
                         <div className="window-controls">
                             <button onClick={windowCtx.handleMinimize} className="p-1 hover:bg-white/10 rounded transition-all text-white/40 hover:text-white" title={t('chat.minimize_tray')}><Minus size={14} /></button>
