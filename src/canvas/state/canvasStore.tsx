@@ -1413,10 +1413,62 @@ export function CanvasStoreProvider({ children }: { children: React.ReactNode })
     const stateRef = useRef(state);
     stateRef.current = state;
 
-    const undoStackRef = useRef<StateSnapshot[]>([]);
-    const redoStackRef = useRef<StateSnapshot[]>([]);
+    // 2026-05-31 BEST-IN-CLASS collaborative undo (inverse-ops, not snapshots).
+    //
+    // Each undo entry pairs the pre-mutation snapshot with the SET OF ENTITY
+    // IDs this user's local actions actually touched. On undo we restore ONLY
+    // those ids to their snapshot values and dispatch the result as NORMAL
+    // syncable ops — so the revert propagates to peers and both converge,
+    // WITHOUT reverting a peer's concurrent change to some other item.
+    //
+    // `complex` marks entries whose action set we can't cleanly scope/invert
+    // (DUPLICATE / UNGROUP / REORDER — order-only or unknown-new-id changes).
+    // Those fall back to the legacy LOCAL snapshot-RESTORE so undo always does
+    // something correct, just not propagated. Any error during inverse
+    // application also falls back to RESTORE — undo can never half-apply.
+    interface TouchedIds { items: Set<string>; lines: Set<string>; strokes: Set<string>; connections: Set<string>; }
+    interface UndoEntry { snap: StateSnapshot; touched: TouchedIds; complex: boolean; }
+    const newTouched = (): TouchedIds => ({ items: new Set(), lines: new Set(), strokes: new Set(), connections: new Set() });
+
+    const undoStackRef = useRef<UndoEntry[]>([]);
+    const redoStackRef = useRef<UndoEntry[]>([]);
+    // The entry currently accumulating touched ids (top of the undo stack).
+    const activeEntryRef = useRef<UndoEntry | null>(null);
+    // True while undo/redo is applying inverse ops, so the dispatch wrapper
+    // doesn't fold those ops back into an undo entry.
+    const applyingHistoryRef = useRef(false);
     // Force re-render when stack sizes change so canUndo/canRedo flip.
     const [stackTick, bumpStack] = useReducer((n: number) => n + 1, 0);
+
+    // Fold a local mutating action's touched entity ids into the active entry.
+    // Action-parse based (O(1)/O(touched), safe on the 60fps gesture path).
+    // Marks the entry `complex` for action types we can't scope by parsing.
+    const accumulateTouched = useCallback((action: CanvasAction) => {
+        const e = activeEntryRef.current;
+        if (!e) return;
+        switch (action.type) {
+            case 'ADD_ITEM': e.touched.items.add(action.item.id); break;
+            case 'UPDATE_ITEM': e.touched.items.add(action.id); break;
+            case 'UPDATE_ITEMS_BULK': for (const u of action.updates) e.touched.items.add(u.id); break;
+            case 'DELETE_ITEMS': for (const id of action.ids) e.touched.items.add(id); break;
+            case 'ADD_LINE': e.touched.lines.add(action.line.id); break;
+            case 'UPDATE_LINE': e.touched.lines.add(action.id); break;
+            case 'DELETE_LINES': for (const id of action.ids) e.touched.lines.add(id); break;
+            case 'ADD_STROKE': e.touched.strokes.add(action.stroke.id); break;
+            case 'UPDATE_STROKE': e.touched.strokes.add(action.id); break;
+            case 'DELETE_STROKES': for (const id of action.ids) e.touched.strokes.add(id); break;
+            case 'ADD_CONNECTION': e.touched.connections.add(action.connection.id); break;
+            case 'UPDATE_CONNECTION': e.touched.connections.add(action.id); break;
+            case 'DELETE_CONNECTIONS': for (const id of action.ids) e.touched.connections.add(id); break;
+            // Unknown-new-id / order-only / cascade changes — can't scope by
+            // parsing the action alone. Fall back to local snapshot-restore.
+            case 'DUPLICATE_ITEMS':
+            case 'UNGROUP_CONTAINER':
+            case 'REORDER_ITEMS':
+                e.complex = true; break;
+            default: break;
+        }
+    }, []);
 
     // Action-listener registry — fed by subscribeActions(). Fires after
     // every action passes through the wrapped dispatch. The collab op-sync
@@ -1437,51 +1489,143 @@ export function CanvasStoreProvider({ children }: { children: React.ReactNode })
     // Every consumer that reads `dispatch` from the context gets this
     // version automatically — no migration of call sites needed.
     const dispatch = useCallback((action: CanvasAction) => {
+        // Fold local (non-remote) mutations into the active undo entry —
+        // UNLESS we're mid-undo/redo (those dispatches are the inverse ops
+        // themselves and must not seed a new entry). Remote ops (__remote)
+        // are peers' changes; they're never part of OUR undo history.
+        if (!applyingHistoryRef.current && !(action as any).__remote) {
+            accumulateTouched(action);
+        }
         rawDispatch(action);
         fireListeners(action);
-    }, [fireListeners]);
+    }, [fireListeners, accumulateTouched]);
 
-    const commit = useCallback((action: CanvasAction, _label?: string) => {
-        // Snapshot BEFORE applying. Used to undo back to this point.
-        undoStackRef.current.push(snapshot(stateRef.current));
+    // Apply one undo/redo entry. `complex` → legacy local full RESTORE (not
+    // propagated). Otherwise restore each touched id to the entry's snapshot
+    // value via NORMAL syncable ops so the revert broadcasts to peers and
+    // both converge — without touching items only a peer changed.
+    const applyEntry = useCallback((entry: UndoEntry) => {
+        if (entry.complex) {
+            dispatch({ type: 'RESTORE', snapshot: entry.snap });
+            return;
+        }
+        const cur = stateRef.current;
+        const snap = entry.snap;
+        const itemUpdates: Array<{ id: string; patch: Partial<CanvasItem> }> = [];
+        const itemDeletes: string[] = [];
+        for (const id of entry.touched.items) {
+            const target = snap.items[id]; const now = cur.items[id];
+            if (target && !now) dispatch({ type: 'ADD_ITEM', item: target });
+            else if (!target && now) itemDeletes.push(id);
+            else if (target && now && target !== now) itemUpdates.push({ id, patch: target });
+        }
+        if (itemUpdates.length === 1) dispatch({ type: 'UPDATE_ITEM', id: itemUpdates[0].id, patch: itemUpdates[0].patch });
+        else if (itemUpdates.length > 1) dispatch({ type: 'UPDATE_ITEMS_BULK', updates: itemUpdates });
+        if (itemDeletes.length > 0) dispatch({ type: 'DELETE_ITEMS', ids: itemDeletes });
+        const lineDeletes: string[] = [];
+        for (const id of entry.touched.lines) {
+            const target = snap.lines[id]; const now = cur.lines[id];
+            if (target && !now) dispatch({ type: 'ADD_LINE', line: target });
+            else if (!target && now) lineDeletes.push(id);
+            else if (target && now && target !== now) dispatch({ type: 'UPDATE_LINE', id, patch: target });
+        }
+        if (lineDeletes.length > 0) dispatch({ type: 'DELETE_LINES', ids: lineDeletes });
+        const strokeDeletes: string[] = [];
+        for (const id of entry.touched.strokes) {
+            const target = snap.strokes[id]; const now = cur.strokes[id];
+            if (target && !now) dispatch({ type: 'ADD_STROKE', stroke: target });
+            else if (!target && now) strokeDeletes.push(id);
+            else if (target && now && target !== now) dispatch({ type: 'UPDATE_STROKE', id, patch: target });
+        }
+        if (strokeDeletes.length > 0) dispatch({ type: 'DELETE_STROKES', ids: strokeDeletes });
+        const connDeletes: string[] = [];
+        for (const id of entry.touched.connections) {
+            const target = snap.connections[id]; const now = cur.connections[id];
+            if (target && !now) dispatch({ type: 'ADD_CONNECTION', connection: target });
+            else if (!target && now) connDeletes.push(id);
+            else if (target && now && target !== now) dispatch({ type: 'UPDATE_CONNECTION', id, patch: target });
+        }
+        if (connDeletes.length > 0) dispatch({ type: 'DELETE_CONNECTIONS', ids: connDeletes });
+    }, [dispatch]);
+
+    // Open a fresh undo entry: snapshot the pre-mutation state + start an
+    // empty touched-id set that the dispatch wrapper fills as this user's
+    // ops fire. Subsequent local mutations accumulate into it until the next
+    // commit/pushSnapshot opens a new one.
+    const openEntry = useCallback((): UndoEntry => {
+        const entry: UndoEntry = { snap: snapshot(stateRef.current), touched: newTouched(), complex: false };
+        undoStackRef.current.push(entry);
         if (undoStackRef.current.length > MAX_UNDO) undoStackRef.current.shift();
         redoStackRef.current = [];
-        rawDispatch(action);
-        fireListeners(action);
-        bumpStack();
-    }, [fireListeners]);
-
-    const pushSnapshot = useCallback(() => {
-        undoStackRef.current.push(snapshot(stateRef.current));
-        if (undoStackRef.current.length > MAX_UNDO) undoStackRef.current.shift();
-        redoStackRef.current = [];
-        bumpStack();
+        activeEntryRef.current = entry;
+        return entry;
     }, []);
 
-    // Drop the most-recently pushed undo snapshot without recording a redo.
+    const commit = useCallback((action: CanvasAction, _label?: string) => {
+        openEntry();          // snapshot BEFORE applying
+        dispatch(action);     // wrapped dispatch accumulates touched ids
+        bumpStack();
+    }, [dispatch, openEntry]);
+
+    const pushSnapshot = useCallback(() => {
+        openEntry();
+        bumpStack();
+    }, [openEntry]);
+
+    // Drop the most-recently pushed undo entry without recording a redo.
     // Used when a mutation burst we intended to make undoable ends up being a
     // no-op (e.g. a blank text placeholder immediately cleaned up on blur).
     const popLastSnapshot = useCallback(() => {
         if (undoStackRef.current.length === 0) return;
-        undoStackRef.current.pop();
+        const popped = undoStackRef.current.pop();
+        if (activeEntryRef.current === popped) activeEntryRef.current = null;
         bumpStack();
     }, []);
+
+    // Build the redo counterpart of an entry being undone: same touched ids,
+    // but its snapshot is CURRENT state (so redo re-applies the forward
+    // change). Inherits the complex flag.
+    const counterpartEntry = useCallback((entry: UndoEntry): UndoEntry => ({
+        snap: snapshot(stateRef.current),
+        touched: { items: new Set(entry.touched.items), lines: new Set(entry.touched.lines), strokes: new Set(entry.touched.strokes), connections: new Set(entry.touched.connections) },
+        complex: entry.complex,
+    }), []);
 
     const undo = useCallback(() => {
-        const prev = undoStackRef.current.pop();
-        if (!prev) return;
-        redoStackRef.current.push(snapshot(stateRef.current));
-        dispatch({ type: 'RESTORE', snapshot: prev });
+        const entry = undoStackRef.current.pop();
+        if (!entry) return;
+        activeEntryRef.current = null; // don't accumulate into a popped entry
+        const redoEntry = counterpartEntry(entry);
+        applyingHistoryRef.current = true;
+        try {
+            applyEntry(entry);
+        } catch (err) {
+            console.warn('[canvasStore] inverse undo failed, falling back to local RESTORE:', err);
+            try { dispatch({ type: 'RESTORE', snapshot: entry.snap }); } catch { /* give up */ }
+        } finally {
+            applyingHistoryRef.current = false;
+        }
+        redoStackRef.current.push(redoEntry);
         bumpStack();
-    }, []);
+    }, [applyEntry, counterpartEntry, dispatch]);
 
     const redo = useCallback(() => {
-        const next = redoStackRef.current.pop();
-        if (!next) return;
-        undoStackRef.current.push(snapshot(stateRef.current));
-        dispatch({ type: 'RESTORE', snapshot: next });
+        const entry = redoStackRef.current.pop();
+        if (!entry) return;
+        activeEntryRef.current = null;
+        const undoEntry = counterpartEntry(entry);
+        applyingHistoryRef.current = true;
+        try {
+            applyEntry(entry);
+        } catch (err) {
+            console.warn('[canvasStore] inverse redo failed, falling back to local RESTORE:', err);
+            try { dispatch({ type: 'RESTORE', snapshot: entry.snap }); } catch { /* give up */ }
+        } finally {
+            applyingHistoryRef.current = false;
+        }
+        undoStackRef.current.push(undoEntry);
         bumpStack();
-    }, []);
+    }, [applyEntry, counterpartEntry, dispatch]);
 
     // Pure derivation of which containers are zoom-collapsed. Replaces the
     // previous per-container useEffect that dispatched SET_ZOOM_COLLAPSED on
