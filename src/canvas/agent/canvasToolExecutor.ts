@@ -66,7 +66,7 @@ function resolveAgentCardPosition(
     }
     return { x: viewCenterX - cardW / 2, y: viewCenterY - cardH / 2 };
 }
-import { base64ToBytes, getAsset, registerAsset, mimeFromExtension } from '../file/assetRegistry';
+import { base64ToBytes, bytesToBase64, getAsset, registerAsset, mimeFromExtension } from '../file/assetRegistry';
 import { waitForApproval } from './approvalRegistry';
 import { defaultTextColorFor, getCurrentGridSettings } from '../gridSettings';
 import { compileToDOCX, compileToPPTX, compileToPdfMarkdown, compileToZip } from './canvasCompiler';
@@ -100,6 +100,12 @@ export interface ToolResult {
     done?: boolean;
     /** Optional final message from canvas_done. */
     doneMessage?: string;
+    /**
+     * Image attachments to feed the model as vision input alongside the text
+     * result (e.g. canvas_read_item on an image/PDF). The agent loop appends
+     * each as a Gemini inlineData part in the function-response turn.
+     */
+    images?: Array<{ mimeType: string; data: string }>;
 }
 
 // Simple SVG chart renderer — no external deps. Bar / line / pie only.
@@ -275,6 +281,108 @@ function extractSpreadsheetText(bytes: Uint8Array): string {
     return sections.join('\n\n');
 }
 
+// ── canvas_read_item helpers: turn an image/file item into REAL content ──
+// Images are fed to the model as vision; files are fully extracted in-renderer
+// (text/code by decode, PDF/DOCX/XLSX via the extractors above). Previously
+// the agent only saw a filename for these — now it sees what's inside.
+function dataUrlToImage(src: string): { mimeType: string; data: string } | null {
+    const m = /^data:([^;]+);base64,(.+)$/.exec(src || '');
+    return m ? { mimeType: m[1], data: m[2] } : null;
+}
+
+function readImageItem(name: string, item: ImageItem): ToolResult {
+    const asset = item.assetId ? getAsset(item.assetId) : undefined;
+    if (asset) {
+        const mimeType = asset.mime || mimeFromExtension(asset.extension) || 'image/png';
+        return {
+            name,
+            result: JSON.stringify({ id: item.id, type: 'image', file: item.fileName, note: 'Image attached below — view it directly to answer.' }),
+            images: [{ mimeType, data: bytesToBase64(asset.bytes) }],
+        };
+    }
+    // Legacy data-URL image (older drops kept bytes inline in `src`).
+    const inline = item.src ? dataUrlToImage(item.src) : null;
+    if (inline) {
+        return {
+            name,
+            result: JSON.stringify({ id: item.id, type: 'image', file: item.fileName, note: 'Image attached below — view it directly to answer.' }),
+            images: [inline],
+        };
+    }
+    return { name, result: JSON.stringify({ id: item.id, type: 'image', file: item.fileName, error: 'image_bytes_unavailable' }) };
+}
+
+function readFilePreviewFallback(name: string, item: FileItem, meta: Record<string, any>): ToolResult {
+    if (item.previewSheet) {
+        const ps = item.previewSheet;
+        const rows = [ps.headers.join('\t'), ...ps.rows.map(r => r.join('\t'))].join('\n');
+        return { name, result: JSON.stringify({ ...meta, sheet: ps.sheetName, totalRows: ps.totalRows, preview: rows, note: 'First rows only.' }) };
+    }
+    if (item.previewHtml) {
+        const text = item.previewHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_EXTRACT_CHARS);
+        return { name, result: JSON.stringify({ ...meta, words: item.previewWordCount, content: text, note: 'Preview (may be truncated).' }) };
+    }
+    if (item.extension === 'pdf' && item.previewDataUrl) {
+        const img = dataUrlToImage(item.previewDataUrl);
+        return { name, result: JSON.stringify({ ...meta, pages: item.previewPages, note: 'First page attached as image.' }), images: img ? [img] : undefined };
+    }
+    return { name, result: JSON.stringify({ ...meta, note: 'No extractable text preview available.' }) };
+}
+
+async function readFileItem(name: string, item: FileItem): Promise<ToolResult> {
+    const ext = (item.extension || '').toLowerCase();
+    const asset = item.assetId ? getAsset(item.assetId) : undefined;
+    const meta = { id: item.id, type: 'file' as const, file: item.fileName, ext, bytes: item.fileSize };
+
+    // Folder embeds: list the manifest rather than trying to extract a ZIP.
+    if (item.isFolder) {
+        return { name, result: JSON.stringify({ ...meta, folder: true, entries: item.folderEntryCount, manifest: (item.folderManifest || []).slice(0, 200), note: 'Folder embed — use canvas_run_code to extract/inspect files.' }) };
+    }
+
+    if (!asset) {
+        // No in-memory bytes. Try the original disk path; else fall back to
+        // any embedded preview so the agent still gets something.
+        if (item.originalPath) {
+            try {
+                const r: any = await (window as any).electron.readMultipleFiles([{ id: item.id, name: item.fileName, type: 'file', source: 'Canvas', localPath: item.originalPath }]);
+                const res = r?.results?.[0];
+                if (res?.content && !res.error) {
+                    const { text, truncated } = truncate(String(res.content));
+                    return { name, result: JSON.stringify({ ...meta, pages: res.pageCount, content: text, truncated }) };
+                }
+            } catch { /* fall through to preview */ }
+        }
+        return readFilePreviewFallback(name, item, meta);
+    }
+
+    try {
+        if (TEXT_EXTENSIONS.has(ext)) {
+            const { text, truncated } = truncate(new TextDecoder('utf-8').decode(asset.bytes));
+            return { name, result: JSON.stringify({ ...meta, content: text, truncated }) };
+        }
+        if (ext === 'docx') {
+            const { text, truncated } = truncate(await extractDocxText(asset.bytes));
+            return { name, result: JSON.stringify({ ...meta, words: item.previewWordCount, content: text, truncated }) };
+        }
+        if (ext === 'pdf') {
+            const { text, truncated } = truncate(await extractPdfText(asset.bytes));
+            if (text.trim().length > 20) return { name, result: JSON.stringify({ ...meta, pages: item.previewPages, content: text, truncated }) };
+            // Scanned/image-only PDF (no text layer) → attach first page as vision.
+            const img = item.previewDataUrl ? dataUrlToImage(item.previewDataUrl) : null;
+            return { name, result: JSON.stringify({ ...meta, pages: item.previewPages, note: 'PDF has no extractable text layer; first page attached as image.' }), images: img ? [img] : undefined };
+        }
+        if (ext === 'xlsx' || ext === 'xls' || ext === 'xlsm') {
+            const { text, truncated } = truncate(extractSpreadsheetText(asset.bytes));
+            return { name, result: JSON.stringify({ ...meta, content: text, truncated }) };
+        }
+    } catch (err: any) {
+        return { name, result: JSON.stringify({ ...meta, error: `extract_failed: ${err?.message || err}` }) };
+    }
+
+    // Unknown binary — return metadata + any embedded preview.
+    return readFilePreviewFallback(name, item, meta);
+}
+
 export async function executeToolCall(call: ToolCall, ctx: ToolExecContext): Promise<ToolResult> {
     const s = ctx.getState();
     switch (call.name) {
@@ -289,17 +397,23 @@ export async function executeToolCall(call: ToolCall, ctx: ToolExecContext): Pro
             if (item.type === 'text') {
                 return { name: call.name, result: JSON.stringify({ id: item.id, type: 'text', content: item.content }) };
             }
-            if (item.type === 'file') {
-                return { name: call.name, result: JSON.stringify({ id: item.id, type: 'file', file: item.fileName, ext: item.extension, bytes: item.fileSize }) };
+            if (item.type === 'code') {
+                return { name: call.name, result: JSON.stringify({ id: item.id, type: 'code', language: item.language, file: item.fileName, code: item.code.slice(0, 40_000) }) };
             }
             if (item.type === 'image') {
-                return { name: call.name, result: JSON.stringify({ id: item.id, type: 'image', file: item.fileName }) };
+                return readImageItem(call.name, item);
+            }
+            if (item.type === 'file') {
+                return await readFileItem(call.name, item);
             }
             if (item.type === 'video' || item.type === 'audio') {
-                return { name: call.name, result: JSON.stringify({ id: item.id, type: item.type, file: item.fileName, bytes: item.fileSize, durationSec: item.durationSec }) };
-            }
-            if (item.type === 'code') {
-                return { name: call.name, result: JSON.stringify({ id: item.id, type: 'code', language: item.language, code: item.code.slice(0, 40_000) }) };
+                // Frames/transcription not wired yet — return metadata + an
+                // honest note so the model doesn't hallucinate the contents.
+                return { name: call.name, result: JSON.stringify({
+                    id: item.id, type: item.type, file: item.fileName, ext: item.extension,
+                    bytes: item.fileSize, durationSec: item.durationSec,
+                    note: `${item.type} content is not transcribed yet — only metadata is available. Ask the user to summarize it, or run canvas_run_code on the asset.`,
+                }) };
             }
             return { name: call.name, result: JSON.stringify({ id: item.id, type: item.type }) };
         }

@@ -17,7 +17,7 @@ You interact with the canvas through TOOLS: read items, create text / cards, con
 
 Workflow:
 1. Call canvas_get_items first to see what's on the canvas.
-2. Call canvas_read_item for any items whose full content you need.
+2. Call canvas_read_item for any items whose full content you need. It returns REAL content, not just metadata: text/code in full, PDF/DOCX/XLSX extracted to text, and images (and scanned PDFs) attached as viewable images you can SEE. Video/audio are metadata-only for now. Always read an image/file before answering about it — never guess from the filename.
 3. Produce your answer via canvas_create_card (for substantive output) or canvas_create_toast (for a one-liner).
 4. If your output summarizes or builds on specific items, draw connection arrows — but pick the anchor carefully:
    • If SCOPE_ANCHOR_ID is set (the user asked about a single group/container as a whole), call canvas_connect_items ONCE with from_id = SCOPE_ANCHOR_ID → your output card. Do NOT also connect each child; one arrow from the group is the right visual.
@@ -146,6 +146,15 @@ ${command}`;
                     response: { result: result.result },
                 },
             });
+
+            // Vision attachments (e.g. canvas_read_item on an image / scanned
+            // PDF): feed the actual pixels to the model as inlineData parts in
+            // the same turn so it can SEE the item, not just its filename.
+            if (result.images?.length) {
+                for (const img of result.images) {
+                    responseParts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
+                }
+            }
 
             if (result.done) {
                 shouldStop = true;
