@@ -67,6 +67,13 @@ export interface CollabPeer {
      *  Lets us block local edit-mode on the same item to prevent
      *  last-write-wins clobbering on concurrent text input. */
     editingItemId?: string | null;
+    /** 2026-05-31 follow mode: the peer's current viewport, broadcast at a
+     *  low rate so another user can "follow" them — the local view animates
+     *  to match. Undefined until the peer sends one. */
+    viewport?: { zoom: number; panX: number; panY: number };
+    /** Optional avatar image URL (from the peer's auth metadata). When
+     *  present the chip + cursor show the photo instead of initials. */
+    avatarUrl?: string | null;
 }
 
 /** Shape of a single presence-state slot in Supabase's `presence_state` map.
@@ -146,6 +153,9 @@ export interface UseCanvasCollabResult {
      *  the user blurs / finishes editing. State changes infrequently
      *  (once per focus/blur) so no throttle needed. */
     publishEditingItem: (itemId: string | null) => void;
+    /** 2026-05-31 follow mode: broadcast the local viewport so a peer can
+     *  follow it. Throttled internally; pass null on teardown. */
+    publishViewport: (v: { zoom: number; panX: number; panY: number } | null) => void;
     /** Phase 21: messages from peers (excludes own — we keep an optimistic
      *  echo via the same `messages` slot when we call sendMessage so the
      *  UI gets instant feedback). Most recent last. Capped to last 200 in
@@ -373,7 +383,7 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         // arrive at ~30Hz and we want a single coalesced render. Stored on a
         // Map, then merged into peers via setPeers on each presence change OR
         // broadcast tick (rAF-coalesced below).
-        const ephemeralRef = new Map<string, { cursorX?: number; cursorY?: number; cursorAt?: number; selectionIds?: string[]; editingItemId?: string | null; editingAt?: number }>();
+        const ephemeralRef = new Map<string, { cursorX?: number; cursorY?: number; cursorAt?: number; selectionIds?: string[]; editingItemId?: string | null; editingAt?: number; viewport?: { zoom: number; panX: number; panY: number } }>();
         let renderScheduled = false;
         const scheduleRender = () => {
             if (renderScheduled) return;
@@ -421,6 +431,7 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                         cursorAt: cursorFresh ? eph?.cursorAt : undefined,
                         selectionIds: eph?.selectionIds,
                         editingItemId: editingFresh ? (eph?.editingItemId ?? null) : null,
+                        viewport: eph?.viewport,
                     });
                 }
             }
@@ -488,6 +499,18 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                 const prev = ephemeralRef.get(p.device_id) || {};
                 const next = typeof p.item_id === 'string' ? p.item_id : null;
                 ephemeralRef.set(p.device_id, { ...prev, editingItemId: next, editingAt: Date.now() });
+                scheduleRender();
+            })
+            // 2026-05-31 follow mode: peer's viewport, so a follower can track
+            // it. Low-rate; stored in ephemeral + surfaced on the peer.
+            .on('broadcast', { event: 'viewport' }, (msg) => {
+                if (cancelled) return;
+                const p = (msg as any)?.payload;
+                if (!p || typeof p.device_id !== 'string') return;
+                if (p.device_id === deviceId) return;
+                const prev = ephemeralRef.get(p.device_id) || {};
+                const v = (p.v && typeof p.v.zoom === 'number') ? { zoom: p.v.zoom, panX: p.v.panX, panY: p.v.panY } : undefined;
+                ephemeralRef.set(p.device_id, { ...prev, viewport: v });
                 scheduleRender();
             })
             // Phase 21: per-canvas DM. Ephemeral broadcast-only; no server
@@ -675,6 +698,32 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         });
     };
 
+    // 2026-05-31 follow mode: publish the local viewport, throttled to ~6Hz
+    // (panning/zooming fires fast; followers don't need cursor-grade rate).
+    // Leading + trailing flush like the cursor publisher.
+    const viewportLastPublishRef = useRef(0);
+    const viewportQueuedRef = useRef<{ zoom: number; panX: number; panY: number } | null | undefined>(undefined);
+    const viewportTimerRef = useRef<number | null>(null);
+    const VIEWPORT_THROTTLE_MS = 160;
+    const publishViewport = (v: { zoom: number; panX: number; panY: number } | null): void => {
+        const channel = channelRef.current;
+        if (!channel) return;
+        viewportQueuedRef.current = v;
+        const now = Date.now();
+        const sinceLast = now - viewportLastPublishRef.current;
+        const send = () => {
+            const ch = channelRef.current;
+            if (!ch) return;
+            viewportLastPublishRef.current = Date.now();
+            const payload = viewportQueuedRef.current;
+            viewportQueuedRef.current = undefined;
+            ch.send({ type: 'broadcast', event: 'viewport', payload: { device_id: getDeviceId(), v: payload ?? null } });
+        };
+        if (sinceLast >= VIEWPORT_THROTTLE_MS) { send(); return; }
+        if (viewportTimerRef.current != null) return;
+        viewportTimerRef.current = window.setTimeout(() => { viewportTimerRef.current = null; send(); }, VIEWPORT_THROTTLE_MS - sinceLast);
+    };
+
     const publishSelection = (selectionIds: string[]): void => {
         const channel = channelRef.current;
         if (!channel) return;
@@ -771,6 +820,7 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         publishCursor,
         publishSelection,
         publishEditingItem,
+        publishViewport,
         messages,
         sendMessage,
     };

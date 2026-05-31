@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Trash2, Crown, EyeOff } from 'lucide-react';
+import { Trash2, Crown, EyeOff, Navigation } from 'lucide-react';
 import { t } from '../../i18n/strings';
 import type { CollabPeer } from './useCanvasCollab';
 
@@ -21,6 +21,11 @@ interface Props {
      *  must already be a real collaborator (not a ghost) for the action
      *  to make sense. */
     onMakeOwner?: (peer: CollabPeer) => void | Promise<void>;
+    /** 2026-05-31 follow mode: deviceId of the peer the local user is
+     *  currently following (or null). Drives the Follow/Following toggle. */
+    followingDeviceId?: string | null;
+    /** Toggle following this peer (mirror their viewport). */
+    onFollowPeer?: (peer: CollabPeer) => void;
 }
 
 /** Compact avatar strip showing other users in the same canvas. Renders
@@ -28,7 +33,7 @@ interface Props {
  *  visually identical to before. Up to 4 chips inline; overflow becomes
  *  a "+N" pill. Phase 16: click a chip to open a popover with name +
  *  details (replaces the tooltip-only mode from v1). */
-export function CollabPresenceChips({ peers, connected, selfIsOwner, onRemovePeer, onMakeOwner }: Props) {
+export function CollabPresenceChips({ peers, connected, selfIsOwner, onRemovePeer, onMakeOwner, followingDeviceId, onFollowPeer }: Props) {
     const [openId, setOpenId] = useState<string | null>(null);
     // Close-on-outside-click ref. Lives at the strip level so clicking a
     // different chip within the strip still works (we want it to switch
@@ -78,6 +83,8 @@ export function CollabPresenceChips({ peers, connected, selfIsOwner, onRemovePee
                         selfIsOwner={!!selfIsOwner}
                         onRemovePeer={onRemovePeer}
                         onMakeOwner={onMakeOwner}
+                        isFollowing={followingDeviceId === p.deviceId}
+                        onFollowPeer={onFollowPeer}
                     />
                 );
             })}
@@ -102,9 +109,11 @@ interface PeerChipProps {
     selfIsOwner: boolean;
     onRemovePeer?: (peer: CollabPeer) => void | Promise<void>;
     onMakeOwner?: (peer: CollabPeer) => void | Promise<void>;
+    isFollowing?: boolean;
+    onFollowPeer?: (peer: CollabPeer) => void;
 }
 
-function PeerChip({ peer, dim, open, onToggle, onClose, selfIsOwner, onRemovePeer, onMakeOwner }: PeerChipProps) {
+function PeerChip({ peer, dim, open, onToggle, onClose, selfIsOwner, onRemovePeer, onMakeOwner, isFollowing, onFollowPeer }: PeerChipProps) {
     const initials = (peer.displayName || '?')
         .split(/\s+/)
         .map(s => s[0])
@@ -135,18 +144,22 @@ function PeerChip({ peer, dim, open, onToggle, onClose, selfIsOwner, onRemovePee
                     selfIsOwner={selfIsOwner}
                     onRemovePeer={onRemovePeer}
                     onMakeOwner={onMakeOwner}
+                    isFollowing={isFollowing}
+                    onFollowPeer={onFollowPeer}
                 />
             )}
         </div>
     );
 }
 
-function PeerPopover({ peer, onClose, selfIsOwner, onRemovePeer, onMakeOwner }: {
+function PeerPopover({ peer, onClose, selfIsOwner, onRemovePeer, onMakeOwner, isFollowing, onFollowPeer }: {
     peer: CollabPeer;
     onClose: () => void;
     selfIsOwner: boolean;
     onRemovePeer?: (peer: CollabPeer) => void | Promise<void>;
     onMakeOwner?: (peer: CollabPeer) => void | Promise<void>;
+    isFollowing?: boolean;
+    onFollowPeer?: (peer: CollabPeer) => void;
 }) {
     // "Last seen": peers carry lastSeen as a presence timestamp (ms). For a
     // currently-connected peer that's basically now; for a peer who just left
@@ -253,6 +266,22 @@ function PeerPopover({ peer, onClose, selfIsOwner, onRemovePeer, onMakeOwner }: 
                 </div>
             </div>
             <div className="px-2 py-2 border-t border-white/5 flex gap-2 flex-wrap">
+                {!!onFollowPeer && !isGhost && (
+                    <button
+                        type="button"
+                        onClick={() => { onFollowPeer(peer); onClose(); }}
+                        className="flex items-center justify-center gap-1.5 text-[11px] py-1.5 px-3 rounded-lg border transition-colors cursor-pointer"
+                        style={{
+                            color: isFollowing ? '#0b0b0f' : '#7dd3fc',
+                            background: isFollowing ? '#38bdf8' : 'rgba(56,189,248,0.12)',
+                            borderColor: isFollowing ? '#38bdf8' : 'rgba(56,189,248,0.3)',
+                        }}
+                        title={isFollowing ? t('canvas.collab_peer.following_hint') : t('canvas.collab_peer.follow_hint')}
+                    >
+                        <Navigation size={11} />
+                        {isFollowing ? t('canvas.collab_peer.following') : t('canvas.collab_peer.follow')}
+                    </button>
+                )}
                 {isGhost && (
                     <button
                         type="button"

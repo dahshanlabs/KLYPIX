@@ -906,6 +906,41 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         dispatch({ type: 'SET_PEER_LOCKS', locks });
     }, [collab.peers, dispatch]);
 
+    // ── Follow mode (2026-05-31, collab program item 6) ──────────────────
+    // Broadcast our viewport so peers can follow us; when WE follow a peer,
+    // mirror their viewport. Stop following on any manual pan/zoom gesture.
+    const [followingDeviceId, setFollowingDeviceId] = useState<string | null>(null);
+    const followingPeer = followingDeviceId ? collab.peers.find(p => p.deviceId === followingDeviceId) : null;
+    // Publish our viewport (throttled in the hook).
+    useEffect(() => {
+        if (!cloudShare?.blobId) return;
+        collab.publishViewport({ zoom: state.view.zoom, panX: state.view.panX, panY: state.view.panY });
+    }, [state.view, cloudShare?.blobId, collab]);
+    // Mirror the followed peer's viewport. Guarded so a near-match doesn't
+    // re-dispatch (and the follow-driven SET_VIEW can't loop — state.view is
+    // not a dep; this re-runs only when the peer's viewport changes).
+    useEffect(() => {
+        const v = followingPeer?.viewport;
+        if (!v) return;
+        if (Math.abs(state.view.zoom - v.zoom) < 0.001
+            && Math.abs(state.view.panX - v.panX) < 0.5
+            && Math.abs(state.view.panY - v.panY) < 0.5) return;
+        dispatch({ type: 'SET_VIEW', view: { zoom: v.zoom, panX: v.panX, panY: v.panY } });
+    }, [followingPeer?.viewport, followingDeviceId, dispatch]);
+    // Stop following if that peer disconnects.
+    useEffect(() => {
+        if (followingDeviceId && !collab.peers.some(p => p.deviceId === followingDeviceId)) {
+            setFollowingDeviceId(null);
+        }
+    }, [collab.peers, followingDeviceId]);
+    // Esc stops following.
+    useEffect(() => {
+        if (!followingDeviceId) return;
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFollowingDeviceId(null); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [followingDeviceId]);
+
     // Phase 3: live op streaming — broadcasts mutation actions to peers and
     // applies inbound ones via dispatch. Background tabs receive but don't
     // send. Inert when the canvas hasn't been shared (no blob id).
@@ -1987,6 +2022,9 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 // nothing is focused" case where the window has focus
                 // but no element within it does.
                 surfaceElRef.current?.focus({ preventScroll: true });
+                // Any manual canvas interaction breaks follow mode (you took
+                // the wheel). Follow-driven SET_VIEW never fires pointerdown.
+                if (followingDeviceId) setFollowingDeviceId(null);
                 onPointerDown(e);
             }}
             onPointerMove={(e) => {
@@ -2009,7 +2047,11 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             }}
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
-            onWheel={onWheel}
+            onWheel={(e) => {
+                // Manual zoom/pan with the wheel breaks follow mode too.
+                if (followingDeviceId) setFollowingDeviceId(null);
+                onWheel(e);
+            }}
             onContextMenu={(e) => {
                 e.preventDefault();
                 // Right-click while a non-Select tool is active exits
@@ -3048,6 +3090,28 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 cream / light themes, not just the dark one. The dashed
                 emerald border + icon backplate keep the emerald accent
                 consistent across themes. */}
+            {/* Follow-mode banner: top-center while following a peer. The
+                whole canvas viewport mirrors theirs until you pan/zoom or
+                press Esc. Click to stop. Bordered in the peer's color. */}
+            {followingPeer && (
+                <div
+                    data-canvas-ui="1"
+                    onClick={() => setFollowingDeviceId(null)}
+                    className="absolute top-3 left-1/2 -translate-x-1/2 z-40 no-drag flex items-center gap-2 px-3 py-1.5 rounded-full cursor-pointer animate-in fade-in slide-in-from-top-2 duration-150"
+                    style={{
+                        background: 'rgba(14,14,20,0.92)',
+                        border: '1px solid ' + (followingPeer.color || '#38bdf8'),
+                        boxShadow: `0 4px 16px rgba(0,0,0,0.4), 0 0 0 3px ${(followingPeer.color || '#38bdf8')}22`,
+                    }}
+                    title={tLocale('canvas.collab_peer.following_hint')}
+                >
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: followingPeer.color }} />
+                    <span className="text-[11px] text-white/90 font-medium">
+                        {tLocale('canvas.collab_peer.following_banner').replace('{name}', followingPeer.displayName || 'peer')}
+                    </span>
+                    <span className="text-[10px] text-white/45">· {tLocale('canvas.collab_peer.following_stop')}</span>
+                </div>
+            )}
             {isDragOver && (() => {
                 const dark = isDarkBackground(gridSettings.background);
                 return (
@@ -3094,6 +3158,8 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                             peers={collab.peers}
                             connected={collab.connected}
                             selfIsOwner={isOwner}
+                            followingDeviceId={followingDeviceId}
+                            onFollowPeer={(peer) => setFollowingDeviceId(prev => prev === peer.deviceId ? null : peer.deviceId)}
                             onRemovePeer={async (peer) => {
                                 if (!cloudShare?.blobId) return;
                                 const cloud: any = (window as any).electron?.cloud;
