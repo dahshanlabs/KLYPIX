@@ -14,17 +14,30 @@
 
 import { useEffect } from 'react';
 import { shouldHotkeyFire } from './keyboardModel';
-import { toggle } from './paletteStore';
+import { toggle, openWithPrefix } from './paletteStore';
 
 export function useGlobalHotkey(): void {
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
             if (!(e.ctrlKey || e.metaKey)) return;
-            if (e.key.toLowerCase() !== 'k') return;
-            if (!shouldHotkeyFire(e.target)) return;
-            e.preventDefault();
-            e.stopPropagation();
-            toggle();
+            const key = e.key.toLowerCase();
+            // Ctrl+K — toggle the full palette.
+            if (key === 'k') {
+                if (!shouldHotkeyFire(e.target)) return;
+                e.preventDefault();
+                e.stopPropagation();
+                toggle();
+                return;
+            }
+            // Ctrl+O — quick-switch / search canvases (VSCode-style). Opens the
+            // palette pre-filtered to the canvas provider's prefix.
+            if (key === 'o') {
+                if (!shouldHotkeyFire(e.target)) return;
+                e.preventDefault();
+                e.stopPropagation();
+                openWithPrefix('canvas:');
+                return;
+            }
         };
         // Capture phase so we beat any inner stopPropagation. Window-level
         // because Electron's renderer doesn't always fire document-level

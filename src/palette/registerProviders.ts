@@ -13,6 +13,7 @@
 import { register, refresh } from './paletteStore';
 import { calculatorProvider, resetCalcScope } from './providers/calculatorProvider';
 import { klypixSearchProvider } from './providers/klypixSearchProvider';
+import { canvasProvider } from './providers/canvasProvider';
 import { clipboardProvider } from './providers/clipboardProvider';
 import { snippetProvider } from './providers/snippetProvider';
 import { appsProvider } from './providers/appsProvider';
@@ -30,6 +31,7 @@ export function registerAllProviders(): () => void {
     activeDisposers = [
         register(calculatorProvider),
         register(klypixSearchProvider),
+        register(canvasProvider),
         register(clipboardProvider),
         register(snippetProvider),
         register(appsProvider),
@@ -71,6 +73,7 @@ if (hot) {
     hot.accept([
         './providers/calculatorProvider',
         './providers/klypixSearchProvider',
+        './providers/canvasProvider',
         './providers/clipboardProvider',
         './providers/snippetProvider',
         './providers/appsProvider',

@@ -40,15 +40,30 @@ function cardTitle(item: any): string | null {
 }
 const shard = (id: string) => id.replace(/^[a-z]+[_:]/i, '').toLowerCase().slice(0, 2).padStart(2, '_');
 
+export interface KlypixCard {
+    id: string;
+    type: string;
+    title: string;
+    text: string;
+    tags: string[];
+}
+
 export interface KlypixBrief {
     title: string;
     markdown: string;
     imageAssets: string[]; // raw base64 (no data: prefix) — matches readFileBytes
+    cards: KlypixCard[];   // structured per-card data (for search/indexing)
     counts: { cards: number; connections: number; assets: number };
 }
 
-/** Parse .klypix/.any bytes into a chat-ready brief. Throws on a non-canvas file. */
-export async function klypixBytesToBrief(bytes: Uint8Array | ArrayBuffer, fileName = 'canvas'): Promise<KlypixBrief> {
+/** Parse .klypix/.any bytes into a chat-ready brief. Throws on a non-canvas file.
+ *  `skipImages` avoids decoding image assets to base64 — pass it when you only
+ *  need text (e.g. building a search index), to skip the expensive work. */
+export async function klypixBytesToBrief(
+    bytes: Uint8Array | ArrayBuffer,
+    fileName = 'canvas',
+    opts: { skipImages?: boolean } = {},
+): Promise<KlypixBrief> {
     const zip = await JSZip.loadAsync(bytes as any);
     const readText = async (p: string) => { const e = zip.file(p); return e ? e.async('string') : null; };
 
@@ -82,8 +97,10 @@ export async function klypixBytesToBrief(bytes: Uint8Array | ArrayBuffer, fileNa
     const assetPaths = Object.keys(zip.files).filter(p => p.startsWith('assets/') && !zip.files[p].dir);
     const imagePaths = assetPaths.filter(p => IMAGE_EXT.test(p));
     const imageAssets: string[] = [];
-    for (const p of imagePaths.slice(0, MAX_BRIEF_IMAGES)) {
-        try { imageAssets.push(await zip.file(p)!.async('base64')); } catch { /* skip unreadable asset */ }
+    if (!opts.skipImages) {
+        for (const p of imagePaths.slice(0, MAX_BRIEF_IMAGES)) {
+            try { imageAssets.push(await zip.file(p)!.async('base64')); } catch { /* skip unreadable asset */ }
+        }
     }
 
     const title = manifest?.title || canvas.title || String(fileName).replace(IMAGE_EXT, '').replace(/\.(klypix|any)$/i, '');
@@ -130,10 +147,19 @@ export async function klypixBytesToBrief(bytes: Uint8Array | ArrayBuffer, fileNa
         L.push('');
     }
 
+    const structuredCards: KlypixCard[] = cards.map((it: any) => ({
+        id: it.id,
+        type: it.type,
+        title: cardTitle(it) || '',
+        text: it.type === 'text' ? String(it.content ?? '') : String(it.name || it.title || it.url || ''),
+        tags: it.type === 'text' ? extractTags(it.content) : [],
+    }));
+
     return {
         title,
         markdown: L.join('\n'),
         imageAssets,
+        cards: structuredCards,
         counts: { cards: cards.length, connections: connections.length, assets: assetPaths.length },
     };
 }
