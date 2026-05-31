@@ -6,6 +6,7 @@ import { RotateHandle } from '../interaction/RotateHandle';
 import { useGridSettings, luminance, isDarkBackground } from '../gridSettings';
 import { getStyleAt, shiftRuns, diffSingleEdit } from './styleRuns';
 import { renumberNumberedLines, stripListPrefixes, LIST_PREFIX_RE } from './listOps';
+import { useWikilinkAutocomplete } from './useWikilinkAutocomplete';
 
 // Contrast-gated legibility halo for plain text sitting directly on the
 // canvas surface (no border, no parent container). When the text color
@@ -328,9 +329,20 @@ function openExternalFromText(url: string) {
 }
 
 function TextItemViewImpl({ item, selected, editing }: Props) {
-    const { dispatch } = useCanvasStore();
+    const { state, dispatch } = useCanvasStore();
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const displayRef = useRef<HTMLDivElement>(null);
+    // [[ autocomplete (normal-user wikilink picker). Lives at the top
+    // (hook rules); the editing block points commitRef at its existing
+    // applyContentChange so styleRun shifting stays correct. The dropdown
+    // is a portal, so it's safe against the bordered editor's overflow.
+    const wikilinkCommitRef = useRef<((newContent: string) => void) | null>(null);
+    const wikiAc = useWikilinkAutocomplete({
+        items: state.items,
+        selfId: item.id,
+        textareaRef,
+        commitRef: wikilinkCommitRef,
+    });
     // Inner div inside the bordered-edit overlay. Translated up by the
     // textarea's scrollTop so per-range styleRun colors stay aligned with
     // characters when the user scrolls a long card. Only used in bordered
@@ -657,6 +669,9 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
             }
             dispatch({ type: 'UPDATE_ITEM', id: item.id, patch: patch as any });
         };
+        // Let the [[ autocomplete commit through the same content path
+        // (keeps styleRun shifting correct on link insert).
+        wikilinkCommitRef.current = applyContentChange;
 
         // Enter key inside a bulleted/numbered list. Returns true when
         // handled (consumes the keystroke), false to fall through. Two
@@ -830,9 +845,11 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                         spellCheck={false}
                         style={editingStyle}
                         value={item.content}
-                        onChange={(e) => applyContentChange(e.target.value)}
+                        onChange={(e) => { applyContentChange(e.target.value); wikiAc.onValueChange(e.target.value, e.target.selectionStart ?? e.target.value.length); }}
+                        onKeyUp={(e) => wikiAc.onValueChange(e.currentTarget.value, e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
                         onBlur={() => dispatch({ type: 'SET_EDITING', id: null })}
                         onKeyDown={(e) => {
+                            if (wikiAc.onKeyDown(e)) return;
                             if (e.key === 'Escape') {
                                 e.preventDefault();
                                 (e.target as HTMLTextAreaElement).blur();
@@ -843,6 +860,7 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                         }}
                         onPointerDown={(e) => e.stopPropagation()}
                     />
+                    {wikiAc.dropdown}
                 </>
             );
         }
@@ -957,13 +975,15 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                         spellCheck={false}
                         style={taStyle}
                         value={item.content}
-                        onChange={(e) => applyContentChange(e.target.value)}
+                        onChange={(e) => { applyContentChange(e.target.value); wikiAc.onValueChange(e.target.value, e.target.selectionStart ?? e.target.value.length); }}
+                        onKeyUp={(e) => wikiAc.onValueChange(e.currentTarget.value, e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
                         onBlur={() => dispatch({ type: 'SET_EDITING', id: null })}
                         onScroll={(e) => {
                             const inner = overlayInnerRef.current;
                             if (inner) inner.style.transform = `translateY(-${e.currentTarget.scrollTop}px)`;
                         }}
                         onKeyDown={(e) => {
+                            if (wikiAc.onKeyDown(e)) return;
                             if (e.key === 'Escape') {
                                 e.preventDefault();
                                 (e.target as HTMLTextAreaElement).blur();
@@ -974,6 +994,7 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                         }}
                         onPointerDown={(e) => e.stopPropagation()}
                     />
+                    {wikiAc.dropdown}
                 </div>
             </div>
         );
