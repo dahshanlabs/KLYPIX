@@ -18,6 +18,79 @@ import type { CanvasItem } from './types';
 // [[Anything but brackets]]. Captures the inner title. Global for scanning.
 export const WIKILINK_REGEX = /\[\[([^[\]]+)\]\]/g;
 
+// #tag — '#' at start-of-text or after whitespace, FIRST char a letter (so
+// hex colors like #10b981 and bare numbers #123 don't match), then word
+// chars / hyphens. The leading boundary is a non-capturing group so the
+// match start can be re-derived. Linear-time (no nested quantifiers) → no
+// ReDoS risk.
+export const TAG_REGEX = /(^|\s)(#[a-zA-Z][\w-]*)/g;
+
+/** Extract #tags from text (without the leading '#'), de-duplicated
+ *  case-insensitively (first-seen casing preserved). */
+export function extractTags(content: string | undefined | null): string[] {
+    if (!content) return [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    TAG_REGEX.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = TAG_REGEX.exec(content)) !== null) {
+        const tag = m[2].slice(1); // drop '#'
+        const key = tag.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(tag);
+    }
+    return out;
+}
+
+/** All item ids whose text contains the given tag (case-insensitive). */
+export function findCardsWithTag(items: Record<string, CanvasItem>, tag: string): string[] {
+    const want = tag.trim().toLowerCase();
+    if (!want) return [];
+    const ids: string[] = [];
+    for (const id in items) {
+        const it = items[id];
+        if ((it as any).type !== 'text') continue;
+        if (extractTags((it as any).content).some(t => t.toLowerCase() === want)) ids.push(id);
+    }
+    return ids;
+}
+
+/** All distinct tags across the canvas with their card counts, sorted by
+ *  count desc then name. Powers a future tag-filter sidebar. */
+export function computeTagCounts(items: Record<string, CanvasItem>): Array<{ tag: string; count: number }> {
+    const counts = new Map<string, { tag: string; count: number }>();
+    for (const id in items) {
+        const it = items[id];
+        if ((it as any).type !== 'text') continue;
+        for (const tag of extractTags((it as any).content)) {
+            const key = tag.toLowerCase();
+            const cur = counts.get(key);
+            if (cur) cur.count++;
+            else counts.set(key, { tag, count: 1 });
+        }
+    }
+    return Array.from(counts.values()).sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+}
+
+/** Backlinks: all item ids that link TO the given target via [[Title]],
+ *  where the target's title matches. Computed from current content. */
+export function computeBacklinks(items: Record<string, CanvasItem>, targetId: string): string[] {
+    const target = items[targetId];
+    if (!target) return [];
+    const title = cardTitle(target);
+    if (!title) return [];
+    const want = title.toLowerCase();
+    const out: string[] = [];
+    for (const id in items) {
+        if (id === targetId) continue;
+        const it = items[id];
+        if ((it as any).type !== 'text') continue;
+        if (extractWikilinks((it as any).content).some(t => t.toLowerCase() === want)) out.push(id);
+    }
+    return out;
+}
+
 /** Extract the link titles from a piece of text, trimmed + de-duplicated
  *  (case-insensitively, preserving first-seen casing). */
 export function extractWikilinks(content: string | undefined | null): string[] {

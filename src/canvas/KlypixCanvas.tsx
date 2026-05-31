@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FilePlus2, FolderOpen, Save, SaveAll, X as CloseIcon, Paperclip, Pin, Copy, Home as HomeIcon } from 'lucide-react';
 import { t as tLocale, useLocale } from '../i18n/strings';
 
@@ -35,7 +35,7 @@ import JSZip from 'jszip';
 import { ocrImageAsset } from './file/ocrImage';
 import { suggestTags } from './file/autoTag';
 import { screenToWorld, worldToScreen, fitToViewport, itemsBounds } from './CanvasEngine';
-import { buildTitleIndex, resolveWikilink } from './items/wikilinks';
+import { buildTitleIndex, resolveWikilink, findCardsWithTag, computeBacklinks } from './items/wikilinks';
 import { CommandBar } from './interaction/CommandBar';
 import { Breadcrumbs } from './interaction/Breadcrumbs';
 import { ContextMenu } from './interaction/ContextMenu';
@@ -968,6 +968,51 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         window.addEventListener('klypix:wikilink-nav', onNav as EventListener);
         return () => window.removeEventListener('klypix:wikilink-nav', onNav as EventListener);
     }, [dispatch]);
+
+    // ── #tag click → select + fit all cards carrying that tag ────────────
+    // A #tag chip dispatches 'klypix:tag-click'. We select every card with
+    // the tag and fit the viewport to them — a non-destructive "filter"
+    // (you SEE the matching set framed, nothing is hidden/deleted).
+    useEffect(() => {
+        const onTag = (e: Event) => {
+            const tag = (e as CustomEvent).detail?.tag as string | undefined;
+            if (!tag) return;
+            const items = stateRef.current.items;
+            const ids = findCardsWithTag(items, tag);
+            if (ids.length === 0) {
+                setToast({ text: tLocale('canvas.tag_none').replace('{tag}', tag), id: Date.now() });
+                return;
+            }
+            dispatch({ type: 'SELECT', ids });
+            // Union bounds of the matching cards → fit.
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const id of ids) {
+                const it = items[id] as any;
+                if (!it) continue;
+                minX = Math.min(minX, it.x); minY = Math.min(minY, it.y);
+                maxX = Math.max(maxX, it.x + (it.w ?? 0)); maxY = Math.max(maxY, it.y + (it.h ?? 0));
+            }
+            if (Number.isFinite(minX)) {
+                const view = fitToViewport(
+                    { x: minX - 120, y: minY - 120, w: (maxX - minX) + 240, h: (maxY - minY) + 240 },
+                    { w: window.innerWidth, h: window.innerHeight },
+                );
+                dispatch({ type: 'SET_VIEW', view });
+            }
+            setToast({ text: tLocale('canvas.tag_found').replace('{n}', String(ids.length)).replace('{tag}', tag), id: Date.now() });
+        };
+        window.addEventListener('klypix:tag-click', onTag as EventListener);
+        return () => window.removeEventListener('klypix:tag-click', onTag as EventListener);
+    }, [dispatch]);
+
+    // ── Backlinks: which cards link TO the single selected card ──────────
+    // Computed live from content; surfaced as a top-center pill when a
+    // single card with incoming links is selected. Click → select + fit
+    // the linking cards (jump to "what references this").
+    const backlinkIds = useMemo(() => {
+        if (state.selectedIds.length !== 1) return [];
+        return computeBacklinks(state.items, state.selectedIds[0]);
+    }, [state.selectedIds, state.items]);
 
     // Phase 3: live op streaming — broadcasts mutation actions to peers and
     // applies inbound ones via dispatch. Background tabs receive but don't
@@ -3138,6 +3183,39 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                         {tLocale('canvas.collab_peer.following_banner').replace('{name}', followingPeer.displayName || 'peer')}
                     </span>
                     <span className="text-[10px] text-white/45">· {tLocale('canvas.collab_peer.following_stop')}</span>
+                </div>
+            )}
+            {/* Backlinks pill: when a single card with incoming [[links]] is
+                selected, surface "↩ N link here". Click → select + fit the
+                linking cards (jump to what references this). Hidden while
+                following (the follow banner owns that slot). */}
+            {!followingPeer && backlinkIds.length > 0 && (
+                <div
+                    data-canvas-ui="1"
+                    onClick={() => {
+                        const items = stateRef.current.items;
+                        dispatch({ type: 'SELECT', ids: backlinkIds });
+                        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                        for (const id of backlinkIds) {
+                            const it = items[id] as any; if (!it) continue;
+                            minX = Math.min(minX, it.x); minY = Math.min(minY, it.y);
+                            maxX = Math.max(maxX, it.x + (it.w ?? 0)); maxY = Math.max(maxY, it.y + (it.h ?? 0));
+                        }
+                        if (Number.isFinite(minX)) {
+                            dispatch({ type: 'SET_VIEW', view: fitToViewport(
+                                { x: minX - 120, y: minY - 120, w: (maxX - minX) + 240, h: (maxY - minY) + 240 },
+                                { w: window.innerWidth, h: window.innerHeight },
+                            ) });
+                        }
+                    }}
+                    className="absolute top-3 left-1/2 -translate-x-1/2 z-40 no-drag flex items-center gap-2 px-3 py-1.5 rounded-full cursor-pointer animate-in fade-in slide-in-from-top-2 duration-150"
+                    style={{ background: 'rgba(14,14,20,0.92)', border: '1px solid rgba(139,156,255,0.4)', boxShadow: '0 4px 16px rgba(0,0,0,0.4)' }}
+                    title={tLocale('canvas.backlinks_hint')}
+                >
+                    <span style={{ color: '#8b9cff', fontSize: 12 }}>↩</span>
+                    <span className="text-[11px] text-white/90 font-medium">
+                        {tLocale('canvas.backlinks_count').replace('{n}', String(backlinkIds.length))}
+                    </span>
                 </div>
             )}
             {isDragOver && (() => {

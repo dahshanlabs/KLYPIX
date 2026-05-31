@@ -35,8 +35,15 @@ const URL_REGEX = /\b(https?:\/\/[^\s<>"]+)/gi;
 // title matches. Handled via a window CustomEvent so we don't thread a nav
 // callback through every render function (KlypixCanvas listens + resolves).
 const WIKILINK_REGEX_INLINE = /\[\[([^[\]]+)\]\]/g;
+// #tag — letter-led so hex colors / numbers don't match. Boundary group so we
+// can recover the tag's true start (m.index + leading whitespace length).
+const TAG_REGEX_INLINE = /(^|\s)(#[a-zA-Z][\w-]*)/g;
 function navigateToWikilink(title: string) {
     try { window.dispatchEvent(new CustomEvent('klypix:wikilink-nav', { detail: { title } })); }
+    catch { /* no-op */ }
+}
+function clickTag(tag: string) {
+    try { window.dispatchEvent(new CustomEvent('klypix:tag-click', { detail: { tag } })); }
     catch { /* no-op */ }
 }
 
@@ -89,7 +96,7 @@ function renderWithLinks(content: string, open: (url: string) => void): React.Re
     // URLs need Ctrl+click (so plain clicks still select the card); wikilinks
     // navigate on a plain click (they're internal, Obsidian-style) and stop
     // propagation so the click doesn't also select/drag the card.
-    type Seg = { start: number; end: number; kind: 'url' | 'wiki'; text: string };
+    type Seg = { start: number; end: number; kind: 'url' | 'wiki' | 'tag'; text: string };
     const segs: Seg[] = [];
     URL_REGEX.lastIndex = 0;
     let m: RegExpExecArray | null;
@@ -99,6 +106,14 @@ function renderWithLinks(content: string, open: (url: string) => void): React.Re
     WIKILINK_REGEX_INLINE.lastIndex = 0;
     while ((m = WIKILINK_REGEX_INLINE.exec(content)) !== null) {
         segs.push({ start: m.index, end: m.index + m[0].length, kind: 'wiki', text: m[1].trim() });
+    }
+    TAG_REGEX_INLINE.lastIndex = 0;
+    while ((m = TAG_REGEX_INLINE.exec(content)) !== null) {
+        // m[1] is the leading boundary (^ or whitespace); the tag itself
+        // starts after it. Render just the #tag, leaving the boundary char
+        // as plain text.
+        const tagStart = m.index + m[1].length;
+        segs.push({ start: tagStart, end: tagStart + m[2].length, kind: 'tag', text: m[2] });
     }
     if (segs.length === 0) return [content];
     segs.sort((a, b) => a.start - b.start);
@@ -126,7 +141,7 @@ function renderWithLinks(content: string, open: (url: string) => void): React.Re
                     {href}
                 </span>,
             );
-        } else {
+        } else if (s.kind === 'wiki') {
             const title = s.text;
             out.push(
                 <span
@@ -143,6 +158,28 @@ function renderWithLinks(content: string, open: (url: string) => void): React.Re
                     title={`Go to "${title}"`}
                 >
                     {title}
+                </span>,
+            );
+        } else {
+            // tag — text is the full "#tag". Click filters the canvas to
+            // cards carrying it.
+            const tag = s.text.slice(1);
+            out.push(
+                <span
+                    key={key++}
+                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); clickTag(tag); }}
+                    style={{
+                        color: '#f59e0b',
+                        background: 'rgba(245,158,11,0.12)',
+                        borderRadius: 4,
+                        padding: '0 4px',
+                        cursor: 'pointer',
+                        textDecoration: 'none',
+                        fontWeight: 500,
+                    }}
+                    title={`Show cards tagged ${s.text}`}
+                >
+                    {s.text}
                 </span>,
             );
         }
