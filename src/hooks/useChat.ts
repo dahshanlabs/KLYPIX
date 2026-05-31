@@ -5,6 +5,7 @@ import { updateLivingPersona } from '../api/gemini';
 import { marked } from 'marked';
 import type { Message, DiscoveredFile, AttachedFile, WindowContext } from '../types';
 import { IMAGE_EXTS } from '../types';
+import { isKlypixFile, klypixBytesToBrief } from '../canvas/file/klypixBrief';
 
 interface UseChatOptions {
     selectedModel: string;
@@ -325,7 +326,12 @@ export function useChat(opts: UseChatOptions) {
         const attachedImageBase64s: string[] = [];
         if (attachedFiles.length > 0 && !isDeepFileMode) {
             const imageAtts = attachedFiles.filter(f => IMAGE_EXTS.includes(f.ext));
-            const docAtts = attachedFiles.filter(f => !IMAGE_EXTS.includes(f.ext));
+            // A dropped .klypix/.any canvas is read into a text brief (cards +
+            // connection graph + [[links]] + #tags) plus its images for vision —
+            // NOT through readMultipleFiles, which would garble the binary ZIP.
+            const klypixAtts = attachedFiles.filter(f => isKlypixFile(f.ext) || isKlypixFile(f.name));
+            const docAtts = attachedFiles.filter(f =>
+                !IMAGE_EXTS.includes(f.ext) && !isKlypixFile(f.ext) && !isKlypixFile(f.name));
 
             setIsReadingFile(true);
 
@@ -339,6 +345,26 @@ export function useChat(opts: UseChatOptions) {
                     }
                 } catch (err) {
                     console.warn('[Attach] image read error:', f.name, err);
+                }
+            }
+
+            // KLYPIX canvas dogfood: parse the canvas in-renderer into a brief.
+            for (const f of klypixAtts) {
+                try {
+                    const r = await (window as any).electron.readFileBytes(f.path);
+                    if (r?.success && r.base64) {
+                        const u8 = Uint8Array.from(atob(r.base64), c => c.charCodeAt(0));
+                        const brief = await klypixBytesToBrief(u8, f.name);
+                        promptForAI = promptForAI +
+                            `\n\n--- KLYPIX CANVAS: ${f.name} ---\n${brief.markdown}\n--- END CANVAS ---`;
+                        if (brief.imageAssets.length) attachedImageBase64s.push(...brief.imageAssets);
+                    } else {
+                        console.warn('[Attach] canvas read failed:', f.name, r?.error);
+                        promptForAI += `\n\n[Could not read canvas ${f.name}: ${r?.error || 'unknown error'}]`;
+                    }
+                } catch (err) {
+                    console.warn('[Attach] canvas parse error:', f.name, err);
+                    promptForAI += `\n\n[Could not parse canvas ${f.name}: ${(err as Error).message}]`;
                 }
             }
 
@@ -366,7 +392,7 @@ export function useChat(opts: UseChatOptions) {
 
             setIsReadingFile(false);
 
-            if (attachedImageBase64s.length > 0 || docAtts.length > 0) {
+            if (attachedImageBase64s.length > 0 || docAtts.length > 0 || klypixAtts.length > 0) {
                 setMessages(prev => {
                     const newArr = [...prev];
                     const lastMsg = newArr[newArr.length - 1];

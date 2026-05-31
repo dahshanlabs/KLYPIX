@@ -4868,7 +4868,7 @@ ipcMain.handle('generate-file', async (_event: any, { format, spec, content }: a
     }
 });
 // ─── File Attach Dialog ───────────────────────────────────────────────────
-const ALLOWED_EXTENSIONS = ['pdf', 'docx', 'xlsx', 'pptx', 'txt', 'md', 'json', 'xml', 'html', 'htm', 'csv', 'rtf', 'epub', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
+const ALLOWED_EXTENSIONS = ['pdf', 'docx', 'xlsx', 'pptx', 'txt', 'md', 'json', 'xml', 'html', 'htm', 'csv', 'rtf', 'epub', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'klypix', 'any'];
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_FILE_COUNT = 5;
 ipcMain.handle('open-file-dialog', async () => {
@@ -4879,6 +4879,7 @@ ipcMain.handle('open-file-dialog', async () => {
         filters: [
             { name: 'Documents', extensions: ['pdf', 'docx', 'xlsx', 'pptx', 'txt', 'md', 'json', 'xml', 'html', 'htm', 'csv', 'rtf', 'epub'] },
             { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] },
+            { name: 'KLYPIX Canvas', extensions: ['klypix', 'any'] },
             { name: 'All Supported', extensions: ALLOWED_EXTENSIONS },
         ],
     });
