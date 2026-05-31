@@ -3364,7 +3364,13 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 creation tools, so they get their own surface separate from
                 both the file-ops bar above and the creation Toolbar on the
                 middle-left. */}
-            <div data-canvas-ui="1" className="absolute top-14 left-3 z-20 no-drag flex flex-col items-center gap-1 px-1 py-1 rounded-full bg-black/60 border border-white/10">
+            {/* top offset clears the file-ops toolbar (top-3 + its real
+                rendered height, which is taller than the nominal button size
+                because of the divider spans + settings popover). top-14 (56px)
+                was too tight and, at fractional display scales (125%), DPR
+                rounding tipped it into visibly overlapping the toolbar's
+                bottom edge. ~76px gives comfortable clearance at 100–150%. */}
+            <div data-canvas-ui="1" className="absolute top-[76px] left-3 z-20 no-drag flex flex-col items-center gap-1 px-1 py-1 rounded-full bg-black/60 border border-white/10">
                 <FileOpButton toggle="search" label={tLocale('canvas_top.search_short')} onClick={() => setSearchOpen(true)}><SearchIcon size={13} /></FileOpButton>
                 <FileOpButton toggle="outline" label={tLocale('canvas_top.outline')} onClick={() => setOutlineOpen(v => !v)}><List size={13} /></FileOpButton>
             </div>
