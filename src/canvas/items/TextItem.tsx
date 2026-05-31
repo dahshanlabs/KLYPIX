@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { Link2 } from 'lucide-react';
 import type { TextItem as TextItemType, StyleRun } from './types';
 import { useCanvasStore } from '../state/canvasStore';
 import { ResizeHandle } from '../interaction/ResizeHandle';
@@ -673,6 +674,46 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
         // (keeps styleRun shifting correct on link insert).
         wikilinkCommitRef.current = applyContentChange;
 
+        // Normal-user entry point: a visible "Link card" button that types
+        // `[[` at the caret for you and opens the picker — so you never have
+        // to know the [[ shortcut (and you learn it by seeing it). Reuses the
+        // exact autocomplete the typed `[[` uses.
+        const triggerWikilinkPicker = () => {
+            const ta = textareaRef.current;
+            if (!ta) return;
+            const caret = ta.selectionStart ?? ta.value.length;
+            const v = ta.value;
+            const next = v.slice(0, caret) + '[[' + v.slice(caret);
+            applyContentChange(next);
+            requestAnimationFrame(() => {
+                const t = textareaRef.current;
+                if (!t) return;
+                try { t.focus(); t.setSelectionRange(caret + 2, caret + 2); } catch { /* noop */ }
+                wikiAc.onValueChange(next, caret + 2);
+            });
+        };
+        // The visible "Link" pill shown while editing — anchored bottom-right
+        // of the card. onMouseDown+preventDefault so clicking it doesn't blur
+        // the textarea (which would exit edit mode before the click lands).
+        const linkCardButton = (
+            <button
+                type="button"
+                className="no-drag"
+                title="Link to another card"
+                onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); triggerWikilinkPicker(); }}
+                style={{
+                    position: 'absolute', bottom: 4, right: 4, zIndex: 6,
+                    display: 'flex', alignItems: 'center', gap: 4,
+                    fontSize: 10, lineHeight: 1, padding: '3px 7px', borderRadius: 999,
+                    background: 'rgba(139,156,255,0.16)', border: '1px solid rgba(139,156,255,0.32)',
+                    color: '#8b9cff', cursor: 'pointer', opacity: 0.85,
+                    fontFamily: 'system-ui, sans-serif',
+                }}
+            >
+                <Link2 size={10} /> Link
+            </button>
+        );
+
         // Enter key inside a bulleted/numbered list. Returns true when
         // handled (consumes the keystroke), false to fall through. Two
         // behaviors, mirroring Word:
@@ -860,6 +901,7 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                         }}
                         onPointerDown={(e) => e.stopPropagation()}
                     />
+                    {linkCardButton}
                     {wikiAc.dropdown}
                 </>
             );
@@ -994,6 +1036,7 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                         }}
                         onPointerDown={(e) => e.stopPropagation()}
                     />
+                    {linkCardButton}
                     {wikiAc.dropdown}
                 </div>
             </div>
