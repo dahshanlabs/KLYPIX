@@ -1,5 +1,5 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import { getRealtimeClient } from './supabaseRealtimeClient';
+import { getRealtimeClient, isCollabPrivateChannels, primeRealtimeAuth } from './supabaseRealtimeClient';
 
 // Phase 14: ONE Supabase Realtime channel per (blob_id), shared across all
 // collab hooks (useCanvasCollab + useOpSync + useAssetSync).
@@ -77,8 +77,13 @@ export function acquireCanvasChannel(blobId: string, statusCb?: (status: string)
         const supabase = getRealtimeClient();
         const channelName = `klypix-canvas-${blobId}`;
         const deviceId = getCollabDeviceId();
+        // Private mode (Phase C) is OFF by default — `private: false` is
+        // identical to the legacy public channel. When enabled, RLS on
+        // realtime.messages gates join/broadcast to canvas members.
+        const usePrivate = isCollabPrivateChannels();
         const channel = supabase.channel(channelName, {
             config: {
+                private: usePrivate,
                 presence: { key: deviceId },
                 broadcast: { self: false, ack: false },
             },
@@ -93,12 +98,21 @@ export function acquireCanvasChannel(blobId: string, statusCb?: (status: string)
         channels.set(blobId, entry);
         // Subscribe ONCE — all consumers share this single subscription.
         const localEntry = entry;
-        channel.subscribe((status) => {
+        const doSubscribe = () => channel.subscribe((status) => {
             localEntry.currentStatus = status;
             for (const cb of localEntry.statusListeners) {
                 try { cb(status); } catch { /* swallow per-listener errors */ }
             }
         });
+        if (usePrivate) {
+            // Private channels need a valid JWT applied to the Realtime client
+            // BEFORE subscribe so RLS resolves auth.uid(). Prime it first, then
+            // subscribe (consumers attach their .on handlers to the returned
+            // channel meanwhile — handlers registered pre-subscribe are fine).
+            primeRealtimeAuth().finally(doSubscribe);
+        } else {
+            doSubscribe();
+        }
     }
     entry.refCount++;
     if (statusCb) {

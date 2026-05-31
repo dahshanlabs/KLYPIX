@@ -36,11 +36,20 @@
 --
 -- =============================================================================
 
--- Realtime's Authorization feature requires the channel to be configured
--- with `private: true` on the client side. The renderer's getRealtimeClient
--- doesn't pass this flag yet (to avoid breaking the viewer); when you're
--- ready to flip the switch, add `realtime: { params: { ..., private: true } }`
--- to the client config in src/canvas/collab/supabaseRealtimeClient.ts.
+-- Realtime's Authorization feature requires the CHANNEL to be created with
+-- `config.private: true` (per-channel, NOT the global realtime client params).
+-- As of Phase C this is wired behind a runtime flag in channelRegistry.ts:
+-- the channel passes `private: isCollabPrivateChannels()`, which reads
+-- localStorage['klypix:collab:privateChannels'] (default OFF). To enable:
+--   1. Apply this migration (dashboard SQL editor or `supabase db push`).
+--   2. Handle the anonymous web viewer (see "WHEN TO APPLY" above) — it joins
+--      without a JWT and WILL be denied on a private channel.
+--   3. On each editor PC: localStorage.setItem('klypix:collab:privateChannels','1')
+--      then reopen the canvas. channelRegistry primes the JWT (primeRealtimeAuth)
+--      before subscribe so RLS sees auth.uid().
+--   4. 2-PC test: both members still sync; a removed collaborator and an
+--      anonymous client can NO LONGER subscribe/broadcast.
+-- Full checklist: docs/COLLAB_PRIVATE_CHANNELS.md.
 
 -- Extract the blob_id from a 'klypix-canvas-<uuid>' channel topic.
 -- Returns NULL for any other topic shape so the policy fails closed.

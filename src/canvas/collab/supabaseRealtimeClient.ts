@@ -30,6 +30,37 @@ export function setRealtimeAuth(token: string | null): void {
     }
 }
 
+/**
+ * Phase C — private-channel mode. OFF by default so live collab keeps working
+ * exactly as today (public channel). Flip via:
+ *     localStorage['klypix:collab:privateChannels'] = '1'
+ * ONLY AFTER (1) applying the realtime.messages RLS migration
+ * (supabase/migrations/20260519120000_realtime_channel_rls.sql) and
+ * (2) handling the anonymous web viewer (it joins without a JWT and will be
+ * denied on a private channel). See docs/COLLAB_PRIVATE_CHANNELS.md. This
+ * closes the P0 hole (revoked/anon users can no longer eavesdrop or inject
+ * ops on the live channel) but MUST be verified with a real 2-machine test
+ * before being trusted — a mismatch silently breaks all collab.
+ */
+export function isCollabPrivateChannels(): boolean {
+    try { return localStorage.getItem('klypix:collab:privateChannels') === '1'; }
+    catch { return false; }
+}
+
+/** Best-effort: pull the signed-in user's JWT from the main process and apply
+ *  it to the Realtime client. Returns true if a token was applied. Call this
+ *  BEFORE subscribing to a private channel so RLS sees auth.uid(). */
+export async function primeRealtimeAuth(): Promise<boolean> {
+    try {
+        const res = await (window as any).electron?.auth?.getAccessToken?.();
+        const token = res?.token ?? null;
+        setRealtimeAuth(token);
+        return !!token;
+    } catch {
+        return false;
+    }
+}
+
 /** Get (or lazily create) the renderer's Realtime-only Supabase client. */
 export function getRealtimeClient(): SupabaseClient {
     if (!client) {
