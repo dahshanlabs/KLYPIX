@@ -72,7 +72,9 @@ if (!canvasRaw) { console.error('Not a valid .klypix/.any — no canvas.json ins
 
 const manifest = manifestRaw ? JSON.parse(manifestRaw) : null;
 const canvas = JSON.parse(canvasRaw);
-const isV4 = !!manifest && manifest.format === 'klypix-v4' || !!canvas.positions;
+// v4 manifests are {format:"klypix", version:4}; positions presence is the
+// robust fallback (legacy .any keeps an inline items array, no positions map).
+const isV4 = (!!manifest && manifest.format === 'klypix' && manifest.version >= 4) || !!canvas.positions;
 
 // ---- gather items ----
 // v4: per-item files under items/<prefix>/<id>.json keyed by canvas.json.order

@@ -53,4 +53,5 @@ images/files — then reason over it as one connected brief, not isolated notes.
 ## Scope
 
 This skill READS a `.klypix`. Writing one (assembling a canvas from your
-output) is a separate `write-klypix` skill — not yet built.
+output) is the companion `write-klypix` skill — together they close the loop:
+the user hands you a canvas, you hand one back.
