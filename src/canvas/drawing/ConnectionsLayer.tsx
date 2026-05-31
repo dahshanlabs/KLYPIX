@@ -433,7 +433,7 @@ function midpoint(a: Rect, b: Rect, hasArrowEnd: boolean, strokeWidth: number): 
  *  (which is widest at the middle, narrowest at the apex) is wider
  *  than the path stroke at every point the stroke renders — so the
  *  line is fully swallowed by the arrow head with no edges peeking out. */
-function bezierBetween(a: Rect, b: Rect, hasArrowEnd: boolean, strokeWidth: number): string {
+export function bezierBetween(a: Rect, b: Rect, hasArrowEnd: boolean, strokeWidth: number): string {
     const centerA = rectCenter(a);
     const centerB = rectCenter(b);
     const p1 = sideAnchorToward(a, centerB.x, centerB.y);

@@ -16,6 +16,7 @@ import { ContainerItemView, ContainerHeaderView, countChildren, getCollapsedRend
 import { ItemBadges } from './items/ItemBadges';
 import { effectiveLayerId } from './layout/LayersPanel';
 import { ConnectionsLayer } from './drawing/ConnectionsLayer';
+import { WikilinkEdgesLayer } from './drawing/WikilinkEdgesLayer';
 import { StrokeView, LineView } from './drawing/DrawingLayer';
 import { MultiSelectionBox } from './interaction/MultiSelectionBox';
 import { DotClusterLayer } from './drawing/DotClusterLayer';
@@ -564,6 +565,10 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeer
                     </React.Fragment>
                 );
             })}
+            {/* Auto-graph: dashed link-purple edges derived from [[wikilinks]]
+                in text cards. Rendered BEFORE user connections so an
+                intentional arrow always paints on top of an auto link. */}
+            <WikilinkEdgesLayer items={items} hiddenIds={hiddenByCollapse} />
             {/* Connections — rendered AFTER item bodies so arrows / lines
                 cross container frames without the dashed frame painting
                 on top of them. Previously this lived before items and a

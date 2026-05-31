@@ -29,6 +29,14 @@ function haloShadowFor(textColor: string, bgColor: string): string | undefined {
 // Pretty-liberal URL matcher — good enough for "I pasted a link" detection.
 // Requires a protocol so we don't underline every "word.thing".
 const URL_REGEX = /\b(https?:\/\/[^\s<>"]+)/gi;
+// [[Wikilink]] — inner title captured. Clicking navigates to the card whose
+// title matches. Handled via a window CustomEvent so we don't thread a nav
+// callback through every render function (KlypixCanvas listens + resolves).
+const WIKILINK_REGEX_INLINE = /\[\[([^[\]]+)\]\]/g;
+function navigateToWikilink(title: string) {
+    try { window.dispatchEvent(new CustomEvent('klypix:wikilink-nav', { detail: { title } })); }
+    catch { /* no-op */ }
+}
 
 // Arabic-script Unicode ranges: base (U+0600–06FF), supplement (U+0750–077F),
 // presentation-forms-A (U+FB50–FDFF), presentation-forms-B (U+FE70–FEFF).
@@ -75,35 +83,68 @@ export function firstUrl(text: string): string | null {
 // otherwise every click on a pasted link would open the browser and the
 // user could never select the text item to resize it.
 function renderWithLinks(content: string, open: (url: string) => void): React.ReactNode[] {
-    const out: React.ReactNode[] = [];
+    // Collect URL + wikilink matches, then render segments left-to-right.
+    // URLs need Ctrl+click (so plain clicks still select the card); wikilinks
+    // navigate on a plain click (they're internal, Obsidian-style) and stop
+    // propagation so the click doesn't also select/drag the card.
+    type Seg = { start: number; end: number; kind: 'url' | 'wiki'; text: string };
+    const segs: Seg[] = [];
     URL_REGEX.lastIndex = 0;
-    let i = 0;
     let m: RegExpExecArray | null;
-    let key = 0;
     while ((m = URL_REGEX.exec(content)) !== null) {
-        if (m.index > i) out.push(content.slice(i, m.index));
-        const href = m[1];
-        out.push(
-            <span
-                key={key++}
-                onClick={(e) => {
-                    if (!(e.ctrlKey || e.metaKey)) return;
-                    e.stopPropagation();
-                    e.preventDefault();
-                    open(href);
-                }}
-                style={{
-                    color: '#10b981',
-                    textDecoration: 'underline',
-                    textUnderlineOffset: 2,
-                    cursor: 'pointer',
-                }}
-                title="Ctrl+click to open in browser"
-            >
-                {href}
-            </span>,
-        );
-        i = m.index + href.length;
+        segs.push({ start: m.index, end: m.index + m[1].length, kind: 'url', text: m[1] });
+    }
+    WIKILINK_REGEX_INLINE.lastIndex = 0;
+    while ((m = WIKILINK_REGEX_INLINE.exec(content)) !== null) {
+        segs.push({ start: m.index, end: m.index + m[0].length, kind: 'wiki', text: m[1].trim() });
+    }
+    if (segs.length === 0) return [content];
+    segs.sort((a, b) => a.start - b.start);
+
+    const out: React.ReactNode[] = [];
+    let i = 0;
+    let key = 0;
+    for (const s of segs) {
+        if (s.start < i) continue; // overlapping match (e.g. URL inside [[...]]) — skip
+        if (s.start > i) out.push(content.slice(i, s.start));
+        if (s.kind === 'url') {
+            const href = s.text;
+            out.push(
+                <span
+                    key={key++}
+                    onClick={(e) => {
+                        if (!(e.ctrlKey || e.metaKey)) return;
+                        e.stopPropagation();
+                        e.preventDefault();
+                        open(href);
+                    }}
+                    style={{ color: '#10b981', textDecoration: 'underline', textUnderlineOffset: 2, cursor: 'pointer' }}
+                    title="Ctrl+click to open in browser"
+                >
+                    {href}
+                </span>,
+            );
+        } else {
+            const title = s.text;
+            out.push(
+                <span
+                    key={key++}
+                    onClick={(e) => { e.stopPropagation(); e.preventDefault(); navigateToWikilink(title); }}
+                    style={{
+                        color: '#8b9cff',
+                        background: 'rgba(139,156,255,0.12)',
+                        borderRadius: 4,
+                        padding: '0 3px',
+                        cursor: 'pointer',
+                        textDecoration: 'none',
+                    }}
+                    title={`Go to "${title}"`}
+                >
+                    {title}
+                </span>,
+            );
+        }
+        i = s.end;
     }
     if (i < content.length) out.push(content.slice(i));
     return out;

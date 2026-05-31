@@ -35,6 +35,7 @@ import JSZip from 'jszip';
 import { ocrImageAsset } from './file/ocrImage';
 import { suggestTags } from './file/autoTag';
 import { screenToWorld, worldToScreen, fitToViewport, itemsBounds } from './CanvasEngine';
+import { buildTitleIndex, resolveWikilink } from './items/wikilinks';
 import { CommandBar } from './interaction/CommandBar';
 import { Breadcrumbs } from './interaction/Breadcrumbs';
 import { ContextMenu } from './interaction/ContextMenu';
@@ -940,6 +941,33 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [followingDeviceId]);
+
+    // ── Wikilink navigation (2026-05-31) ────────────────────────────────
+    // A [[Title]] chip in a text card dispatches 'klypix:wikilink-nav'. Here
+    // we resolve the title against the current cards (first-line match) and
+    // select + center the target. No match → a gentle toast (creating the
+    // card on-the-fly is a later step).
+    useEffect(() => {
+        const onNav = (e: Event) => {
+            const title = (e as CustomEvent).detail?.title as string | undefined;
+            if (!title) return;
+            const items = stateRef.current.items;
+            const id = resolveWikilink(title, buildTitleIndex(items));
+            if (!id) {
+                setToast({ text: tLocale('canvas.wikilink_not_found').replace('{title}', title), id: Date.now() });
+                return;
+            }
+            const it = items[id] as any;
+            dispatch({ type: 'SELECT', ids: [id] });
+            const view = fitToViewport(
+                { x: it.x - 200, y: it.y - 200, w: (it.w ?? 0) + 400, h: (it.h ?? 0) + 400 },
+                { w: window.innerWidth, h: window.innerHeight },
+            );
+            dispatch({ type: 'SET_VIEW', view });
+        };
+        window.addEventListener('klypix:wikilink-nav', onNav as EventListener);
+        return () => window.removeEventListener('klypix:wikilink-nav', onNav as EventListener);
+    }, [dispatch]);
 
     // Phase 3: live op streaming — broadcasts mutation actions to peers and
     // applies inbound ones via dispatch. Background tabs receive but don't

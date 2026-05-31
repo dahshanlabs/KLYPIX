@@ -596,6 +596,7 @@ const strings: Strings = {
     'canvas.collab_disconnected_toast': { en: 'Live collab disconnected — edits will not sync until you reconnect', ar: 'انقطع التعاون المباشر — لن تتزامن التعديلات حتى تعيد الاتصال' },
     'canvas.collab_reconnected_toast': { en: 'Live collab reconnected', ar: 'تم استعادة التعاون المباشر' },
     'canvas.access_revoked': { en: 'The owner removed your access to this canvas', ar: 'أزال المالك صلاحية وصولك إلى هذه اللوحة' },
+    'canvas.wikilink_not_found': { en: 'No card titled "{title}" on this canvas', ar: 'لا توجد بطاقة بعنوان "{title}" في هذه اللوحة' },
     'canvas.restoring': { en: 'Restoring', ar: 'جارٍ الاستعادة' },
     'canvas.collab_conflict_overwritten': { en: 'A collaborator just edited the same item — your change may have been overwritten', ar: 'قام متعاون بتعديل نفس العنصر للتو — قد تكون تعديلاتك تم استبدالها' },
     'canvas.collab_conflict_deleted': { en: 'A collaborator just deleted an item you were editing', ar: 'قام متعاون بحذف عنصر كنت تعدّله للتو' },
