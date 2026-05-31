@@ -1325,11 +1325,16 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         let raw: string | null = null;
         try { raw = localStorage.getItem('klypix:pendingCanvasItems'); } catch { return; }
         if (!raw) return;
-        let queue: Array<{ content: string; timestamp: number }> = [];
+        let queue: any[] = [];
         try {
             const parsed = JSON.parse(raw);
             if (!Array.isArray(parsed)) throw new Error('not array');
-            queue = parsed.filter(e => e && typeof e.content === 'string' && e.content.trim().length > 0);
+            // Two entry kinds: a single chat bubble ({content}) or a generated
+            // multi-card board ({kind:'board', cards, connections}).
+            queue = parsed.filter(e => e && (
+                (typeof e.content === 'string' && e.content.trim().length > 0) ||
+                (e.kind === 'board' && Array.isArray(e.cards) && e.cards.length > 0)
+            ));
         } catch {
             try { localStorage.removeItem('klypix:pendingCanvasItems'); } catch { /* ignore */ }
             return;
@@ -1355,12 +1360,86 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         const baseW = 360;
         const baseH = 120;
         const bgColor = getCurrentGridSettings().background;
-        const baseZ = snap.order.length;
+        const fillColor = isDarkBackground(bgColor)
+            ? 'rgba(18,18,26,0.85)'
+            : 'rgba(240,240,245,0.92)';
         // Single undo snapshot for the whole batch so Ctrl+Z removes all
         // added items at once rather than one per press.
         pushSnapshot();
         let created = 0;
+        let boards = 0;
+        // Running z so boards (many items) don't all collide on the same plane.
+        let zCursor = snap.order.length;
         queue.forEach((entry, i) => {
+            // ── Generated board: lay out cards on a grid + draw connections ──
+            if (entry.kind === 'board') {
+                const cards: Array<{ text: string; heading?: boolean; color?: string }> =
+                    entry.cards.filter((c: any) => c && typeof c.text === 'string' && c.text.trim());
+                if (cards.length === 0) return;
+                const n = cards.length;
+                const cols = Math.max(1, Math.ceil(Math.sqrt(n)));
+                const rows = Math.ceil(n / cols);
+                const CELL_W = 320, CELL_H = 150;
+                const ox = cx - (cols * CELL_W) / 2 + i * 36; // stagger multiple boards
+                const oy = cy - (rows * CELL_H) / 2 + i * 36;
+                const ids: string[] = [];
+                cards.forEach((card, ci) => {
+                    const col = ci % cols, row = Math.floor(ci / cols);
+                    const lines = String(card.text).split('\n');
+                    const longest = lines.reduce((m, l) => Math.max(m, l.length), 0);
+                    const w = Math.max(180, Math.min(300, Math.round(longest * 8) + 28));
+                    const node: TextItem = {
+                        id: newId('board'),
+                        type: 'text',
+                        x: ox + col * CELL_W + (CELL_W - w) / 2,
+                        y: oy + row * CELL_H,
+                        w,
+                        h: Math.max(60, lines.length * 22 + 24),
+                        zIndex: zCursor++,
+                        locked: false,
+                        parentId: null,
+                        createdAt: Date.now(),
+                        createdBy: 'agent',
+                        content: String(card.text),
+                        fontSize: card.heading ? 18 : 14,
+                        color: card.color || defaultTextColorFor(bgColor),
+                        border: true,
+                        borderColor: card.heading ? 'rgba(16,185,129,0.6)' : 'rgba(16,185,129,0.35)',
+                        fillColor,
+                        heading: !!card.heading,
+                    };
+                    dispatch({ type: 'ADD_ITEM', item: node });
+                    ids.push(node.id);
+                    created++;
+                });
+                // Resolve a connection ref (index or card-title) to an item id.
+                const titleIdx = new Map<string, number>();
+                cards.forEach((c, ci) => {
+                    const t = String(c.text).split('\n').map(s => s.trim()).find(Boolean)?.toLowerCase();
+                    if (t && !titleIdx.has(t)) titleIdx.set(t, ci);
+                });
+                const resolveRef = (ref: any): string | null => {
+                    if (typeof ref === 'number') return ids[ref] ?? null;
+                    if (typeof ref === 'string') { const ci = titleIdx.get(ref.trim().toLowerCase()); return ci != null ? ids[ci] : null; }
+                    return null;
+                };
+                const conns = Array.isArray(entry.connections) ? entry.connections : [];
+                for (const c of conns) {
+                    const fromId = resolveRef(c.from), toId = resolveRef(c.to);
+                    if (!fromId || !toId || fromId === toId) continue;
+                    const conn: Connection = {
+                        id: newId('conn'),
+                        fromId, toId,
+                        label: typeof c.relationship === 'string' ? c.relationship.replace(/_/g, ' ') : '',
+                        color: '#10b981', width: 2, arrowHead: true, style: 'solid', createdBy: 'agent',
+                    };
+                    dispatch({ type: 'ADD_CONNECTION', connection: conn });
+                }
+                if (ids.length) dispatch({ type: 'SELECT', ids });
+                boards++;
+                return;
+            }
+            // ── Single chat bubble → one bordered card ──
             const stagger = i * 28;
             const stamp = entry.timestamp ? new Date(entry.timestamp) : new Date();
             const timeStr = stamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -1371,7 +1450,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 y: cy - baseH / 2 + stagger,
                 w: baseW,
                 h: baseH,
-                zIndex: baseZ + i,
+                zIndex: zCursor++,
                 locked: false,
                 parentId: null,
                 createdAt: Date.now(),
@@ -1388,9 +1467,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 // the dark text color picked above. Without this, a chat
                 // card landed on a light canvas as an out-of-place dark
                 // block with light text on light bg (unreadable).
-                fillColor: isDarkBackground(bgColor)
-                    ? 'rgba(18,18,26,0.85)'
-                    : 'rgba(240,240,245,0.92)',
+                fillColor,
                 heading: false,
             };
             dispatch({ type: 'ADD_ITEM', item: node });
@@ -1398,7 +1475,9 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         });
         if (created > 0) {
             setToast({
-                text: created === 1 ? 'Added from chat' : `Added ${created} from chat`,
+                text: boards > 0
+                    ? `Built canvas · ${created} card${created === 1 ? '' : 's'}`
+                    : (created === 1 ? 'Added from chat' : `Added ${created} from chat`),
                 id: Date.now(),
             });
         }

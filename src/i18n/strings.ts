@@ -178,6 +178,7 @@ const strings: Strings = {
     // ── chat overlay shell ─────────────────────────────────────────────
     'chat.copy_prompt': { en: 'Copy prompt', ar: 'نسخ الموجّه' },
     'chat.add_to_canvas': { en: 'Add to canvas', ar: 'إضافة إلى اللوحة' },
+    'chat.make_canvas': { en: 'Make canvas from this', ar: 'إنشاء لوحة من هذا' },
     'chat.copy_response': { en: 'Copy Response', ar: 'نسخ الرد' },
     'chat.drop_files': { en: 'Drop files here', ar: 'أفلِت الملفات هنا' },
     'chat.fullscreen': { en: 'Full Screen', ar: 'شاشة كاملة' },

@@ -8,6 +8,7 @@ import {
     Eraser, ChevronUp, ChevronDown, Globe, FileText, Paperclip, User,
     MessageCircle, Camera, Scissors, Home, Zap, AlertTriangle, Brain,
     LayoutGrid, Key, Eye, EyeOff, ExternalLink, Clipboard as ClipboardIcon,
+    Network,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -72,6 +73,7 @@ import { useGlobalHotkey } from './palette/useGlobalHotkey';
 import { registerAllProviders } from './palette/registerProviders';
 import { toggle as togglePalette, openWithPrefix as openPaletteWithPrefix, open as openPalette, close as closePalette, subscribe as subscribePalette, getSnapshot as getPaletteSnapshot, setCompact as setPaletteCompact, showToast as showPaletteToast } from './palette/paletteStore';
 import { KlypixCanvas } from './canvas/KlypixCanvas';
+import { isKlypixFile, klypixBytesToBrief } from './canvas/file/klypixBrief';
 import { t, useLocale, translateActionLabel } from './i18n/strings';
 
 // ── Context-aware prompt system ──────────────────────────────────────────────
@@ -439,13 +441,15 @@ declare global {
 }
 
 // ── MessageItem component ─────────────────────────────────────────────────────
-const MessageItem = React.memo(({ msg, idx, copiedIndex, copyToClipboard, onViewImage, searchQuery, isActiveResult, resultRef, onSendToCanvas }: {
+const MessageItem = React.memo(({ msg, idx, copiedIndex, copyToClipboard, onViewImage, searchQuery, isActiveResult, resultRef, onSendToCanvas, onMakeCanvas }: {
     msg: Message; idx: number; copiedIndex: number | null;
     copyToClipboard: (text: string, index: number) => void;
     onViewImage?: (b64: string) => void;
     searchQuery?: string; isActiveResult?: boolean; resultRef?: React.RefObject<HTMLDivElement | null>;
     onSendToCanvas?: (content: string) => void;
+    onMakeCanvas?: (content: string) => Promise<void>;
 }) => {
+    const [makingCanvas, setMakingCanvas] = useState(false);
     const highlightText = (text: string, query: string) => {
         if (!query.trim()) return text;
         const parts = text.split(new RegExp(`(${query})`, 'gi'));
@@ -540,6 +544,16 @@ const MessageItem = React.memo(({ msg, idx, copiedIndex, copyToClipboard, onView
                     <div className="markdown-content text-[15px] leading-relaxed text-white/90 pr-8">
                         <ReactMarkdown remarkPlugins={[remarkGfm]} components={searchQuery ? mdComponents : undefined}>{msg.content}</ReactMarkdown>
                     </div>
+                    {onMakeCanvas && msg.content && (
+                        <button
+                            onClick={async () => { if (makingCanvas) return; setMakingCanvas(true); try { await onMakeCanvas(msg.content); } finally { setMakingCanvas(false); } }}
+                            disabled={makingCanvas}
+                            className="absolute right-7 bottom-0 p-1.5 rounded-md text-white/0 group-hover/asst:text-white/35 hover:!text-emerald-300 hover:!bg-emerald-500/10 transition-all duration-200 cursor-pointer disabled:cursor-wait"
+                            title={t('chat.make_canvas')}
+                        >
+                            {makingCanvas ? <Loader2 size={11} className="animate-spin text-emerald-300" /> : <Network size={11} />}
+                        </button>
+                    )}
                     {onSendToCanvas && msg.content && (
                         <button
                             onClick={() => onSendToCanvas(msg.content)}
@@ -923,6 +937,50 @@ function AppMain() {
         }
         setActiveTab('canvas');
     }, []);
+
+    // "Make canvas from this" — turn an answer into a structured multi-card
+    // board (the in-app twin of write-klypix). Asks Flash for a {cards,
+    // connections} spec, queues it as a board entry, switches to canvas. The
+    // drain in CanvasSurface lays the cards out + draws the arrows. On any
+    // failure we fall back to a single card so the button never dead-ends.
+    const handleMakeCanvas = useCallback(async (content: string) => {
+        if (!content || !content.trim()) return;
+        try {
+            const { callGeminiFlash } = await import('./api/gemini');
+            const sys = `You convert text into a KLYPIX canvas spec. Output ONLY raw JSON (no markdown, no code fences) of this exact shape:
+{"title": string, "cards": [{"text": string, "heading"?: boolean, "color"?: string}], "connections": [{"from": number, "to": number, "relationship"?: string}]}
+Rules:
+- Break the content into short, ATOMIC cards (one idea each). 5-12 cards is ideal. The first line of each card's text is its title.
+- Make the main goal/topic a heading card ("heading": true). Mark risks/blockers/warnings with "color": "#ef4444".
+- connections: "from"/"to" are 0-based card INDICES. "relationship" is one of leads_to|depends_on|relates_to|supports|blocks|questions. Only add meaningful edges; it's fine to have few or none.
+- Keep each card concise (a phrase or two, not a paragraph).`;
+            const rawOut = await callGeminiFlash(sys, content, { maxOutputTokens: 1500, temperature: 0.3 });
+            let jsonText = rawOut.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+            const s = jsonText.indexOf('{'), e = jsonText.lastIndexOf('}');
+            if (s >= 0 && e > s) jsonText = jsonText.slice(s, e + 1);
+            const spec = JSON.parse(jsonText);
+            const cards = Array.isArray(spec?.cards)
+                ? spec.cards.filter((c: any) => c && typeof c.text === 'string' && c.text.trim()).slice(0, 24)
+                : [];
+            if (cards.length === 0) throw new Error('spec had no usable cards');
+            const entry = {
+                kind: 'board',
+                title: typeof spec.title === 'string' ? spec.title : 'Canvas',
+                cards,
+                connections: Array.isArray(spec.connections) ? spec.connections : [],
+                timestamp: Date.now(),
+            };
+            const key = 'klypix:pendingCanvasItems';
+            let existing: any[] = [];
+            try { const r = localStorage.getItem(key); if (r) { const p = JSON.parse(r); if (Array.isArray(p)) existing = p; } } catch { /* overwrite */ }
+            existing.push(entry);
+            try { localStorage.setItem(key, JSON.stringify(existing)); } catch { /* switch anyway */ }
+            setActiveTab('canvas');
+        } catch (err) {
+            console.warn('[MakeCanvas] generation failed, falling back to single card:', err);
+            handleSendToCanvas(content); // graceful fallback so the click isn't lost
+        }
+    }, [handleSendToCanvas]);
 
     // Palette → chat bridge. The Command Palette's clipboard "Send to chat"
     // action dispatches these CustomEvents so we don't have to thread the
@@ -1917,10 +1975,34 @@ function AppMain() {
 
             // Build context from attachments + deep mode files
             let agentPrompt = queryText;
+            // Canvas images pulled from any dropped .klypix, merged into the
+            // agent's vision input at the startAgent call below.
+            const klypixImages: string[] = [];
             if (attachments.attachedFiles.length > 0) {
-                try {
+                // A .klypix/.any canvas is a binary ZIP — readMultipleFiles would
+                // garble it. Parse it into a brief (cards + graph + links + tags)
+                // the same way the chat path does, and feed its images to vision.
+                const klypixAtts = attachments.attachedFiles.filter((f: any) => isKlypixFile(f.ext) || isKlypixFile(f.name));
+                const docAtts = attachments.attachedFiles.filter((f: any) => !isKlypixFile(f.ext) && !isKlypixFile(f.name));
+                for (const f of klypixAtts) {
+                    try {
+                        const r = await (window as any).electron.readFileBytes(f.path);
+                        if (r?.success && r.base64) {
+                            const u8 = Uint8Array.from(atob(r.base64), c => c.charCodeAt(0));
+                            const brief = await klypixBytesToBrief(u8, f.name);
+                            agentPrompt = `${agentPrompt}\n\n--- KLYPIX CANVAS: ${f.name} ---\n${brief.markdown}\n--- END CANVAS ---`;
+                            if (brief.imageAssets.length) klypixImages.push(...brief.imageAssets);
+                        } else {
+                            agentPrompt = `${agentPrompt}\n\n[Could not read canvas ${f.name}: ${r?.error || 'unknown error'}]`;
+                        }
+                    } catch (err) {
+                        console.warn('[Agent] canvas parse error:', f.name, err);
+                        agentPrompt = `${agentPrompt}\n\n[Could not parse canvas ${f.name}: ${(err as Error).message}]`;
+                    }
+                }
+                if (docAtts.length > 0) try {
                     // Actually read the file contents via IPC
-                    const attachItems = attachments.attachedFiles.map((f: any) => ({
+                    const attachItems = docAtts.map((f: any) => ({
                         id: f.path, name: f.name, type: 'file', source: 'Attached', localPath: f.path,
                     }));
                     const result = await window.electron.readMultipleFiles(attachItems);
@@ -1930,14 +2012,14 @@ function AppMain() {
                             .map((r: any) => `--- FILE: ${r.name || 'Document'} (${r.pageCount || 0} pages) ---\n${r.content}`)
                             .join('\n\n');
                         if (sections.length > 50) {
-                            agentPrompt = `${queryText}\n\n--- ATTACHED FILES (read from disk) ---\n${sections}\n--- END ATTACHED FILES ---`;
+                            agentPrompt = `${agentPrompt}\n\n--- ATTACHED FILES (read from disk) ---\n${sections}\n--- END ATTACHED FILES ---`;
                         }
                     }
                 } catch (err) {
                     console.warn('[Agent] Failed to read attachments:', err);
                     // Fallback: tell agent to use read_file tool
-                    const paths = attachments.attachedFiles.map((f: any) => f.path).join(', ');
-                    agentPrompt = `${queryText}\n\n[Attached files at: ${paths} — use read_file tool to access them]`;
+                    const paths = docAtts.map((f: any) => f.path).join(', ');
+                    agentPrompt = `${agentPrompt}\n\n[Attached files at: ${paths} — use read_file tool to access them]`;
                 }
             }
             if (deepMode.isDeepFileMode && deepMode.selectedFiles.length > 0) {
@@ -2006,7 +2088,16 @@ function AppMain() {
                 }
             }
 
-            claudeAgent.startAgent(agentPrompt, agentScreenshot, windowCtx.activeWindowContext, extraScreenshots.length > 0 ? extraScreenshots : undefined);
+            // Merge any canvas images into vision. If there's no screenshot,
+            // promote the first canvas image to the primary slot so a
+            // canvas-only run still reaches the model's vision input.
+            let agentPrimary = agentScreenshot;
+            const agentExtras = [...extraScreenshots];
+            if (klypixImages.length > 0) {
+                if (!agentPrimary) { agentPrimary = klypixImages[0]; agentExtras.push(...klypixImages.slice(1)); }
+                else { agentExtras.push(...klypixImages); }
+            }
+            claudeAgent.startAgent(agentPrompt, agentPrimary, windowCtx.activeWindowContext, agentExtras.length > 0 ? agentExtras : undefined);
             return;
         }
 
@@ -3418,7 +3509,7 @@ function AppMain() {
                         )}
 
                         {chat.messages.map((msg, idx) => (
-                            <MessageItem key={idx} msg={msg} idx={idx} copiedIndex={chat.copiedIndex} copyToClipboard={chat.copyToClipboard} onViewImage={screenshot.setPreviewImage} searchQuery={chat.searchQuery} isActiveResult={chat.searchResultIndices[chat.currentSearchIndex] === idx} resultRef={chat.activeResultRef} onSendToCanvas={handleSendToCanvas} />
+                            <MessageItem key={idx} msg={msg} idx={idx} copiedIndex={chat.copiedIndex} copyToClipboard={chat.copyToClipboard} onViewImage={screenshot.setPreviewImage} searchQuery={chat.searchQuery} isActiveResult={chat.searchResultIndices[chat.currentSearchIndex] === idx} resultRef={chat.activeResultRef} onSendToCanvas={handleSendToCanvas} onMakeCanvas={handleMakeCanvas} />
                         ))}
 
                         {/* Claude Agent UI — renders below the user's prompt message */}
