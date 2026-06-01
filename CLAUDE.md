@@ -15,6 +15,24 @@ The app has **three UI modes**:
 
 Backed by Supabase for auth/licensing, with an electron-updater rollout pipeline and a separate Next.js admin app under `admin/`.
 
+## Project Brain — `brain.klypix` (read this each session)
+
+This project keeps a **living spatial memory** at [brain.klypix](brain.klypix) —
+a KLYPIX canvas of the project's areas, decisions, and open questions, wired
+together with arrows. It's the shared human↔agent brain (the spatial version of
+an Obsidian vault), and it persists across sessions.
+
+- **At the start of substantial work**, read it to recall where things stand:
+  `node scripts/read-klypix.mjs brain.klypix`
+- **After a real decision / shipped milestone / important discovery**, append it
+  as a connected card (curated, not a log dump):
+  `... | node scripts/append-klypix.mjs brain.klypix`
+- Full conventions + card taxonomy live in the **`project-brain`** skill
+  (`.claude/skills/project-brain/`). The same engine powers read-klypix /
+  write-klypix and the MCP server ([docs/KLYPIX_MCP.md](docs/KLYPIX_MCP.md)),
+  which exposes these tools to any MCP client (Claude Desktop/Code/cowork).
+- The human opens `brain.klypix` in KLYPIX (Canvas → Open) to *see* the project.
+
 ## Build & Development Commands
 
 ```bash
