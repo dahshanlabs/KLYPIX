@@ -1,5 +1,6 @@
 import type { CanvasAction, CanvasState } from '../state/canvasStore';
-import type { ApprovalItem, CanvasItem, ContainerItem, Connection, FileItem, ImageItem, TextItem } from '../items/types';
+import type { ApprovalItem, CanvasItem, ContainerItem, Connection, FileItem, ImageItem, TextItem, VideoItem, AudioItem } from '../items/types';
+import { getCachedTranscript, setCachedTranscript } from './mediaTranscriptCache';
 import { newId } from '../items/types';
 
 /** Resolve the world-coord position for a newly-created agent card.
@@ -383,6 +384,36 @@ async function readFileItem(name: string, item: FileItem): Promise<ToolResult> {
     return readFilePreviewFallback(name, item, meta);
 }
 
+// Inline cap for Gemini A/V (base64 inflates ~33%; ~20MB soft limit). Guard
+// runs BEFORE base64 so a huge video is never encoded (that alloc alone freezes
+// the renderer) and never uploaded.
+const MAX_MEDIA_INLINE_BYTES = 18 * 1024 * 1024;
+
+async function readMediaItem(name: string, item: VideoItem | AudioItem): Promise<ToolResult> {
+    const meta = { id: item.id, type: item.type, file: item.fileName, ext: item.extension, durationSec: item.durationSec };
+    // Cache hit → instant, no network.
+    const cached = getCachedTranscript(item.assetId);
+    if (cached) return { name, result: JSON.stringify({ ...meta, transcript: cached, cached: true }) };
+
+    const asset = item.assetId ? getAsset(item.assetId) : undefined;
+    if (!asset) {
+        return { name, result: JSON.stringify({ ...meta, bytes: item.fileSize, note: 'media bytes not in the registry — ask the user to re-drop the file.' }) };
+    }
+    const size = asset.bytes.length || item.fileSize || 0;
+    if (size > MAX_MEDIA_INLINE_BYTES) {
+        return { name, result: JSON.stringify({ ...meta, bytes: size, note: `too large to transcribe inline (~${Math.round(size / 1024 / 1024)}MB; ~20MB limit). Ask the user to trim/compress it, or summarize it manually.` }) };
+    }
+    const mime = asset.mime || item.mimeType || mimeFromExtension(item.extension) || (item.type === 'video' ? 'video/mp4' : 'audio/mpeg');
+    try {
+        const { transcribeMedia } = await import('../../api/gemini'); // lazy → no import cycle
+        const transcript = await transcribeMedia(asset.bytes, mime, { kind: item.type });
+        if (transcript && item.assetId) setCachedTranscript(item.assetId, transcript);
+        return { name, result: JSON.stringify({ ...meta, transcript: transcript || '(empty transcript)' }) };
+    } catch (err: any) {
+        return { name, result: JSON.stringify({ ...meta, note: `transcription failed: ${err?.message || err} (codec may be unsupported — audio: mp3/wav/flac/aac/ogg; video: mp4/webm/mov).` }) };
+    }
+}
+
 export async function executeToolCall(call: ToolCall, ctx: ToolExecContext): Promise<ToolResult> {
     const s = ctx.getState();
     switch (call.name) {
@@ -407,13 +438,7 @@ export async function executeToolCall(call: ToolCall, ctx: ToolExecContext): Pro
                 return await readFileItem(call.name, item);
             }
             if (item.type === 'video' || item.type === 'audio') {
-                // Frames/transcription not wired yet — return metadata + an
-                // honest note so the model doesn't hallucinate the contents.
-                return { name: call.name, result: JSON.stringify({
-                    id: item.id, type: item.type, file: item.fileName, ext: item.extension,
-                    bytes: item.fileSize, durationSec: item.durationSec,
-                    note: `${item.type} content is not transcribed yet — only metadata is available. Ask the user to summarize it, or run canvas_run_code on the asset.`,
-                }) };
+                return await readMediaItem(call.name, item);
             }
             return { name: call.name, result: JSON.stringify({ id: item.id, type: item.type }) };
         }

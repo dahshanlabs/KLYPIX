@@ -83,6 +83,11 @@ export function clearAssets(): void {
         try { URL.revokeObjectURL(entry.blobUrl); } catch { /* no-op */ }
     }
     registry.clear();
+    // Drop cached media transcripts too — opening a different canvas must never
+    // serve a previous canvas's transcript. (assetIds are unique so this is
+    // belt-and-suspenders, but cheap + correct.) Lazy import keeps this
+    // low-level module free of agent dependencies.
+    import('../agent/mediaTranscriptCache').then(m => m.clearTranscriptCache()).catch(() => { /* no-op */ });
 }
 
 // Lazy-load an asset from a .any file on disk. Used by future slices that

@@ -87,6 +87,37 @@ function getModel(options?: { maxOutputTokens?: number; temperature?: number }) 
     }, { apiVersion: "v1beta" });
 }
 
+// ── Media transcription (audio + video) ──────────────────────────────────────
+// Reuses the proven canvas-mic path (audioTranscribe.ts): bytes → base64 →
+// Gemini inlineData. Gemini reads VIDEO natively (frames + audio in one call),
+// which is why the canvas agent uses this instead of an audio-only engine. The
+// caller (canvasToolExecutor) is responsible for the size guard BEFORE calling
+// this — base64-encoding a huge video here would freeze the renderer.
+function u8ToBase64(bytes: Uint8Array): string {
+    let binary = '';
+    const CHUNK = 0x8000; // chunk to avoid String.fromCharCode arg-count overflow
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+        binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK)));
+    }
+    return btoa(binary);
+}
+
+export async function transcribeMedia(
+    bytes: Uint8Array,
+    mime: string,
+    opts?: { kind?: 'audio' | 'video'; maxOutputTokens?: number },
+): Promise<string> {
+    const model = getModel({ maxOutputTokens: opts?.maxOutputTokens ?? 4000, temperature: 0.2 });
+    const prompt = opts?.kind === 'video'
+        ? 'Transcribe this video. Under a "Transcript:" heading give the spoken words verbatim; then under a "Visuals:" heading give 2-3 sentences describing the key on-screen content (text, slides, charts, scene). Support Arabic and English.'
+        : 'Transcribe this audio exactly. Return ONLY the spoken words, nothing else. Support Arabic and English.';
+    const result = await model.generateContent([
+        prompt,
+        { inlineData: { data: u8ToBase64(bytes), mimeType: mime } },
+    ]);
+    return (result.response.text() || '').trim();
+}
+
 // ── System Prompt (brands AI as KLYPIX) ───────────────────────────────────────
 
 const KLYPIX_SYSTEM_PROMPT = `INSTRUCTION: You are KLYPIX, a premium AI desktop assistant invoked via Alt+Space.
