@@ -15,7 +15,7 @@ import type { PaletteProvider, PaletteResult, PaletteProviderContext } from './t
 import { LayoutGrid, Search } from 'lucide-react';
 import React from 'react';
 import { listRecentCanvases, type RecentCanvas } from '../../canvas/dashboard/recentCanvasesStore';
-import { klypixBytesToBrief, type KlypixCard } from '../../canvas/file/klypixBrief';
+import { getOrIndexCanvas } from './vaultIndexCache';
 
 const MAX_SWITCHER = 8;
 const MAX_CONTENT_HITS = 12;
@@ -53,25 +53,8 @@ function switcherResult(c: RecentCanvas): PaletteResult {
     };
 }
 
-// ── lazy content index, cached by (path, lastOpened) ──
-interface IndexEntry { filePath: string; title: string; cards: KlypixCard[]; }
-const cache = new Map<string, { lastOpened: number; entry: IndexEntry }>();
-
-async function indexCanvas(c: RecentCanvas, signal: AbortSignal): Promise<IndexEntry | null> {
-    const hit = cache.get(c.filePath);
-    if (hit && hit.lastOpened === c.lastOpened) return hit.entry;
-    try {
-        const r: any = await (window as any).electron?.readFileBytes?.(c.filePath);
-        if (signal.aborted || !r?.success || !r.base64) return null;
-        const u8 = Uint8Array.from(atob(r.base64), ch => ch.charCodeAt(0));
-        const brief = await klypixBytesToBrief(u8, fileName(c.filePath), { skipImages: true });
-        const entry: IndexEntry = { filePath: c.filePath, title: brief.title || c.title || fileName(c.filePath), cards: brief.cards };
-        cache.set(c.filePath, { lastOpened: c.lastOpened, entry });
-        return entry;
-    } catch {
-        return null; // unreadable / not a canvas → just skip it in search
-    }
-}
+// Content indexing now lives in ./vaultIndexCache (shared with the dashboard
+// vault tag index) so each .klypix is parsed at most once across both.
 
 function snippet(text: string, at: number, qlen: number): string {
     const start = Math.max(0, at - 24);
@@ -103,7 +86,7 @@ export const canvasProvider: PaletteProvider = {
         // the most-recent MAX_INDEXED are indexed so a huge history doesn't
         // turn a keystroke into dozens of file reads.
         if (q.length < 2) return results;
-        const entries = await Promise.all(recents.slice(0, MAX_INDEXED).map(c => indexCanvas(c, ctx.signal)));
+        const entries = await Promise.all(recents.slice(0, MAX_INDEXED).map(c => getOrIndexCanvas(c, ctx.signal)));
         if (ctx.signal.aborted) return results;
 
         let total = 0;

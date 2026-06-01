@@ -4,6 +4,7 @@ import { FilePlus2, FolderOpen, Clock, X as XIcon, Users, Undo2, Check, Star } f
 import { useRecentCanvases } from '../../hooks/useRecentCanvases';
 import { useStarredCanvases } from '../../hooks/useStarredCanvases';
 import { toggleStarred } from './starredCanvasesStore';
+import { useVaultTags } from '../../hooks/useVaultTags';
 import { t, useLocale } from '../../i18n/strings';
 import { useSharedCanvases, type SharedCanvas } from '../../hooks/useSharedCanvases';
 import { usePendingInvitations, type PendingInvitation } from '../../hooks/usePendingInvitations';
@@ -100,6 +101,26 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
             lastOpened: 0,
         } as RecentCanvas));
     }, [starredPaths, recents]);
+
+    // Vault tag filter. The index builds lazily once per dashboard open (the
+    // component only mounts while shown, so active:true is correct). Selecting
+    // chips filters the canvas lists client-side via an O(1) Set membership
+    // check — never a file read on toggle.
+    const { tags, tagToPaths } = useVaultTags({ active: true });
+    const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
+    const matchingPaths = React.useMemo(() => {
+        if (selectedTags.size === 0) return null; // null = no filter (show all)
+        const s = new Set<string>();
+        for (const t of selectedTags) for (const p of (tagToPaths.get(t) || [])) s.add(p);
+        return s;
+    }, [selectedTags, tagToPaths]);
+    const visible = <T extends { filePath: string }>(rows: T[]): T[] =>
+        matchingPaths ? rows.filter(r => matchingPaths.has(r.filePath)) : rows;
+    const toggleTag = (key: string) => setSelectedTags(prev => {
+        const next = new Set(prev);
+        next.has(key) ? next.delete(key) : next.add(key);
+        return next;
+    });
 
     // Esc closes when this is a manual Home-button open (onDismiss is set).
     // For the empty-canvas auto-show case, Esc is a no-op — there's nothing
@@ -297,6 +318,46 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                     </button>
                 </div>
 
+                {/* Tag filter chips (Obsidian-comfort). Click to filter the lists
+                    below to canvases carrying that #tag. O(1) Set check per row
+                    on toggle — no file reads. Hidden when the vault has no tags. */}
+                {tags.length > 0 && (
+                    <div
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onWheel={(e) => e.stopPropagation()}
+                        style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center', maxHeight: 84, overflowY: 'auto' }}
+                    >
+                        {tags.map(({ tag, count }) => {
+                            const key = tag.toLowerCase();
+                            const on = selectedTags.has(key);
+                            return (
+                                <button
+                                    key={key}
+                                    onPointerDown={(e) => { e.stopPropagation(); toggleTag(key); }}
+                                    title={`${count} canvas${count === 1 ? '' : 'es'}`}
+                                    style={{
+                                        fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 999,
+                                        cursor: 'pointer', whiteSpace: 'nowrap',
+                                        background: on ? '#10b981' : 'rgba(16,185,129,0.12)',
+                                        color: on ? '#06281f' : '#10b981',
+                                        border: '1px solid rgba(16,185,129,0.3)',
+                                    }}
+                                >
+                                    #{tag}
+                                </button>
+                            );
+                        })}
+                        {selectedTags.size > 0 && (
+                            <button
+                                onPointerDown={(e) => { e.stopPropagation(); setSelectedTags(new Set()); }}
+                                style={{ fontSize: 11, padding: '3px 9px', borderRadius: 999, cursor: 'pointer', background: 'transparent', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.12)' }}
+                            >
+                                {t('canvas.clear_filter')} · {matchingPaths?.size ?? 0}
+                            </button>
+                        )}
+                    </div>
+                )}
+
                 <div style={{
                     flex: 1,
                     overflow: 'auto',
@@ -306,7 +367,7 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                     {/* Starred — the user's pins, pinned to the top so favorite
                         canvases are always one click away. Renders in BOTH
                         manual-open and empty-canvas auto-show modes. */}
-                    {starredRows.length > 0 && (
+                    {visible(starredRows).length > 0 && (
                         <>
                             <div style={{
                                 fontSize: 10, color: '#f59e0b',
@@ -317,7 +378,7 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                                 <Star size={10} />
                                 {t('canvas.starred')}
                             </div>
-                            {starredRows.map(entry => (
+                            {visible(starredRows).map(entry => (
                                 <RecentRow
                                     key={'star:' + entry.filePath}
                                     entry={entry}
@@ -391,7 +452,7 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                             ))}
                         </>
                     )}
-                    {recents.length > 0 && (
+                    {visible(recents).length > 0 && (
                         <>
                             <div style={{
                                 fontSize: 10, color: 'rgba(255,255,255,0.4)',
@@ -401,7 +462,7 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                             }}>
                                 {t('canvas.recent')}
                             </div>
-                            {recents.map(entry => (
+                            {visible(recents).map(entry => (
                                 <RecentRow
                                     key={entry.filePath}
                                     entry={entry}
@@ -414,7 +475,7 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                             ))}
                         </>
                     )}
-                    {sharedByYou.length > 0 && (
+                    {visible(sharedByYou).length > 0 && (
                         <>
                             <div style={{
                                 fontSize: 10, color: 'rgba(255,255,255,0.4)',
@@ -426,7 +487,7 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                                 <Users size={10} />
                                 Shared by you
                             </div>
-                            {sharedByYou.map(entry => (
+                            {visible(sharedByYou).map(entry => (
                                 <SharedByYouRow
                                     key={entry.blobId}
                                     entry={entry}

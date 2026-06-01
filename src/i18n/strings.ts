@@ -390,6 +390,7 @@ const strings: Strings = {
     'canvas.starred': { en: 'Starred', ar: 'المميّزة' },
     'canvas.star': { en: 'Star this canvas', ar: 'تمييز هذه اللوحة' },
     'canvas.unstar': { en: 'Unstar', ar: 'إلغاء التمييز' },
+    'canvas.clear_filter': { en: 'Clear', ar: 'مسح' },
     'canvas.shared_with_you': { en: 'Shared with you', ar: 'مشاركة معك' },
     'canvas.pending_invitations': { en: 'Pending invitations', ar: 'دعوات معلّقة' },
     'canvas.invited_you_to': { en: 'invited you', ar: 'دعاك' },
