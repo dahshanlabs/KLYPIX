@@ -2294,7 +2294,10 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
 
             <Breadcrumbs />
 
-            <Toolbar />
+            <Toolbar
+                onOpenSearch={() => setSearchOpen(true)}
+                onToggleOutline={() => setOutlineOpen(v => !v)}
+            />
 
             <TextFormatCapsule
                 ctxMenuOpen={ctxMenu != null}
@@ -3555,10 +3558,8 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 was too tight and, at fractional display scales (125%), DPR
                 rounding tipped it into visibly overlapping the toolbar's
                 bottom edge. ~76px gives comfortable clearance at 100–150%. */}
-            <div data-canvas-ui="1" className="absolute top-[76px] left-3 z-20 no-drag flex flex-col items-center gap-1 px-1 py-1 rounded-full bg-black/60 border border-white/10">
-                <FileOpButton toggle="search" label={tLocale('canvas_top.search_short')} onClick={() => setSearchOpen(true)}><SearchIcon size={13} /></FileOpButton>
-                <FileOpButton toggle="outline" label={tLocale('canvas_top.outline')} onClick={() => setOutlineOpen(v => !v)}><List size={13} /></FileOpButton>
-            </div>
+            {/* Search + outline moved INTO the main Toolbar rail (top items) so
+                they can't overlap it at short window heights. See Toolbar.tsx. */}
 
             {/* File title + tool/zoom/item indicator — bottom right. Title
                 'Untitled' is the canonical state value (kept in English so

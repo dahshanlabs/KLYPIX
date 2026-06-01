@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Type, MousePointer2, Square, Minus as LineIcon, Pencil, ArrowRight, Undo2, Redo2, Circle, Triangle, Diamond, Eraser, Scaling, Camera, Scissors, Loader2 } from 'lucide-react';
+import { Type, MousePointer2, Square, Minus as LineIcon, Pencil, ArrowRight, Undo2, Redo2, Circle, Triangle, Diamond, Eraser, Scaling, Camera, Scissors, Loader2, Search as SearchIcon, List } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useCanvasStore } from '../state/canvasStore';
@@ -30,7 +30,15 @@ interface PreviewSession {
     snapshotPushed: boolean;
 }
 
-export function Toolbar() {
+interface ToolbarProps {
+    /** Open the canvas search panel (was a separate floating cluster — folded
+     *  into this rail so the two can never overlap at short window heights). */
+    onOpenSearch?: () => void;
+    /** Toggle the items outline/list panel. */
+    onToggleOutline?: () => void;
+}
+
+export function Toolbar({ onOpenSearch, onToggleOutline }: ToolbarProps = {}) {
     useLocale();
     const { state, dispatch, commit, pushSnapshot, popLastSnapshot, undo, redo, canUndo, canRedo } = useCanvasStore();
     const setTool = (tool: CanvasTool) => dispatch({ type: 'SET_TOOL', tool });
@@ -902,6 +910,21 @@ export function Toolbar() {
             onWheel={(e) => e.stopPropagation()}
             className="absolute left-3 top-1/2 -translate-y-1/2 z-20 no-drag flex flex-col items-center gap-1 p-1.5 rounded-2xl bg-black/60 border border-white/10 backdrop-blur-xl shadow-[0_6px_28px_rgba(0,0,0,0.5)]"
         >
+            {/* Search + outline — folded into the top of this rail so they can
+                never overlap it (they used to be a separate fixed-top cluster
+                that collided with this vertically-centered rail at short
+                window heights). Only rendered when handlers are wired. */}
+            {(onOpenSearch || onToggleOutline) && (
+                <>
+                    {onOpenSearch && (
+                        <ToolButton label={t('canvas_top.search_short')} onClick={onOpenSearch}><SearchIcon size={14} /></ToolButton>
+                    )}
+                    {onToggleOutline && (
+                        <ToolButton label={t('canvas_top.outline')} onClick={onToggleOutline}><List size={14} /></ToolButton>
+                    )}
+                    <div className="w-6 h-px bg-white/10 my-1" />
+                </>
+            )}
             {/* T has an inline right-hand slot for the Text ("A") button —
                 visible when a text item is selected OR the T-tool is active.
                 Rendered as an absolute child of the T wrapper so it floats
