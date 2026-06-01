@@ -119,6 +119,13 @@ contextBridge.exposeInMainWorld('electron', {
     extractBrowserUrl: () => ipcRenderer.invoke('extract-browser-url'),
     lookupBrowserUrl: (params: { title: string }) => ipcRenderer.invoke('lookup-browser-url', params),
     openExternal: (url: string) => ipcRenderer.send('open-external', url),
+    // Vault root — default folder for canvas Open/Save dialogs (renderer reads
+    // it in Settings; main is the source of truth, stored in userData).
+    vault: {
+        getDefaultPath: (): Promise<string> => ipcRenderer.invoke('vault:get-default-path'),
+        setDefaultPath: (p: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('vault:set-default-path', p),
+        chooseFolder: (): Promise<string | null> => ipcRenderer.invoke('vault:choose-folder'),
+    },
     onWindowResizing: (callback: (isResizing: boolean) => void) => {
         const listener = (_: any, isResizing: boolean) => callback(isResizing);
         ipcRenderer.on('window-resizing', listener);

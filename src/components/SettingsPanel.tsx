@@ -28,7 +28,7 @@ import {
     X, Keyboard, Clipboard as ClipboardIcon, Sparkles, Lock, Info, Plus, Trash2,
     AlertCircle, Check, ChevronLeft, User as UserIcon, Mic, MicOff, Volume2, VolumeX,
     Shield, ShieldOff, Eye, EyeOff, ExternalLink, Globe, FileText, Zap, Bot,
-    Eraser, Download, Minus, Square, Copy as CopyIcon, Languages,
+    Eraser, Download, Minus, Square, Copy as CopyIcon, Languages, FolderOpen,
 } from 'lucide-react';
 import clsx, { type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -37,7 +37,7 @@ import { useLocale, type Locale } from '../i18n/strings';
 
 const cn = (...inputs: ClassValue[]) => twMerge(clsx(inputs));
 
-type SectionId = 'account' | 'language' | 'hotkeys' | 'ai' | 'voice' | 'power' | 'clipboard' | 'privacy' | 'agent' | 'about';
+type SectionId = 'account' | 'language' | 'hotkeys' | 'ai' | 'voice' | 'power' | 'clipboard' | 'canvas' | 'privacy' | 'agent' | 'about';
 
 const SECTIONS: { id: SectionId; label: string; icon: typeof Keyboard }[] = [
     { id: 'account', label: 'Account', icon: UserIcon },
@@ -47,6 +47,7 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof Keyboard }[] = [
     { id: 'voice', label: 'Voice', icon: Mic },
     { id: 'power', label: 'Power Button', icon: Zap },
     { id: 'clipboard', label: 'Clipboard', icon: ClipboardIcon },
+    { id: 'canvas', label: 'Canvas', icon: FolderOpen },
     { id: 'privacy', label: 'Privacy', icon: Lock },
     { id: 'agent', label: 'Agent Engine', icon: Bot },
     { id: 'about', label: 'About', icon: Info },
@@ -94,6 +95,7 @@ export function SettingsPanel({ onClose, settings, auth, t }: Props) {
         voice: tx('settings.tab.voice', 'Voice'),
         power: tx('settings.tab.power', 'Power Button'),
         clipboard: tx('settings.tab.clipboard', 'Clipboard'),
+        canvas: tx('settings.tab.canvas', 'Canvas'),
         privacy: tx('settings.tab.privacy', 'Privacy'),
         agent: tx('settings.tab.agent', 'Agent Engine'),
         about: tx('settings.tab.about', 'About'),
@@ -186,6 +188,7 @@ export function SettingsPanel({ onClose, settings, auth, t }: Props) {
                     {section === 'voice' && <VoiceSection settings={settings} tx={tx} />}
                     {section === 'power' && <PowerButtonSection settings={settings} tx={tx} />}
                     {section === 'clipboard' && <ClipboardSection tx={tx} />}
+                    {section === 'canvas' && <VaultSection tx={tx} />}
                     {section === 'privacy' && <PrivacySection settings={settings} tx={tx} />}
                     {section === 'agent' && <AgentSection tx={tx} />}
                     {section === 'about' && <AboutSection tx={tx} />}
@@ -989,6 +992,61 @@ function AboutSection({ tx }: { tx: (k: string, fb: string) => string }) {
             <Note>
                 {tx('settings.about.built_by', 'Built by Dahshan Labs. All your data lives locally on this machine except for explicitly synced items.')}
             </Note>
+        </Section>
+    );
+}
+
+// Canvas vault folder — the default location canvas Open/Save dialogs point at.
+// Self-contained: reads/writes through the electron.vault bridge (main process
+// owns the value, stored in userData), so it needs no prop threading.
+function VaultSection({ tx }: { tx: (k: string, fb: string) => string }) {
+    const [path, setPath] = useState<string>('');
+    useEffect(() => {
+        (window as any).electron?.vault?.getDefaultPath?.()
+            .then((p: string) => { if (typeof p === 'string') setPath(p); })
+            .catch(() => { /* handler missing → leave empty (last-used location) */ });
+    }, []);
+    const persist = (p: string) => { setPath(p); (window as any).electron?.vault?.setDefaultPath?.(p); };
+    const choose = async () => {
+        const picked = await (window as any).electron?.vault?.chooseFolder?.();
+        if (typeof picked === 'string' && picked) persist(picked);
+    };
+    return (
+        <Section
+            title={tx('settings.tab.canvas', 'Canvas')}
+            caption={tx('settings.vault.caption', 'Choose the folder your .klypix canvases live in. Open & Save dialogs start here. Leave unset to use your last-used location.')}
+        >
+            <div className="rounded-xl bg-white/[0.03] border border-white/10 p-4 flex flex-col gap-3">
+                <div className="text-[11px] uppercase tracking-wider text-white/40">{tx('settings.vault.folder', 'Vault folder')}</div>
+                <div className="text-[13px] text-white/80 break-all min-h-[18px]">
+                    {path || <span className="text-white/35">{tx('settings.vault.unset', 'Not set — dialogs open in your last-used location')}</span>}
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                        onClick={choose}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 text-[12.5px] font-medium transition-colors"
+                    >
+                        <FolderOpen size={14} />
+                        {tx('settings.vault.choose', 'Choose folder')}
+                    </button>
+                    {path && (
+                        <>
+                            <button
+                                onClick={() => (window as any).electron?.openExternal?.(path)}
+                                className="px-3 py-1.5 rounded-lg bg-white/5 text-white/60 hover:bg-white/10 text-[12.5px] transition-colors"
+                            >
+                                {tx('settings.vault.open', 'Open folder')}
+                            </button>
+                            <button
+                                onClick={() => persist('')}
+                                className="px-3 py-1.5 rounded-lg text-white/40 hover:text-white/70 text-[12.5px] transition-colors"
+                            >
+                                {tx('settings.vault.reset', 'Reset')}
+                            </button>
+                        </>
+                    )}
+                </div>
+            </div>
         </Section>
     );
 }

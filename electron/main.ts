@@ -1927,14 +1927,39 @@ ipcMain.handle('canvas:save', async (_evt: any, args: { filePath: string; json: 
     }
 });
 
+// ── Vault root — the default folder canvas Open/Save dialogs point at. Stored
+// in userData so it survives across sessions. When unset/missing we pass
+// undefined so the OS keeps the user's last-used location (never force a dir).
+const VAULT_SETTINGS_FILE = path.join(app.getPath('userData'), 'vault-settings.json');
+function getVaultPath(): string {
+    try {
+        const p = JSON.parse(fs.readFileSync(VAULT_SETTINGS_FILE, 'utf8'))?.vaultPath;
+        return typeof p === 'string' ? p : '';
+    } catch { return ''; }
+}
+ipcMain.handle('vault:get-default-path', () => getVaultPath());
+ipcMain.handle('vault:set-default-path', (_e: any, p: string) => {
+    try { fs.writeFileSync(VAULT_SETTINGS_FILE, JSON.stringify({ vaultPath: typeof p === 'string' ? p : '' })); return { ok: true }; }
+    catch (err: any) { return { ok: false, error: err?.message || String(err) }; }
+});
+ipcMain.handle('vault:choose-folder', async () => {
+    if (!mainWindow) return null;
+    const r = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory', 'createDirectory'] });
+    return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0];
+});
+
 ipcMain.handle('canvas:save-as', async (_evt: any, args: { json: string; defaultName?: string; assets?: Array<{ path: string; base64: string }> }) => {
     if (!mainWindow) return { ok: false, error: 'no window' };
     try {
         console.log('[canvas:save-as] opening dialog, default:', args.defaultName);
+        // Default into the vault folder if the user set one (and it still
+        // exists); else fall back to a bare filename (OS last-used location).
+        const vp = getVaultPath();
+        const baseName = args.defaultName || 'untitled.klypix';
         const { filePath, canceled } = await dialog.showSaveDialog(mainWindow, {
             // New canvases save as .klypix going forward. The codec writes the
             // same on-disk bytes either way today — only the extension changes.
-            defaultPath: args.defaultName || 'untitled.klypix',
+            defaultPath: vp && fs.existsSync(vp) ? path.join(vp, baseName) : baseName,
             // List .klypix first so the Save dialog shows the new extension as
             // the default; .any stays selectable for users who want to
             // overwrite an existing legacy file in place without auto-rename.
@@ -2079,8 +2104,12 @@ ipcMain.handle('canvas:load-version', async (_evt: any, args: { filePath: string
 ipcMain.handle('canvas:open', async () => {
     if (!mainWindow) return { ok: false, error: 'no window' };
     try {
+        const vp = getVaultPath();
         const result = await dialog.showOpenDialog(mainWindow, {
             properties: ['openFile'],
+            // Start in the vault folder if set + present; else omit so the OS
+            // keeps the last-used location.
+            ...(vp && fs.existsSync(vp) ? { defaultPath: vp } : {}),
             // Open dialog accepts both extensions so users with legacy .any files
             // see them in the picker without changing the filter.
             filters: [{ name: 'KLYPIX Canvas', extensions: ['klypix', 'any'] }],
