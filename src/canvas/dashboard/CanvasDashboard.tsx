@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FilePlus2, FolderOpen, Clock, X as XIcon, Users, Undo2, Check } from 'lucide-react';
+import { FilePlus2, FolderOpen, Clock, X as XIcon, Users, Undo2, Check, Star } from 'lucide-react';
 import { useRecentCanvases } from '../../hooks/useRecentCanvases';
+import { useStarredCanvases } from '../../hooks/useStarredCanvases';
+import { toggleStarred } from './starredCanvasesStore';
 import { t, useLocale } from '../../i18n/strings';
 import { useSharedCanvases, type SharedCanvas } from '../../hooks/useSharedCanvases';
 import { usePendingInvitations, type PendingInvitation } from '../../hooks/usePendingInvitations';
@@ -84,6 +86,20 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
             // Newest push first — same recency sort the recents list uses.
             .sort((a, b) => b.lastPushedAt - a.lastPushedAt);
     }, [recents]);
+
+    // Starred — the user's pins, joined to recent metadata. A pin that fell
+    // off the 50-entry recents cap still renders (synthetic basename row) and
+    // opens via the same handleOpen path, so a star never silently vanishes.
+    const starredPaths = useStarredCanvases();
+    const starredSet = React.useMemo(() => new Set(starredPaths), [starredPaths]);
+    const starredRows = React.useMemo(() => {
+        const byPath = new Map(recents.map(r => [r.filePath, r]));
+        return starredPaths.map(p => byPath.get(p) ?? ({
+            filePath: p,
+            title: (p.split(/[\\/]/).pop() || p).replace(/\.(any|klypix)$/i, ''),
+            lastOpened: 0,
+        } as RecentCanvas));
+    }, [starredPaths, recents]);
 
     // Esc closes when this is a manual Home-button open (onDismiss is set).
     // For the empty-canvas auto-show case, Esc is a no-op — there's nothing
@@ -287,6 +303,33 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                     margin: '0 -8px',
                     padding: '0 8px',
                 }}>
+                    {/* Starred — the user's pins, pinned to the top so favorite
+                        canvases are always one click away. Renders in BOTH
+                        manual-open and empty-canvas auto-show modes. */}
+                    {starredRows.length > 0 && (
+                        <>
+                            <div style={{
+                                fontSize: 10, color: '#f59e0b',
+                                textTransform: 'uppercase', letterSpacing: '0.08em',
+                                marginBottom: 8, paddingLeft: 4,
+                                display: 'flex', alignItems: 'center', gap: 6,
+                            }}>
+                                <Star size={10} />
+                                {t('canvas.starred')}
+                            </div>
+                            {starredRows.map(entry => (
+                                <RecentRow
+                                    key={'star:' + entry.filePath}
+                                    entry={entry}
+                                    opening={openingPath === entry.filePath}
+                                    onOpen={() => handleOpen(entry)}
+                                    onRemove={() => removeRecentCanvas(entry.filePath)}
+                                    isStarred={true}
+                                    onToggleStar={() => toggleStarred(entry.filePath)}
+                                />
+                            ))}
+                        </>
+                    )}
                     {/* Pending invitations inbox (2026-05-30) — sits at the very
                         top because it's the most actionable thing: someone is
                         waiting on you. Accept → becomes a collaborator + the
@@ -365,6 +408,8 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                                     opening={openingPath === entry.filePath}
                                     onOpen={() => handleOpen(entry)}
                                     onRemove={() => removeRecentCanvas(entry.filePath)}
+                                    isStarred={starredSet.has(entry.filePath)}
+                                    onToggleStar={() => toggleStarred(entry.filePath)}
                                 />
                             ))}
                         </>
@@ -691,9 +736,11 @@ interface RecentRowProps {
     opening: boolean;
     onOpen: () => void;
     onRemove: () => void;
+    isStarred?: boolean;
+    onToggleStar?: () => void;
 }
 
-function RecentRow({ entry, opening, onOpen, onRemove }: RecentRowProps) {
+function RecentRow({ entry, opening, onOpen, onRemove, isStarred, onToggleStar }: RecentRowProps) {
     const fileName = entry.filePath.split(/[\\/]/).pop() || entry.filePath;
     // "Untitled" / "Untitled canvas" is the SENTINEL value canvases get
     // when the user hasn't named them. We don't want to mutate the saved
@@ -743,6 +790,26 @@ function RecentRow({ entry, opening, onOpen, onRemove }: RecentRowProps) {
                     </span>
                 </div>
             </div>
+            {onToggleStar && (
+                <button
+                    // onPointerDown (not onClick) so the canvas pen tool can't
+                    // swallow the first click via setPointerCapture.
+                    onPointerDown={(e) => { e.stopPropagation(); onToggleStar(); }}
+                    title={isStarred ? t('canvas.unstar') : t('canvas.star')}
+                    style={{
+                        padding: 4, borderRadius: 5,
+                        background: 'transparent',
+                        color: isStarred ? '#f59e0b' : 'rgba(255,255,255,0.3)',
+                        cursor: 'pointer',
+                        flexShrink: 0,
+                        display: 'flex',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = '#f59e0b'; e.currentTarget.style.background = 'rgba(245,158,11,0.1)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = isStarred ? '#f59e0b' : 'rgba(255,255,255,0.3)'; e.currentTarget.style.background = 'transparent'; }}
+                >
+                    <Star size={12} fill={isStarred ? '#f59e0b' : 'none'} />
+                </button>
+            )}
             <button
                 onPointerDown={(e) => { e.stopPropagation(); }}
                 onClick={(e) => { e.stopPropagation(); onRemove(); }}
