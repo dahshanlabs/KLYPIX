@@ -116,6 +116,13 @@ export function createAudioTranscribeController(): AudioTranscribeController {
                 }
 
                 onStatus('transcribing');
+                // On-device first (only when the user enabled prefer-offline +
+                // installed a model). Returns null when off → Gemini below.
+                try {
+                    const { transcribeLocal } = await import('../../services/offlineStt');
+                    const local = await transcribeLocal(blob, { kind: 'audio' });
+                    if (local) { onStatus('done'); onFinal(local); return; }
+                } catch { /* fall through to cloud */ }
                 try {
                     const base64 = await blobToBase64(blob);
                     const { getApiKeySync } = await import('../../api/gemini');

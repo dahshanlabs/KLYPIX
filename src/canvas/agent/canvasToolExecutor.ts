@@ -399,11 +399,22 @@ async function readMediaItem(name: string, item: VideoItem | AudioItem): Promise
     if (!asset) {
         return { name, result: JSON.stringify({ ...meta, bytes: item.fileSize, note: 'media bytes not in the registry — ask the user to re-drop the file.' }) };
     }
+    const mime = asset.mime || item.mimeType || mimeFromExtension(item.extension) || (item.type === 'video' ? 'video/mp4' : 'audio/mpeg');
+
+    // On-device first (only when the user enabled it + installed a model). No
+    // size cap locally; returns null when off/unavailable → fall through to
+    // Gemini. Video VISUALS still go to Gemini; local supplies only the audio.
+    try {
+        const { transcribeLocal } = await import('../../services/offlineStt');
+        const local = await transcribeLocal(new Blob([asset.bytes as any], { type: mime }), { kind: item.type });
+        if (local && item.assetId) { setCachedTranscript(item.assetId, local); return { name, result: JSON.stringify({ ...meta, transcript: local, local: true }) }; }
+    } catch { /* fall through to cloud */ }
+
+    // Cloud (Gemini) — size-guarded (base64 inflates ~33%; ~20MB inline cap).
     const size = asset.bytes.length || item.fileSize || 0;
     if (size > MAX_MEDIA_INLINE_BYTES) {
-        return { name, result: JSON.stringify({ ...meta, bytes: size, note: `too large to transcribe inline (~${Math.round(size / 1024 / 1024)}MB; ~20MB limit). Ask the user to trim/compress it, or summarize it manually.` }) };
+        return { name, result: JSON.stringify({ ...meta, bytes: size, note: `too large to transcribe inline (~${Math.round(size / 1024 / 1024)}MB; ~20MB cloud limit). Install an offline model (Settings → Canvas → Offline models) for unlimited local transcription, or trim/compress it.` }) };
     }
-    const mime = asset.mime || item.mimeType || mimeFromExtension(item.extension) || (item.type === 'video' ? 'video/mp4' : 'audio/mpeg');
     try {
         const { transcribeMedia } = await import('../../api/gemini'); // lazy → no import cycle
         const transcript = await transcribeMedia(asset.bytes, mime, { kind: item.type });

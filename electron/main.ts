@@ -5,6 +5,7 @@ import { MCPClientManager } from './mcpClient';
 import { promisify } from 'util';
 import fs from 'fs';
 import * as os from 'os';
+import * as offlineManager from './offline/offlineManager';
 // Prevent EPIPE and other uncaught errors from showing error dialogs
 process.on('uncaughtException', (err: any) => {
     if (err.message.includes('EPIPE') || err.message.includes('broken pipe')) {
@@ -1947,6 +1948,15 @@ ipcMain.handle('vault:choose-folder', async () => {
     const r = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory', 'createDirectory'] });
     return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0];
 });
+
+// ── Offline models (on-demand OCR/STT install; nothing bundled) ──
+ipcMain.handle('offline:list', () => offlineManager.getCatalogWithState());
+ipcMain.handle('offline:install', (_e: any, id: string) =>
+    offlineManager.install(id, (p) => { try { mainWindow?.webContents.send('offline:progress', p); } catch { /* window gone */ } }));
+ipcMain.handle('offline:remove', (_e: any, id: string) => offlineManager.remove(id));
+ipcMain.handle('offline:get-ocr-langs', () => offlineManager.getInstalledOcrLangs());
+// THE handler the previously-dead useSettings.ts setPdfOcrMode() call was missing.
+ipcMain.handle('offline:set-pdf-ocr-mode', (_e: any, mode: 'gemini' | 'local') => { offlineManager.setPdfOcrMode(mode); return { ok: true }; });
 
 ipcMain.handle('canvas:save-as', async (_evt: any, args: { json: string; defaultName?: string; assets?: Array<{ path: string; base64: string }> }) => {
     if (!mainWindow) return { ok: false, error: 'no window' };
@@ -4345,7 +4355,20 @@ async function readPdfFromDisk(filePath: string, options?: any): Promise<any> {
                     return { content: fullText.trim() || '[Scanned PDF — text extraction not available. Try using screenshot mode instead.]', pageCount, isScanned: true };
                 }
                 const { createWorker } = require('tesseract.js');
-                const worker = await createWorker('eng+ara');
+                // When the user prefers LOCAL OCR and has installed language
+                // data, source it from userData (truly offline, no per-run
+                // jsdelivr re-download). Otherwise behave exactly as before
+                // (tesseract auto-downloads 'eng+ara' from its CDN).
+                let worker;
+                const installedLangs = offlineManager.getInstalledOcrLangs();
+                if (offlineManager.getPdfOcrMode() === 'local' && installedLangs.length > 0) {
+                    worker = await createWorker(installedLangs.join('+'), 1, {
+                        langPath: offlineManager.getOcrLangPath(),
+                        cacheMethod: 'none',
+                    });
+                } else {
+                    worker = await createWorker('eng+ara');
+                }
                 let ocrText = '';
                 // Render each page as image and OCR (max 10 pages to avoid timeout)
                 const pagesToOcr = Math.min(pageCount, 10);

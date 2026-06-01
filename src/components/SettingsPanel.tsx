@@ -33,6 +33,7 @@ import {
 import clsx, { type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { AgentSettings } from './AgentSettings';
+import { OfflineModelsPanel } from './OfflineModelsPanel';
 import { useLocale, type Locale } from '../i18n/strings';
 
 const cn = (...inputs: ClassValue[]) => twMerge(clsx(inputs));
@@ -188,7 +189,7 @@ export function SettingsPanel({ onClose, settings, auth, t }: Props) {
                     {section === 'voice' && <VoiceSection settings={settings} tx={tx} />}
                     {section === 'power' && <PowerButtonSection settings={settings} tx={tx} />}
                     {section === 'clipboard' && <ClipboardSection tx={tx} />}
-                    {section === 'canvas' && <VaultSection tx={tx} />}
+                    {section === 'canvas' && <div className="flex flex-col gap-6"><VaultSection tx={tx} /><OfflineModelsPanel tx={tx} /></div>}
                     {section === 'privacy' && <PrivacySection settings={settings} tx={tx} />}
                     {section === 'agent' && <AgentSection tx={tx} />}
                     {section === 'about' && <AboutSection tx={tx} />}

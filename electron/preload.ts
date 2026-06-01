@@ -126,6 +126,21 @@ contextBridge.exposeInMainWorld('electron', {
         setDefaultPath: (p: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('vault:set-default-path', p),
         chooseFolder: (): Promise<string | null> => ipcRenderer.invoke('vault:choose-folder'),
     },
+    // Previously-dead call (useSettings.ts) — now has a real handler.
+    setPdfOcrMode: (mode: 'gemini' | 'local'): Promise<{ ok: boolean }> => ipcRenderer.invoke('offline:set-pdf-ocr-mode', mode),
+    // On-demand offline models (OCR data here; STT weights fetched renderer-side).
+    offline: {
+        list: (): Promise<any[]> => ipcRenderer.invoke('offline:list'),
+        install: (id: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('offline:install', id),
+        remove: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('offline:remove', id),
+        getOcrLangs: (): Promise<string[]> => ipcRenderer.invoke('offline:get-ocr-langs'),
+        setPdfOcrMode: (mode: 'gemini' | 'local'): Promise<{ ok: boolean }> => ipcRenderer.invoke('offline:set-pdf-ocr-mode', mode),
+        onProgress: (cb: (p: any) => void): (() => void) => {
+            const l = (_e: any, p: any) => cb(p);
+            ipcRenderer.on('offline:progress', l);
+            return () => ipcRenderer.removeListener('offline:progress', l);
+        },
+    },
     onWindowResizing: (callback: (isResizing: boolean) => void) => {
         const listener = (_: any, isResizing: boolean) => callback(isResizing);
         ipcRenderer.on('window-resizing', listener);
