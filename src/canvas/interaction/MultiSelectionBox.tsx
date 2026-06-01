@@ -1,8 +1,10 @@
 import React, { useRef } from 'react';
-import { RotateCw } from 'lucide-react';
+import { RotateCw, ArrowRight } from 'lucide-react';
 import { useCanvasStore } from '../state/canvasStore';
 import { getSelectionBBox } from './scaleSelection';
 import { refitContainers, collectAffectedParents } from '../items/containerFit';
+import { newId, type Connection } from '../items/types';
+import { t } from '../../i18n/strings';
 
 // Outer bounding box that wraps the entire multi-selection (items + lines +
 // strokes). Renders only when 2+ entities are selected. All eight handles
@@ -650,6 +652,59 @@ export function MultiSelectionBox() {
                     />
                 );
             })}
+            {/* "Link" pill — when EXACTLY two items (no lines/strokes) are
+                selected, one click connects them with a real arrow. The
+                no-typing path for nearby cards (the type-a-name picker handles
+                far ones). Sits BELOW the frame so it can't collide with the
+                rotate handle above. Screen-constant via /surfaceZoom. */}
+            {state.selectedIds.length === 2 && state.selectedLineIds.length === 0 && state.selectedStrokeIds.length === 0 && (() => {
+                const [fromId, toId] = state.selectedIds;
+                const alreadyLinked = Object.values(state.connections).some(
+                    c => (c.fromId === fromId && c.toId === toId) || (c.fromId === toId && c.toId === fromId));
+                const pillH = 22 / surfaceZoom;
+                const gap = 12 / surfaceZoom;
+                return (
+                    <div
+                        onPointerDown={(e) => { e.stopPropagation(); }}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (!fromId || !toId || fromId === toId) return;
+                            if (Object.values(state.connections).some(c => c.fromId === fromId && c.toId === toId)) return;
+                            const conn: Connection = {
+                                id: newId('conn'), fromId, toId, label: '',
+                                color: state.color, width: 2, arrowHead: true, style: 'solid', createdBy: 'user',
+                            };
+                            commit({ type: 'ADD_CONNECTION', connection: conn });
+                        }}
+                        title={alreadyLinked ? '' : t('canvas.link.label')}
+                        style={{
+                            position: 'absolute',
+                            left: boxX + boxW / 2,
+                            top: boxY + boxH + gap,
+                            transform: 'translateX(-50%)',
+                            height: pillH,
+                            padding: `0 ${10 / surfaceZoom}px`,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 5 / surfaceZoom,
+                            background: alreadyLinked ? 'rgba(16,185,129,0.25)' : '#10b981',
+                            color: alreadyLinked ? 'rgba(255,255,255,0.6)' : 'white',
+                            border: `${stroke}px solid rgba(10,10,15,0.85)`,
+                            borderRadius: pillH / 2,
+                            fontSize: 12 / surfaceZoom,
+                            fontWeight: 600,
+                            whiteSpace: 'nowrap',
+                            cursor: alreadyLinked ? 'default' : 'pointer',
+                            pointerEvents: 'auto',
+                            zIndex: 13,
+                            boxShadow: `0 0 0 ${shadowWorld}px rgba(16,185,129,0.22)`,
+                        }}
+                    >
+                        <ArrowRight size={11 / surfaceZoom} />
+                        {alreadyLinked ? '✓' : t('canvas.link.label')}
+                    </div>
+                );
+            })()}
         </>
     );
 }

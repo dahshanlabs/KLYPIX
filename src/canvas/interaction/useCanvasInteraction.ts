@@ -1990,8 +1990,38 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
         scheduleCommit();
     }, [dispatch, opts?.worldRef, flushLiveTransform, scheduleCommit]);
 
+    // Complete a pending connection by TARGET ID rather than a second canvas
+    // click — lets the "Connect to… (type a name)" picker link to a far / off-
+    // screen card. Mirrors the second-click path (onPointerDown connect tool)
+    // exactly: same Connection shape, same commit (one undo step), same
+    // return-to-select. Dedups same-direction arrows.
+    const connectTo = useCallback((targetId: string) => {
+        const fromId = connectPendingId;
+        if (!fromId || !targetId || fromId === targetId) return;
+        const s = stateRef.current;
+        const dup = Object.values(s.connections).some(c => c.fromId === fromId && c.toId === targetId);
+        if (!dup) {
+            const conn: Connection = {
+                id: newId('conn'),
+                fromId,
+                toId: targetId,
+                label: '',
+                color: s.color,
+                width: 2, // matches CONNECTION_DEFAULT_WIDTH in the click path
+                arrowHead: true,
+                style: 'solid',
+                createdBy: 'user',
+            };
+            commit({ type: 'ADD_CONNECTION', connection: conn });
+        }
+        setConnectPendingId(null);
+        setConnectHoverWorld(null);
+        dispatch({ type: 'SET_TOOL', tool: 'select' });
+    }, [connectPendingId, commit, dispatch]);
+
     return {
         setSurfaceRef,
+        connectTo,
         onPointerDown,
         onPointerMove,
         onPointerUp,

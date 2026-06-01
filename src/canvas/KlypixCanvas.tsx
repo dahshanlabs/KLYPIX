@@ -48,6 +48,7 @@ import { TabBar, type TabMeta } from './tabs/TabBar';
 import { Minimap } from './layout/Minimap';
 import type { EyesState } from './interaction/CanvasEyes';
 import { SearchPanel } from './interaction/SearchPanel';
+import { ConnectPicker } from './interaction/ConnectPicker';
 import { OutlineSidebar } from './layout/OutlineSidebar';
 import { LayersPanel } from './layout/LayersPanel';
 import { PresentationMode } from './layout/PresentationMode';
@@ -384,7 +385,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     const worldRef = useRef<HTMLDivElement | null>(null);
     const {
         setSurfaceRef, onPointerDown, onPointerMove, onPointerUp, onWheel,
-        marqueeRect, connectPendingId, connectHoverWorld, spaceHeld, snapGuides, toast: hintToast, cancelConnect,
+        marqueeRect, connectPendingId, connectHoverWorld, spaceHeld, snapGuides, toast: hintToast, cancelConnect, connectTo,
     } = useCanvasInteraction({
         onChildOverflow: (info) => setDeparentPrompt(info),
         onContainerAdopt: (info) => setAdoptPrompt(info),
@@ -3151,6 +3152,19 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
 
             {/* Panels */}
             <SearchPanel open={searchOpen} onClose={() => setSearchOpen(false)} />
+
+            {/* Connect tool with a pending source → "Connect to… (type a name)"
+                picker, so you can link to a far / off-screen card by name
+                instead of clicking it. Clicking a card on canvas still works. */}
+            {connectPendingId && state.items[connectPendingId] && (
+                <ConnectPicker
+                    sourceId={connectPendingId}
+                    items={state.items}
+                    order={state.order}
+                    onPick={(targetId) => connectTo(targetId)}
+                    onCancel={() => cancelConnect()}
+                />
+            )}
             {/* Phase 21: per-canvas DM panel. Mounted only when there's a
                 cloud share so chat is meaningful — collab without a blob
                 can't have peers anyway. */}
