@@ -125,6 +125,7 @@ contextBridge.exposeInMainWorld('electron', {
         getDefaultPath: (): Promise<string> => ipcRenderer.invoke('vault:get-default-path'),
         setDefaultPath: (p: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('vault:set-default-path', p),
         chooseFolder: (): Promise<string | null> => ipcRenderer.invoke('vault:choose-folder'),
+        listCanvases: (): Promise<Array<{ filePath: string; mtimeMs: number }>> => ipcRenderer.invoke('vault:list-canvases'),
     },
     // Previously-dead call (useSettings.ts) — now has a real handler.
     setPdfOcrMode: (mode: 'gemini' | 'local'): Promise<{ ok: boolean }> => ipcRenderer.invoke('offline:set-pdf-ocr-mode', mode),

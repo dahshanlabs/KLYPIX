@@ -448,9 +448,11 @@ async function runQuery(rawInput: string) {
             } else {
                 const results = await (out as Promise<PaletteResult[]>);
                 if (signal.aborted) return;
-                if (results.length === 0) return;
+                // Empty → CLEAR this provider's slot (don't leave stale rows
+                // from a previous query, e.g. a canvas name that now matches
+                // nothing). Only this provider's rows are affected.
                 const next = new Map(state.bySource);
-                next.set(p.id, results);
+                if (results.length === 0) next.delete(p.id); else next.set(p.id, results);
                 state.bySource = next;
                 rebuildRanked();
             }

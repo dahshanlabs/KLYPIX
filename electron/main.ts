@@ -1949,6 +1949,33 @@ ipcMain.handle('vault:choose-folder', async () => {
     return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0];
 });
 
+// Scan the vault folder for .klypix/.any files so the Ctrl+O switcher can find
+// ANY canvas by name — not just ones already opened (VSCode/Obsidian-style).
+// Lightweight: returns paths + mtime only (titles come from the content index
+// when the user searches). Skips hidden/heavy dirs; capped + depth-limited.
+const VAULT_SCAN_SKIP = new Set(['node_modules', '.git', '.cache', 'AppData', '$Recycle.Bin', 'Windows', 'dist', 'release']);
+ipcMain.handle('vault:list-canvases', () => {
+    const root = getVaultPath();
+    if (!root || !fs.existsSync(root)) return [];
+    const out: Array<{ filePath: string; mtimeMs: number }> = [];
+    const visit = (dir: string, depth: number) => {
+        if (out.length >= 400 || depth > 6) return;
+        let entries: fs.Dirent[];
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of entries) {
+            if (out.length >= 400) return;
+            if (e.name.startsWith('.') || VAULT_SCAN_SKIP.has(e.name)) continue;
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) visit(full, depth + 1);
+            else if (e.isFile() && /\.(klypix|any)$/i.test(e.name)) {
+                try { out.push({ filePath: full, mtimeMs: fs.statSync(full).mtimeMs }); } catch { /* skip */ }
+            }
+        }
+    };
+    visit(root, 0);
+    return out;
+});
+
 // ── Offline models (on-demand OCR/STT install; nothing bundled) ──
 ipcMain.handle('offline:list', () => offlineManager.getCatalogWithState());
 ipcMain.handle('offline:install', (_e: any, id: string) =>

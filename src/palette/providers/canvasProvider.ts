@@ -56,6 +56,30 @@ function switcherResult(c: RecentCanvas): PaletteResult {
 // Content indexing now lives in ./vaultIndexCache (shared with the dashboard
 // vault tag index) so each .klypix is parsed at most once across both.
 
+// Vault-folder scan, cached briefly — lets the switcher find ANY canvas in the
+// user's vault by name (not just ones already opened), VSCode/Obsidian-style.
+let vaultCache: { ts: number; list: RecentCanvas[] } | null = null;
+async function getVaultCanvases(): Promise<RecentCanvas[]> {
+    if (vaultCache && Date.now() - vaultCache.ts < 8000) return vaultCache.list;
+    try {
+        const raw: Array<{ filePath: string; mtimeMs: number }> = await (window as any).electron?.vault?.listCanvases?.();
+        const list: RecentCanvas[] = Array.isArray(raw)
+            ? raw.map(r => ({ filePath: r.filePath, title: fileName(r.filePath).replace(/\.(klypix|any)$/i, ''), lastOpened: r.mtimeMs || 0 }))
+            : [];
+        vaultCache = { ts: Date.now(), list };
+        return list;
+    } catch { return vaultCache?.list || []; }
+}
+
+/** Recents ∪ vault-folder canvases, deduped (recents win — they carry the real
+ *  title + last-opened time). */
+async function getAllCanvases(): Promise<RecentCanvas[]> {
+    const recents = listRecentCanvases();
+    const seen = new Set(recents.map(r => r.filePath));
+    const vault = (await getVaultCanvases()).filter(v => !seen.has(v.filePath));
+    return [...recents, ...vault];
+}
+
 function snippet(text: string, at: number, qlen: number): string {
     const start = Math.max(0, at - 24);
     const end = Math.min(text.length, at + qlen + 36);
@@ -73,20 +97,24 @@ export const canvasProvider: PaletteProvider = {
 
     async query(input: string, ctx: PaletteProviderContext): Promise<PaletteResult[]> {
         const q = input.trim().toLowerCase();
-        const recents = listRecentCanvases();
-        if (!q) return recents.slice(0, MAX_SWITCHER).map(switcherResult);
+        if (!q) return listRecentCanvases().slice(0, MAX_SWITCHER).map(switcherResult);
+
+        // Search recents AND every canvas in the vault folder — so a canvas is
+        // findable by name even if it's never been opened.
+        const all = await getAllCanvases();
+        if (ctx.signal.aborted) return [];
 
         // 1. name / filename matches (the switcher)
-        const nameHits = recents.filter(c =>
-            (c.title || '').toLowerCase().includes(q) || fileName(c.filePath).toLowerCase().includes(q));
+        const nameHits = all.filter(c =>
+            (c.title || '').toLowerCase().includes(q) || fileName(c.filePath).toLowerCase().includes(q)).slice(0, 12);
         const matchedPaths = new Set(nameHits.map(c => c.filePath));
         const results: PaletteResult[] = nameHits.map(switcherResult);
 
-        // 2. content search across the OTHER canvases (needs 2+ chars). Only
-        // the most-recent MAX_INDEXED are indexed so a huge history doesn't
-        // turn a keystroke into dozens of file reads.
+        // 2. content search across the OTHER canvases (needs 2+ chars). Only the
+        // first MAX_INDEXED are read so a big vault doesn't turn a keystroke
+        // into hundreds of file reads (the shared cache makes repeats free).
         if (q.length < 2) return results;
-        const entries = await Promise.all(recents.slice(0, MAX_INDEXED).map(c => getOrIndexCanvas(c, ctx.signal)));
+        const entries = await Promise.all(all.slice(0, MAX_INDEXED).map(c => getOrIndexCanvas(c, ctx.signal)));
         if (ctx.signal.aborted) return results;
 
         let total = 0;
