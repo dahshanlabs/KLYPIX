@@ -391,6 +391,13 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         onContainerAdopt: (info) => setAdoptPrompt(info),
         worldRef,
     });
+    // Leaving the connect tool cancels any pending connection — so the
+    // Connect-to picker AND the rubber-band line both vanish when the user
+    // switches tools (they only mean something while connecting).
+    useEffect(() => {
+        if (state.tool !== 'connect' && connectPendingId) cancelConnect();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [state.tool]);
     // Auto-dismiss the deparent banner ~5 s after it appears. Same effect
     // as clicking "No" — the auto-grow is already committed, so doing
     // nothing means "keep the new layout."
@@ -3156,7 +3163,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             {/* Connect tool with a pending source → "Connect to… (type a name)"
                 picker, so you can link to a far / off-screen card by name
                 instead of clicking it. Clicking a card on canvas still works. */}
-            {connectPendingId && state.items[connectPendingId] && (
+            {connectPendingId && state.tool === 'connect' && state.items[connectPendingId] && (
                 <ConnectPicker
                     sourceId={connectPendingId}
                     items={state.items}
