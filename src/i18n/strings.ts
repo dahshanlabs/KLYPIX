@@ -514,6 +514,7 @@ const strings: Strings = {
     'panel.dashed': { en: 'dashed', ar: 'متقطّع' },
     'panel.solid': { en: 'solid', ar: 'متّصل' },
     'panel.background': { en: 'Background', ar: 'الخلفية' },
+    'panel.all_settings': { en: 'All settings…', ar: 'كل الإعدادات…' },
     'panel.grid': { en: 'Grid', ar: 'الشبكة' },
     'panel.grid_off': { en: 'Off', ar: 'إيقاف' },
     'panel.grid_lines': { en: 'Lines', ar: 'خطوط' },

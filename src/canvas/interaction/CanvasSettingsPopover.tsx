@@ -245,6 +245,20 @@ export function CanvasSettingsPopover() {
                             />
                         </label>
                     </div>
+
+                    {/* Gateway to the full app Settings (account, hotkeys, AI,
+                        voice, privacy, and Canvas → vault folder + offline
+                        models) — the same panel the chat cog opens, via the
+                        existing klypix:open-settings event. The popover above
+                        stays the quick path for canvas VIEW settings. */}
+                    <div className="h-px bg-white/5" />
+                    <button
+                        onClick={() => { setOpen(false); window.dispatchEvent(new CustomEvent('klypix:open-settings')); }}
+                        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 hover:text-white text-[11px] font-medium transition-colors cursor-pointer"
+                    >
+                        <Settings size={12} />
+                        {t('panel.all_settings')}
+                    </button>
                 </div>
             )}
         </div>
