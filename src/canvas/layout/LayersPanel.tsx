@@ -58,7 +58,9 @@ export function LayersPanel({ open, onClose }: Props) {
     if (!open) return null;
 
     return (
-        <div ref={panelRef} data-canvas-ui="1" className="absolute top-3 right-3 z-30 no-drag w-[200px] rounded-xl bg-[#12121a]/95 border border-white/10 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] overflow-hidden animate-in slide-in-from-right-2 fade-in duration-150">
+        /* top-[76px] clears the full-width top toolbar, which shares the
+           top-3 anchor — otherwise this panel's header renders behind it. */
+        <div ref={panelRef} data-canvas-ui="1" className="absolute top-[76px] right-3 z-30 no-drag w-[200px] rounded-xl bg-[#12121a]/95 border border-white/10 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] overflow-hidden animate-in slide-in-from-right-2 fade-in duration-150">
             <div className="px-3 py-2 border-b border-white/5 flex items-center gap-2">
                 <span className="text-[10px] font-bold uppercase tracking-widest text-white/60 flex-1">{t('canvas_top.layers')}</span>
                 <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-white/40"><X size={12} /></button>
