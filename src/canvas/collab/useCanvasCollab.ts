@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import { setRealtimeAuth } from './supabaseRealtimeClient';
+import { setRealtimeAuth, isCollabPrivateChannels } from './supabaseRealtimeClient';
 import { acquireCanvasChannel } from './channelRegistry';
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -301,17 +301,23 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
 
         const myName = nameRef.current || displayName || 'Guest';
 
-        // Phase 12: hand the current Supabase access token to the Realtime
-        // client so it can authenticate channel joins. Required once the
-        // server-side channel policy flips to `private: true` (until then
-        // it's a no-op for the channel but still primes the connection).
-        (async () => {
-            try {
-                const electronAuth: any = (window as any).electron?.auth;
-                const res = await electronAuth?.getAccessToken?.();
-                setRealtimeAuth(res?.token ?? null);
-            } catch { /* signed out / IPC missing → leave unauthenticated */ }
-        })();
+        // Realtime auth — ONLY for private channels. On a PUBLIC channel the
+        // long-lived anon key already authorizes the connection; applying a
+        // user JWT here is unnecessary AND harmful: if that token is EXPIRED
+        // (e.g. a PC signed in long enough for it to lapse) the Realtime server
+        // errors/closes the whole socket → CHANNEL_ERROR → CLOSED, so that PC
+        // silently stops broadcasting presence (cursors/peers vanish) while a
+        // freshly-signed-in peer stays connected. channelRegistry primes auth
+        // via primeRealtimeAuth() when private mode is on; don't double it.
+        if (isCollabPrivateChannels()) {
+            (async () => {
+                try {
+                    const electronAuth: any = (window as any).electron?.auth;
+                    const res = await electronAuth?.getAccessToken?.();
+                    setRealtimeAuth(res?.token ?? null);
+                } catch { /* signed out / IPC missing → leave unauthenticated */ }
+            })();
+        }
 
         // Phase 21+: hydrate persistent DM history. Late joiners now see
         // the conversation that happened before they opened the canvas;

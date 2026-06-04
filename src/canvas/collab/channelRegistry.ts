@@ -35,6 +35,9 @@ interface ChannelEntry {
     statusListeners: Set<(status: string) => void>;
     deviceId: string;
     currentStatus: string | null;
+    /** Cancels any pending auto-reconnect (set up in acquireCanvasChannel,
+     *  called on release so a deliberate teardown doesn't reconnect). */
+    clearReconnect?: () => void;
 }
 
 const channels = new Map<string, ChannelEntry>();
@@ -98,12 +101,34 @@ export function acquireCanvasChannel(blobId: string, statusCb?: (status: string)
         channels.set(blobId, entry);
         // Subscribe ONCE — all consumers share this single subscription.
         const localEntry = entry;
-        const doSubscribe = () => channel.subscribe((status) => {
+        let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+        let attempt = 0;
+        localEntry.clearReconnect = () => { if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; } };
+        const onStatus = (status: string) => {
             localEntry.currentStatus = status;
+            if (status === 'SUBSCRIBED') attempt = 0;
+            // supabase-js does NOT auto-rejoin after a channel error/close. Without
+            // this the channel stays dark forever: op-sync may limp on, but presence
+            // /cursors vanish (observed: a peer with a stale realtime token hit
+            // CHANNEL_ERROR → CLOSED and never came back). Re-subscribe the SAME
+            // channel (its .on bindings persist) with capped backoff — but ONLY while
+            // this entry is still the live, referenced one, so a deliberate release
+            // (refCount 0 / entry replaced) never triggers a phantom reconnect.
+            if ((status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED')
+                && channels.get(blobId) === localEntry && localEntry.refCount > 0 && !reconnectTimer) {
+                const delay = Math.min(1000 * 2 ** attempt, 15000);
+                attempt++;
+                reconnectTimer = setTimeout(() => {
+                    reconnectTimer = null;
+                    if (channels.get(blobId) !== localEntry || localEntry.refCount <= 0) return;
+                    try { localEntry.channel.subscribe(onStatus); } catch { /* will retry on next status */ }
+                }, delay);
+            }
             for (const cb of localEntry.statusListeners) {
                 try { cb(status); } catch { /* swallow per-listener errors */ }
             }
-        });
+        };
+        const doSubscribe = () => channel.subscribe(onStatus);
         if (usePrivate) {
             // Private channels need a valid JWT applied to the Realtime client
             // BEFORE subscribe so RLS resolves auth.uid(). Prime it first, then
@@ -130,6 +155,7 @@ export function acquireCanvasChannel(blobId: string, statusCb?: (status: string)
         if (statusCb) e.statusListeners.delete(statusCb);
         e.refCount--;
         if (e.refCount <= 0) {
+            e.clearReconnect?.();   // stop any pending reconnect before teardown
             try { e.channel.untrack(); } catch { /* ignored */ }
             try { getRealtimeClient().removeChannel(e.channel); } catch { /* ignored */ }
             channels.delete(blobId);
