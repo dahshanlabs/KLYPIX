@@ -17,7 +17,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { appendToKlypix } from './klypix-format.mjs';
+import { appendToKlypix, atomicWrite } from './klypix-format.mjs';
 
 const BRAIN = path.resolve('brain.klypix');
 const STATE = path.resolve('.claude', 'brain-capture-state.json');
@@ -81,7 +81,7 @@ async function main() {
 
     try {
         const buf = await appendToKlypix(fs.readFileSync(BRAIN), { cards: newCards.map(text => ({ text, color: '#8b9cff' })) });
-        fs.writeFileSync(BRAIN, buf);
+        await atomicWrite(BRAIN, buf);
         writeState(seen);
         process.stderr.write(`[brain-capture] appended ${newCards.length} decision(s) to brain.klypix\n`);
     } catch (e) {

@@ -18,7 +18,7 @@
 //   a column just to the right of the current content, stacked on top.
 
 import fs from 'fs';
-import { appendToKlypix } from './klypix-format.mjs';
+import { appendToKlypix, atomicWrite } from './klypix-format.mjs';
 
 const args = process.argv.slice(2);
 const file = args.find(a => !a.startsWith('--'));
@@ -37,7 +37,7 @@ try {
     buf = await appendToKlypix(fs.readFileSync(file), addition);
 } catch (e) { console.error(e.message); process.exit(1); }
 
-fs.writeFileSync(file, buf);
+await atomicWrite(file, buf);
 const cardCount = Array.isArray(addition.cards) ? addition.cards.length : 0;
 const connCount = Array.isArray(addition.connections) ? addition.connections.length : 0;
 console.log(`Appended ${cardCount} card(s), ${connCount} connection(s) to ${file}.`);

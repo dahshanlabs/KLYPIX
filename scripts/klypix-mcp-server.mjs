@@ -21,7 +21,7 @@ import path from 'path';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { parseKlypix, buildKlypix, appendToKlypix, structToMarkdown } from './klypix-format.mjs';
+import { parseKlypix, buildKlypix, appendToKlypix, structToMarkdown, atomicWrite } from './klypix-format.mjs';
 
 // IMPORTANT: stdout is the JSON-RPC channel. Never console.log — only stderr.
 const log = (...a) => console.error('[klypix-mcp]', ...a);
@@ -163,7 +163,7 @@ server.registerTool('create_canvas', {
         const buf = await buildKlypix({ title, cards, connections });
         const name = filename ? safeName(filename.replace(IS_CANVAS, '')) : safeName(title);
         const out = path.join(VAULT, name);
-        fs.writeFileSync(out, buf);
+        await atomicWrite(out, buf);
         return { content: [{ type: 'text', text: `Created ${out} — ${cards.length} cards, ${(connections || []).length} connections. Open it in KLYPIX (Canvas → Open).` }] };
     } catch (e) {
         return { content: [{ type: 'text', text: `Create failed: ${e.message}` }], isError: true };
@@ -183,7 +183,7 @@ server.registerTool('add_to_canvas', {
     if (!file) return { content: [{ type: 'text', text: `Canvas not found: ${canvas}` }], isError: true };
     try {
         const buf = await appendToKlypix(fs.readFileSync(file), { cards, connections });
-        fs.writeFileSync(file, buf);
+        await atomicWrite(file, buf);
         return { content: [{ type: 'text', text: `Added ${cards.length} card(s) to ${path.relative(VAULT, file)}. Reopen the canvas in KLYPIX to see them.` }] };
     } catch (e) {
         return { content: [{ type: 'text', text: `Add failed: ${e.message}` }], isError: true };

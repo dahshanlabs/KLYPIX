@@ -8,6 +8,7 @@
 
 import JSZip from 'jszip';
 import path from 'path';
+import fs from 'fs';
 
 export const WIKILINK = /\[\[([^[\]]+)\]\]/g;
 export const TAG = /(^|\s)(#[a-zA-Z][\w-]*)/g;
@@ -33,6 +34,22 @@ export function cardTitle(item) {
 }
 // v4 shards item files by the first 2 hex chars of the id's random part.
 export const shard = (id) => id.replace(/^[a-z]+[_:]/i, '').toLowerCase().slice(0, 2).padStart(2, '_');
+
+/**
+ * Atomically persist a .klypix buffer: verify it round-trips, write a sibling
+ * .tmp, then rename over the target. A concurrent reader (e.g. the shared-brain
+ * watcher) therefore never parses a half-written ZIP, and a failed/garbage
+ * write leaves the previous good file intact. Use this for ALL brain writes
+ * instead of fs.writeFileSync.
+ */
+export async function atomicWrite(filePath, buf) {
+    try { await parseKlypix(buf); }
+    catch (e) { throw new Error('refusing to write an unparseable .klypix (' + path.basename(filePath) + '): ' + (e?.message || e)); }
+    const tmp = filePath + '.tmp-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    fs.writeFileSync(tmp, buf);
+    try { fs.renameSync(tmp, filePath); }    // Node uses MoveFileEx(REPLACE_EXISTING) on Windows → overwrites atomically
+    catch (e) { try { fs.rmSync(tmp); } catch { /* */ } throw e; }
+}
 
 /**
  * Parse a .klypix/.any buffer into a structured object + the loaded zip (so
@@ -294,7 +311,12 @@ export async function appendToKlypix(buffer, addition) {
         zip.file('manifest.json', JSON.stringify(manifest));
     }
     zip.file('canvas.json', JSON.stringify(canvas));
-    return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    const out = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    // Parse-resilience: never return a buffer that doesn't round-trip — the
+    // caller keeps the last-known-good file rather than writing corruption.
+    try { await parseKlypix(out); }
+    catch (e) { throw new Error('append produced an unparseable .klypix — aborting to protect the brain: ' + (e?.message || e)); }
+    return out;
 }
 
 /**

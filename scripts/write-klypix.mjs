@@ -16,7 +16,7 @@
 //   supports | questions | costs | blocks.
 
 import fs from 'fs';
-import { buildKlypix } from './klypix-format.mjs';
+import { buildKlypix, atomicWrite } from './klypix-format.mjs';
 
 const args = process.argv.slice(2);
 const specPath = args.find(a => !a.startsWith('--'));
@@ -34,7 +34,7 @@ try {
 } catch (e) { console.error(e.message); process.exit(2); }
 
 const outPath = outArg || `${(spec.title || 'untitled').replace(/[^\w\- ]+/g, '').trim() || 'untitled'}.klypix`;
-fs.writeFileSync(outPath, buf);
+await atomicWrite(outPath, buf);
 const cardCount = spec.cards.length;
 const connCount = Array.isArray(spec.connections) ? spec.connections.length : 0;
 console.log(`Wrote ${outPath} — ${cardCount} cards, ${connCount} connections.`);
