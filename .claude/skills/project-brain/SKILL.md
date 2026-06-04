@@ -25,7 +25,24 @@ You get every card, the connection graph, `[[links]]`, and `#tags`. Reason over
 it as the current state before planning new work — it tells you what's shipped,
 what's pending, what was decided and why.
 
-## Update it (after a real decision / shipped piece / discovery)
+> Auto-read: a `SessionStart` hook already injects this each session, so the
+> brain is usually in context without you running anything.
+
+## Capture decisions automatically — the 🧠 BRAIN marker (preferred)
+
+When you make a real decision / finish a meaningful piece / discover something
+important, just **end your message with a marker line**:
+
+```
+🧠 BRAIN [Area]: <one concise decision or finding>
+```
+
+A `Stop` hook (`scripts/brain-capture.mjs`) harvests these from the transcript
+and appends them to `brain.klypix`, deduped. You curate (only mark what
+matters); the hook writes. Use it sparingly — real decisions/milestones, not
+routine steps. `[Area]` is optional and becomes a `#tag`.
+
+## Update it manually (when you want a connected/heading card)
 
 Append new cards — connected to what's already there — with the CLI (twin of the
 MCP `add_to_canvas`; preserves existing positions):

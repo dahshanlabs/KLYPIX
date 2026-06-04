@@ -18,19 +18,30 @@ Backed by Supabase for auth/licensing, with an electron-updater rollout pipeline
 ## Project Brain — `brain.klypix` (read this each session)
 
 This project keeps a **living spatial memory** at [brain.klypix](brain.klypix) —
-a KLYPIX canvas of the project's areas, decisions, and open questions, wired
-together with arrows. It's the shared human↔agent brain (the spatial version of
-an Obsidian vault), and it persists across sessions.
+a KLYPIX canvas of the project's areas (titled containers), decisions, and open
+questions, wired together with arrows. It's the shared human↔agent brain (the
+spatial version of an Obsidian vault), and it persists across sessions.
 
-- **At the start of substantial work**, read it to recall where things stand:
-  `node scripts/read-klypix.mjs brain.klypix`
-- **After a real decision / shipped milestone / important discovery**, append it
-  as a connected card (curated, not a log dump):
-  `... | node scripts/append-klypix.mjs brain.klypix`
-- Full conventions + card taxonomy live in the **`project-brain`** skill
-  (`.claude/skills/project-brain/`). The same engine powers read-klypix /
-  write-klypix and the MCP server ([docs/KLYPIX_MCP.md](docs/KLYPIX_MCP.md)),
-  which exposes these tools to any MCP client (Claude Desktop/Code/cowork).
+**It is now (mostly) automatic — two hooks in `.claude/settings.json`:**
+- **Auto-read** — a `SessionStart` hook runs `read-klypix brain.klypix` and
+  injects it into context, so **every session already knows the project state**
+  (you don't have to read it manually).
+- **Auto-capture** — when you make a real decision/finding, **emit a line**:
+  `🧠 BRAIN [Area]: <one-line decision>`. A `Stop` hook
+  (`scripts/brain-capture.mjs`) harvests those markers and appends them to
+  `brain.klypix`, deduped. So capture is automatic **and** curated — you decide
+  what's worth a marker; the hook does the writing. Use markers sparingly, for
+  real decisions/milestones/discoveries — not routine steps.
+
+Manual tools (still available):
+- Read: `node scripts/read-klypix.mjs brain.klypix`
+- Append a card: `... | node scripts/append-klypix.mjs brain.klypix`
+- Rebuild the rich map (areas → containers): `buildKlypixMap` in
+  `scripts/klypix-format.mjs` (regenerate periodically to re-organize captured
+  decisions into areas).
+- Full conventions + card taxonomy: the **`project-brain`** skill
+  (`.claude/skills/project-brain/`). Same engine powers the MCP server
+  ([docs/KLYPIX_MCP.md](docs/KLYPIX_MCP.md)).
 - The human opens `brain.klypix` in KLYPIX (Canvas → Open) to *see* the project.
 
 ## Build & Development Commands

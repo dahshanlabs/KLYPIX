@@ -23,6 +23,7 @@ export function extractTags(text) {
     return out;
 }
 export function cardTitle(item) {
+    if (item?.type === 'container') return item.title || null;
     if (item?.type !== 'text') return null;
     for (const line of String(item.content ?? '').split('\n')) {
         const t = line.trim();
@@ -293,6 +294,123 @@ export async function appendToKlypix(buffer, addition) {
         zip.file('manifest.json', JSON.stringify(manifest));
     }
     zip.file('canvas.json', JSON.stringify(canvas));
+    return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+}
+
+/**
+ * Build a RICH "map" .klypix: areas become titled containers, their cards
+ * stack inside, connections draw across. Produces a real spatial board (used by
+ * the project brain) rather than a flat grid. Spec:
+ *   { title, areas: [{ title, color?, cards: [{text, heading?, color?}] }],
+ *     connections: [{ from, to, relationship?, label? }] }   // from/to by card title
+ */
+export async function buildKlypixMap(spec) {
+    if (!spec || !Array.isArray(spec.areas) || spec.areas.length === 0) {
+        throw new Error('map spec needs a non-empty "areas" array');
+    }
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+    const rand = () => Math.random().toString(36).slice(2, 10);
+
+    const TITLE_BAR = 44, PAD = 16, CARD_GAP = 12, CARD_W = 280, FONT = 15, LINE_H = FONT * 1.4;
+    const AREA_W = CARD_W + PAD * 2;
+    const COL_GAP = 48, ROW_GAP = 48, START = 80;
+    const cols = Math.max(1, Math.min(4, Math.ceil(Math.sqrt(spec.areas.length))));
+
+    const positions = {};
+    const order = [];
+    const items = {}; // id -> json
+    const titleToId = new Map(); // card title -> id (for connections)
+    const firstLine = (t) => String(t ?? '').split('\n').map(s => s.trim()).find(Boolean) || '';
+    let z = 0;
+
+    // Shelf-pack areas into rows of `cols`; each row's height = tallest area.
+    let rowTopY = START, rowMaxH = 0, colX = START, colIdx = 0;
+    spec.areas.forEach((area, ai) => {
+        const cards = (area.cards || []).filter(c => c && typeof c.text === 'string' && c.text.trim());
+        // measure card heights
+        const measured = cards.map(c => {
+            const lines = String(c.text).split('\n').length;
+            return Math.max(40, Math.round(lines * LINE_H) + 18);
+        });
+        const innerH = measured.reduce((s, h) => s + h + CARD_GAP, 0);
+        const areaH = TITLE_BAR + PAD + innerH + PAD;
+
+        if (colIdx >= cols) { // new row
+            rowTopY += rowMaxH + ROW_GAP;
+            rowMaxH = 0; colIdx = 0; colX = START;
+        }
+        const ax = colX, ay = rowTopY;
+
+        const ctnId = `ctn_${rand()}_${ai}`;
+        items[ctnId] = {
+            type: 'container', locked: false, createdAt: now, createdBy: 'agent',
+            title: area.title || `Area ${ai + 1}`, collapsed: false, scopeLocked: false,
+            borderColor: area.color || '#10b981',
+        };
+        positions[ctnId] = { x: ax, y: ay, w: AREA_W, h: areaH, zKey: 'a' + String(z).padStart(4, '0'), zIndex: z, parentId: null };
+        order.push(ctnId); z++;
+
+        let cy = ay + TITLE_BAR + PAD;
+        cards.forEach((c, ci) => {
+            const id = `txt_${rand()}_${ai}_${ci}`;
+            const h = measured[ci];
+            items[id] = {
+                type: 'text', locked: false, createdAt: now, createdBy: 'agent',
+                content: String(c.text), fontSize: FONT,
+                color: c.color || '#e8e8ed', border: true,
+                borderColor: c.color || 'rgba(16,185,129,0.35)',
+                fillColor: 'rgba(18,18,26,0.85)',
+                heading: !!c.heading,
+                fontWeight: c.heading ? 'bold' : 'normal', fontStyle: 'normal',
+                textDecoration: 'none', textAlign: 'left', verticalAlign: 'top',
+                fontFamily: 'Thmanyah Sans',
+            };
+            positions[id] = { x: ax + PAD, y: cy, w: CARD_W, h, zKey: 'a' + String(z).padStart(4, '0'), zIndex: z, parentId: ctnId };
+            order.push(id); z++;
+            const t = firstLine(c.text).toLowerCase();
+            if (t && !titleToId.has(t)) titleToId.set(t, id);
+            cy += h + CARD_GAP;
+        });
+
+        rowMaxH = Math.max(rowMaxH, areaH);
+        colX += AREA_W + COL_GAP;
+        colIdx++;
+    });
+
+    // Connections (by card title, across all areas).
+    const REL = new Set(['leads_to', 'depends_on', 'relates_to', 'conflicts_with', 'supports', 'questions', 'costs', 'blocks']);
+    const resolve = (ref) => {
+        if (typeof ref === 'string') return titleToId.get(ref.trim().toLowerCase()) || null;
+        return null;
+    };
+    const connections = (Array.isArray(spec.connections) ? spec.connections : []).map((c, i) => {
+        const fromId = resolve(c.from), toId = resolve(c.to);
+        if (!fromId || !toId || fromId === toId) return null;
+        return {
+            id: `con_${rand()}_${i}`, fromId, toId,
+            relationship: REL.has(c.relationship) ? c.relationship : undefined,
+            label: typeof c.label === 'string' ? c.label : undefined,
+            arrowHead: true, width: 2, color: '#10b981', style: 'solid',
+        };
+    }).filter(Boolean);
+
+    const zip = new JSZip();
+    const manifest = {
+        format: 'klypix', version: 4, schemaVersion: 4, createdAt: nowIso, updatedAt: nowIso,
+        title: spec.title || 'Brain', stats: { itemCount: order.length, assetCount: 0, totalBytes: 0 },
+        sync: { enabled: false, lastSyncRev: null, lastSyncAt: null, deviceId: `dev_${rand()}${rand()}` },
+    };
+    const xs = Object.values(positions);
+    const minX = Math.min(...xs.map(p => p.x)), minY = Math.min(...xs.map(p => p.y));
+    const canvasJson = {
+        version: 4, view: { panX: 120 - minX * 0.55, panY: 120 - minY * 0.55, zoom: 0.55 },
+        order, connections, lines: [], strokes: [], nextGroupNumber: spec.areas.length + 1,
+        positions, settings: { background: '#0a0a0f' },
+    };
+    zip.file('manifest.json', JSON.stringify(manifest));
+    zip.file('canvas.json', JSON.stringify(canvasJson));
+    for (const id of order) zip.file(`items/${shard(id)}/${id}.json`, JSON.stringify(items[id]));
     return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 

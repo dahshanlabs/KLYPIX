@@ -30,3 +30,6 @@ npm-debug.log*
 
 # TS build artifacts
 *.tsbuildinfo
+
+# project-brain local capture state
+.claude/brain-capture-state.json
