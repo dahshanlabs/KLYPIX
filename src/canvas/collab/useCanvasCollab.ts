@@ -217,6 +217,14 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
     // (re)establishes.
     const nameRef = useRef(displayName);
     nameRef.current = displayName;
+    // 2026-06-04 presence-stability fix: hold the latest `active` in a ref so the
+    // channel-lifecycle effect can depend ONLY on [blobId] and never tear the
+    // channel down when `active` flaps (window blur, switching to the chat tab,
+    // a background canvas tab). Tearing down on a transient flap wiped presence
+    // on both ends → no cursors, no collaborator circles even though edits kept
+    // syncing. Now `active` only toggles track()/untrack() on the STABLE channel.
+    const activeRef = useRef(active);
+    activeRef.current = active;
     // Throttle state: last-publish times + queued payloads. The published
     // value is always the freshest one — partial flushes drop intermediate
     // positions, which is what we want for cursor motion.
@@ -361,19 +369,11 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
             if (cancelled) return;
             if (status === 'SUBSCRIBED') {
                 setConnected(true);
-                // Only broadcast our presence when the tab is active.
-                if (active) {
-                    const trackName = nameRef.current || displayName || 'Guest';
-                    console.log(`[collab] channel SUBSCRIBED — track() as ${trackName} (user=${userId ? userId.slice(0, 8) + '…' : 'provisional'}) on device ${deviceId.slice(0, 12)}…`);
-                    void channel.track({
-                        user_id: userId ?? null,
-                        device_id: deviceId,
-                        display_name: trackName,
-                        joined_at: Date.now(),
-                    } satisfies PresenceRow);
-                } else {
-                    console.log(`[collab] channel SUBSCRIBED but active=false → NOT tracking presence (background tab?)`);
-                }
+                // Tracking is owned by the re-track effect below (keyed on
+                // [connected, active, userId, displayName]). Flipping connected
+                // true fires it immediately → it track()s if active, untrack()s
+                // if not — on this SAME channel, with no teardown on flap.
+                console.log(`[collab] channel SUBSCRIBED (user=${userId ? userId.slice(0, 8) + '…' : 'provisional'}) on device ${deviceId.slice(0, 12)}… — presence handled by re-track effect`);
             } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
                 console.warn(`[collab] channel status: ${status}`);
                 setConnected(false);
@@ -576,7 +576,7 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         // re-announced, and Supabase's presence keepalive stays warm. Cheap
         // — one track() per 15s is far under the 30 events/sec channel cap.
         const heartbeatInterval = window.setInterval(() => {
-            if (cancelled || !active) return;
+            if (cancelled || !activeRef.current) return;
             const ch = channelRef.current;
             if (!ch) return;
             void ch.track({
@@ -600,13 +600,13 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
             setConnected(false);
             setPeers([]);
         };
-        // 2026-05-31: userId AND displayName both REMOVED from deps. The
-        // channel lifecycle now depends only on [blobId, active] — neither
-        // identity field tears the channel down (which would also blip the
-        // SHARED sync channel). Identity (userId + name) is announced
-        // immediately with whatever's known, then UPGRADED in-place by the
-        // re-track effect below when auth resolves — no teardown, no flap.
-    }, [blobId, active]);
+        // 2026-06-04: `active` ALSO removed from deps (was [blobId, active]).
+        // The channel lifecycle now depends ONLY on [blobId] — a transient
+        // `active` flap (blur / chat-tab trip / background canvas) no longer
+        // tears the channel down and wipes presence. `active` only toggles
+        // track()/untrack() on the stable channel, via the re-track effect.
+        // userId + displayName stay out of deps (announced + upgraded in place).
+    }, [blobId]);
 
     // 2026-05-31 presence identity upgrade: re-broadcast presence whenever
     // the userId or display name resolves/changes, or the connection
@@ -616,15 +616,24 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
     // real identity lands — so peers see "Guest" flip to the real name, and
     // the row gains its real user_id, without any channel churn.
     useEffect(() => {
-        if (!connected || !active) return;
+        if (!connected) return;
         const ch = channelRef.current;
         if (!ch) return;
-        void ch.track({
-            user_id: userId ?? null,
-            device_id: getDeviceId(),
-            display_name: displayName || 'Guest',
-            joined_at: Date.now(),
-        } satisfies PresenceRow);
+        // Sole owner of presence track/untrack. Track when this canvas is the
+        // active surface; untrack (withdraw our presence — but DON'T tear the
+        // channel down, so we keep RECEIVING peers) when it isn't. This is what
+        // lets two PCs see each other's cursor + circle: receiving stays on
+        // permanently per [blobId]; only our own broadcast follows `active`.
+        if (active) {
+            void ch.track({
+                user_id: userId ?? null,
+                device_id: getDeviceId(),
+                display_name: nameRef.current || displayName || 'Guest',
+                joined_at: Date.now(),
+            } satisfies PresenceRow);
+        } else {
+            void ch.untrack();
+        }
     }, [displayName, connected, userId, active]);
 
     // Throttled cursor publisher. Callers can fire on every pointermove;
