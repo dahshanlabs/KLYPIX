@@ -59,22 +59,5 @@
       "Bash(powershell -NoProfile -Command \"& ''''node_modules\\\\electron\\\\dist\\\\electron.exe'''' .\")",
       "Bash(xargs grep:*)"
     ]
-  },
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup|resume",
-        "hooks": [
-          { "type": "command", "command": "node scripts/read-klypix.mjs brain.klypix" }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          { "type": "command", "command": "node scripts/brain-capture.mjs" }
-        ]
-      }
-    ]
   }
 }

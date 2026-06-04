@@ -22,16 +22,23 @@ a KLYPIX canvas of the project's areas (titled containers), decisions, and open
 questions, wired together with arrows. It's the shared human↔agent brain (the
 spatial version of an Obsidian vault), and it persists across sessions.
 
-**It is now (mostly) automatic — two hooks in `.claude/settings.json`:**
-- **Auto-read** — a `SessionStart` hook runs `read-klypix brain.klypix` and
-  injects it into context, so **every session already knows the project state**
+**It is now (mostly) automatic — and GLOBAL (works in any project), via a hook
+in `~/.claude/settings.json` that auto-detects `./brain.klypix`:**
+- **Auto-read** — a `SessionStart` hook runs the brain reader and injects the
+  brief into context, so **every session already knows the project state**
   (you don't have to read it manually).
 - **Auto-capture** — when you make a real decision/finding, **emit a line**:
   `🧠 BRAIN [Area]: <one-line decision>`. A `Stop` hook
-  (`scripts/brain-capture.mjs`) harvests those markers and appends them to
+  (`global-brain-hook.mjs --capture`) harvests those markers and appends them to
   `brain.klypix`, deduped. So capture is automatic **and** curated — you decide
   what's worth a marker; the hook does the writing. Use markers sparingly, for
   real decisions/milestones/discoveries — not routine steps.
+
+The hook lives globally at `~/.claude/project-brain/` (source of truth:
+[scripts/global-brain-hook.mjs](scripts/global-brain-hook.mjs)); KLYPIX dogfoods
+that global path (its old local `.claude` hooks were removed). Any project with
+a `./brain.klypix` gets the same behavior with zero setup — see
+[docs/PROJECT_BRAIN_GLOBAL.md](docs/PROJECT_BRAIN_GLOBAL.md).
 
 Manual tools (still available):
 - Read: `node scripts/read-klypix.mjs brain.klypix`
