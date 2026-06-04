@@ -1202,14 +1202,9 @@ Rules:
         const onOpenCanvas = (e: Event) => {
             const filePath = (e as CustomEvent).detail?.filePath;
             if (!filePath) return;
+            // Switch the app to canvas MODE; KlypixCanvas listens for this same
+            // event and opens the file in a new canvas TAB (the actual load).
             setActiveTab('canvas');
-            // Queue the open via the same pendingCanvasItems shim used
-            // for chat→canvas hand-offs: the canvas surface drains it
-            // once its restore dialog has settled.
-            try {
-                localStorage.setItem('klypix:palette:pendingOpenCanvas', filePath);
-                window.dispatchEvent(new CustomEvent('klypix:palette:drain-open'));
-            } catch { /* quota */ }
         };
         const onOpenPinned = (ev: Event) => {
             const id = (ev as CustomEvent).detail?.id;

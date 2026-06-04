@@ -215,7 +215,20 @@ export function KlypixCanvas({ appVisible = true }: KlypixCanvasProps) {
     // calls this with its filePath; we spawn a new tab pre-pointed at it.
     useEffect(() => {
         setOpenCanvasLinkHandler((filePath) => onNewTab(filePath));
-        return () => setOpenCanvasLinkHandler(() => {});
+        // The palette (Ctrl+O / search) and OS file-open (canvas:file-opened,
+        // routed by App) dispatch klypix:palette-open-canvas with a filePath.
+        // ACTUALLY OPEN it here (new tab pre-pointed at the file). Previously
+        // that event only flipped App to the canvas tab and the file never
+        // loaded — the queue it wrote to had no consumer.
+        const onPaletteOpen = (e: Event) => {
+            const fp = (e as CustomEvent).detail?.filePath;
+            if (typeof fp === 'string' && fp) onNewTab(fp);
+        };
+        window.addEventListener('klypix:palette-open-canvas', onPaletteOpen as EventListener);
+        return () => {
+            setOpenCanvasLinkHandler(() => {});
+            window.removeEventListener('klypix:palette-open-canvas', onPaletteOpen as EventListener);
+        };
     }, [onNewTab]);
 
     const onCloseTab = useCallback((id: string) => {
