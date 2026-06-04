@@ -772,7 +772,16 @@ function AppMain() {
     agentModeRef.current = agentMode;
 
     // Top-level tab: Chat (current app) vs Canvas (.any workspace)
-    const [activeTab, setActiveTab] = useState<AppTab>('chat');
+    // Persisted across restarts so reopening KLYPIX returns to where you left
+    // off (canvas or chat) — reinforces the "canvas runtime" model. First-ever
+    // launch defaults to chat (the Alt+Space assistant).
+    const [activeTab, setActiveTab] = useState<AppTab>(() => {
+        try { const s = localStorage.getItem('klypix:activeTab'); return (s === 'canvas' || s === 'chat') ? s : 'chat'; }
+        catch { return 'chat'; }
+    });
+    useEffect(() => {
+        try { localStorage.setItem('klypix:activeTab', activeTab); } catch { /* quota */ }
+    }, [activeTab]);
 
     // 2026-05-30: app-level pending-invitation count so the Canvas tab can
     // show a badge from Chat/Agent (the inbox itself lives in the canvas
@@ -1266,6 +1275,21 @@ Rules:
             window.removeEventListener('klypix:palette-ask-agent', onAskAgent);
         };
     }, [pinnedChats, claudeAgent, windowCtx, chat]);
+
+    // Opening a .klypix from the OS (double-click / "Open with") fires
+    // canvas:file-opened. Own it at the APP level so it ALWAYS switches to the
+    // canvas tab and loads — even if you were on chat. (Previously only the
+    // canvas surface listened, and only while it was the active tab, so opening
+    // a file from chat silently did nothing.) Routes through the same queue+
+    // drain the palette uses. This is the "KLYPIX is a runtime for .klypix" path.
+    useEffect(() => {
+        const api = (window as any).electron?.canvas;
+        if (!api?.onFileOpened) return;
+        return api.onFileOpened((filePath: string) => {
+            if (!filePath) return;
+            window.dispatchEvent(new CustomEvent('klypix:palette-open-canvas', { detail: { filePath } }));
+        });
+    }, []);
 
     const suggestions = useSuggestions({
         isDeepFileMode: deepMode.isDeepFileMode,

@@ -434,19 +434,12 @@ export function useAnyFile(tabActive = true, skipAutosaveCheck = false) {
     // Subscribe to file-association events — OS-launched .any paths. Only the
     // active tab handles these so a single OS open-file doesn't fan out to
     // every mounted tab. Multi-tab open-in-new-tab is a follow-up.
-    useEffect(() => {
-        if (!tabActive) return;
-        const api = getApi();
-        if (!api?.onFileOpened) return;
-        const off = api.onFileOpened((path) => {
-            if (stateRef.current.isDirty) {
-                const ok = window.confirm(t('canvas.discard.open_requested'));
-                if (!ok) return;
-            }
-            openByPath(path);
-        });
-        return off;
-    }, [openByPath, tabActive]);
+    // OS file-open (canvas:file-opened) is now owned at the APP level (App.tsx):
+    // it switches to the canvas tab and routes the path through the palette
+    // open-canvas queue, which this surface drains — so opening a .klypix works
+    // even from the chat tab. (Previously this gated on tabActive and silently
+    // dropped opens while on chat.) Handler kept out of here to avoid a
+    // double-open with the app-level listener.
 
     // --- Autosave ---
     // Saves to the file path when one exists. Otherwise writes a crash-recovery

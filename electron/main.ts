@@ -579,6 +579,20 @@ function createWindow() {
     });
     mainWindow.webContents.on('did-finish-load', () => {
         console.log('[Window] Page loaded successfully');
+        // Cold start via double-click / "Open with" on a .klypix (no instance
+        // was running): the path is in our launch argv. Hand it to the renderer
+        // now that it can receive it, so KLYPIX opens straight into that canvas
+        // — the "runtime for .klypix" behavior. (Running-instance opens are
+        // handled by the second-instance listener.)
+        try {
+            const launchCanvas = process.argv.find(a => {
+                const l = a.toLowerCase();
+                return (l.endsWith('.klypix') || l.endsWith('.any')) && fs.existsSync(a);
+            });
+            if (launchCanvas) {
+                setTimeout(() => { try { mainWindow?.webContents.send('canvas:file-opened', launchCanvas); } catch { /* */ } }, 600);
+            }
+        } catch { /* ignore */ }
     });
     mainWindow.webContents.on('console-message', (_e: any, level: number, message: string) => {
         if (level >= 2) console.log('[Renderer]', message);
