@@ -32,7 +32,13 @@ export function OfflineModelsPanel({ tx }: { tx: (k: string, fb: string) => stri
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const setPreferOffline = (v: boolean) => { setPrefer(v); try { localStorage.setItem('klypix:preferOffline', v ? '1' : '0'); } catch { /* quota */ } };
+    // ONE master switch governs everything: flipping it also sets the PDF-OCR
+    // mode, so the user never juggles a separate per-capability matrix.
+    const setPreferOffline = (v: boolean) => {
+        setPrefer(v);
+        try { localStorage.setItem('klypix:preferOffline', v ? '1' : '0'); } catch { /* quota */ }
+        offline?.setPdfOcrMode?.(v ? 'local' : 'gemini');
+    };
 
     const installOcr = async (id: string) => { setBusy(id); try { await offline?.install?.(id); } finally { /* progress handler clears busy */ } };
     const removeOcr = async (id: string) => { await offline?.remove?.(id); refresh(); };
@@ -59,6 +65,8 @@ export function OfflineModelsPanel({ tx }: { tx: (k: string, fb: string) => stri
                     </div>
                     <div className="text-[11px] text-white/40 mt-0.5">
                         {mb(e.sizeBytes)}{e.note ? ` · ${e.note}` : ''}
+                        {/* What will actually run for this capability right now. */}
+                        {installed && <span className={prefer ? 'text-emerald-400' : 'text-white/45'}> · {prefer ? tx('offline.active_local', 'Active: on-device') : tx('offline.active_cloud', 'using Cloud')}</span>}
                         {pr?.phase === 'error' && <span className="text-red-400"> · {pr.error || tx('offline.failed', 'Download failed')}</span>}
                         {downloading && pr?.totalBytes ? ` · ${mb(pr.bytesDone || 0)}/${mb(pr.totalBytes)}` : ''}
                     </div>

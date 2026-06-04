@@ -104,6 +104,8 @@ const strings: Strings = {
     'offline.verifying': { en: 'Verifying…', ar: 'جارٍ التحقّق…' },
     'offline.failed': { en: 'Download failed', ar: 'فشل التنزيل' },
     'offline.recommended': { en: 'Recommended', ar: 'مُوصى به' },
+    'offline.active_local': { en: 'Active: on-device', ar: 'نشط: على الجهاز' },
+    'offline.active_cloud': { en: 'using Cloud', ar: 'يستخدم السحابة' },
     'settings.tab.privacy': { en: 'Privacy', ar: 'الخصوصية' },
     'settings.tab.agent': { en: 'Agent Engine', ar: 'محرك الوكيل' },
     'settings.tab.about': { en: 'About', ar: 'حول' },

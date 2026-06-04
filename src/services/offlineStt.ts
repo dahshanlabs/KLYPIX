@@ -30,17 +30,32 @@ async function loadTransformers(): Promise<any> {
     if (transformers) return transformers;
     const cdn = ls('klypix:offlineCdn') || DEFAULT_CDN;
     transformers = await import(/* @vite-ignore */ cdn);
+    // Pin the weight host explicitly (no local FS in the renderer) so model
+    // resolution is deterministic; weights cache in the browser after first load.
+    try {
+        transformers.env.allowLocalModels = false;
+        transformers.env.allowRemoteModels = true;
+        if (!ls('klypix:offlineCdn')) transformers.env.remoteHost = 'https://huggingface.co';
+    } catch { /* env shape changed — defaults still work */ }
     return transformers;
 }
 
+// Single in-flight load per repo — concurrent transcribe calls must not kick
+// off duplicate (expensive) pipeline loads.
+let loadingRepo: string | null = null;
+let loadingPromise: Promise<any> | null = null;
 async function ensurePipeline(repo: string): Promise<any> {
     if (pipe && pipeRepo === repo) return pipe;
-    const t = await loadTransformers();
-    // Cache the loaded model; transformers.js stores weights in the browser
-    // cache so subsequent sessions are offline.
-    pipe = await t.pipeline('automatic-speech-recognition', repo);
-    pipeRepo = repo;
-    return pipe;
+    if (loadingPromise && loadingRepo === repo) return loadingPromise;
+    loadingRepo = repo;
+    loadingPromise = (async () => {
+        const t = await loadTransformers();
+        const p = await t.pipeline('automatic-speech-recognition', repo);
+        pipe = p; pipeRepo = repo; // weights now cached in-browser for next session
+        return p;
+    })();
+    try { return await loadingPromise; }
+    finally { if (loadingRepo === repo) loadingPromise = null; }
 }
 
 /** Decode arbitrary audio bytes → 16kHz mono Float32 (Whisper's expected input)
@@ -89,7 +104,8 @@ export async function installSttTier(tier: string): Promise<{ ok: boolean; error
     if (!TIER_REPO[tier]) return { ok: false, error: 'unknown tier' };
     try {
         await ensurePipeline(TIER_REPO[tier]);
-        try { localStorage.setItem('klypix:stt:tier', tier); } catch { /* quota */ }
+        try { localStorage.setItem('klypix:stt:tier', tier); }
+        catch (e) { console.warn('[offlineStt] could not persist installed tier (storage full?) — will re-download next session:', e); }
         return { ok: true };
     } catch (err: any) {
         return { ok: false, error: err?.message || String(err) };

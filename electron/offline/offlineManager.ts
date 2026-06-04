@@ -33,12 +33,14 @@ function fileInstalled(p: string): boolean {
     try { return fs.statSync(p).size > 0; } catch { return false; }
 }
 
-/** Which OCR languages are installed on disk (e.g. ['eng','ara']). */
+/** Which OCR languages are installed on disk (e.g. ['eng','ara']). Files are
+ *  stored gzipped (<lang>.traineddata.gz) — exactly what tesseract.js v7 reads
+ *  from langPath, gunzipping internally. */
 export function getInstalledOcrLangs(): string[] {
     const out: string[] = [];
     for (const a of OFFLINE_CATALOG) {
         if (a.kind !== 'ocr' || !a.langCode) continue;
-        if (fileInstalled(path.join(ocrDir(), `${a.langCode}.traineddata`))) out.push(a.langCode);
+        if (fileInstalled(path.join(ocrDir(), `${a.langCode}.traineddata.gz`))) out.push(a.langCode);
     }
     return out;
 }
@@ -56,27 +58,32 @@ export function getCatalogWithState() {
     }));
 }
 
-function download(url: string, dest: string, signal: AbortSignal, onBytes: (done: number, total: number) => void): Promise<void> {
+function download(url: string, dest: string, signal: AbortSignal, onBytes: (done: number, total: number) => void, redirectsLeft = 5): Promise<void> {
     return new Promise((resolve, reject) => {
         const mod = url.startsWith('https') ? https : http;
         const req = mod.get(url, (res) => {
+            // Follow redirect CHAINS (jsdelivr → fastly etc.), not just one hop.
             if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                // follow one redirect
                 res.resume();
-                download(res.headers.location, dest, signal, onBytes).then(resolve, reject);
+                if (redirectsLeft <= 0) { reject(new Error('too many redirects')); return; }
+                const next = new URL(res.headers.location, url).toString();
+                download(next, dest, signal, onBytes, redirectsLeft - 1).then(resolve, reject);
                 return;
             }
             if (res.statusCode !== 200) { res.resume(); reject(new Error(`HTTP ${res.statusCode} for ${url}`)); return; }
             const total = parseInt(res.headers['content-length'] || '0', 10);
             let done = 0;
             const out = fs.createWriteStream(dest);
+            const fail = (err: Error) => { try { out.destroy(); } catch { /* */ } try { fs.rmSync(dest); } catch { /* */ } reject(err); };
             res.on('data', (chunk) => { done += chunk.length; onBytes(done, total); });
             res.pipe(out);
             out.on('finish', () => out.close(() => resolve()));
-            out.on('error', reject);
-            res.on('error', reject);
+            out.on('error', fail);
+            res.on('error', fail);
         });
-        req.on('error', reject);
+        // Don't let a hung connection block forever.
+        req.setTimeout(30000, () => req.destroy(new Error('download timed out')));
+        req.on('error', (err) => { try { fs.rmSync(dest); } catch { /* */ } reject(err); });
         signal.addEventListener('abort', () => { req.destroy(new Error('aborted')); }, { once: true });
     });
 }
@@ -130,7 +137,7 @@ export async function install(id: string, onProgress: ProgressFn): Promise<{ ok:
 export function remove(id: string): { ok: boolean } {
     const asset = getAsset(id);
     if (asset?.kind === 'ocr' && asset.langCode) {
-        try { fs.rmSync(path.join(ocrDir(), `${asset.langCode}.traineddata`)); } catch { /* ignore */ }
+        try { fs.rmSync(path.join(ocrDir(), `${asset.langCode}.traineddata.gz`)); } catch { /* ignore */ }
     }
     return { ok: true };
 }

@@ -12,8 +12,12 @@
 
 // Where models are served from. Override with KLYPIX_OFFLINE_CDN for staging.
 // NOTE: the host below must actually serve these files before the lane works.
+// Public CDN by default so Install works with zero hosting (it's the same host
+// tesseract.js uses, so the userData copy is a drop-in). Set KLYPIX_OFFLINE_CDN
+// to self-host on klypix.com later — mirror @tesseract.js-data/<lang>/
+// 4.0.0_best_int/<lang>.traineddata.gz under it and the paths stay identical.
 export const OFFLINE_CDN_BASE =
-    process.env.KLYPIX_OFFLINE_CDN || 'https://cdn.klypix.com/offline';
+    process.env.KLYPIX_OFFLINE_CDN || 'https://cdn.jsdelivr.net';
 
 export interface OfflineFile {
     name: string;       // filename on disk
@@ -35,9 +39,12 @@ export interface OfflineAsset {
     note?: string;
 }
 
+// Source the EXACT gzipped file tesseract.js v7 itself fetches, stored on disk
+// as <lang>.traineddata.gz. The worker (gzip:true by default) reads the .gz
+// from langPath and gunzips internally — so we must NOT decompress here.
 const ocr = (id: string, label: string, lang: string, mb: number): OfflineAsset => ({
     id, kind: 'ocr', label, langCode: lang, sizeBytes: Math.round(mb * 1024 * 1024),
-    files: [{ name: `${lang}.traineddata`, url: `${OFFLINE_CDN_BASE}/tesseract/4.0.0_best_int/${lang}.traineddata` }],
+    files: [{ name: `${lang}.traineddata.gz`, url: `${OFFLINE_CDN_BASE}/npm/@tesseract.js-data/${lang}/4.0.0_best_int/${lang}.traineddata.gz` }],
 });
 
 const stt = (id: string, label: string, repo: string, mb: number, opts: { recommended?: boolean; note?: string } = {}): OfflineAsset => ({
@@ -50,8 +57,9 @@ const stt = (id: string, label: string, repo: string, mb: number, opts: { recomm
 
 export const OFFLINE_CATALOG: OfflineAsset[] = [
     // ── OCR (reading text from images / scanned PDFs, on-device) ──
-    ocr('ocr-eng', 'English OCR', 'eng', 18),
-    ocr('ocr-ara', 'Arabic OCR', 'ara', 16),
+    // Sizes are the gzipped download (what actually transfers), not unzipped.
+    ocr('ocr-eng', 'English OCR', 'eng', 5),
+    ocr('ocr-ara', 'Arabic OCR', 'ara', 2),
     // ── STT (transcribing voice notes / audio cards, on-device) ──
     stt('stt-tiny', 'Fast (tiny)', 'Xenova/whisper-tiny', 41, { note: 'Quickest, lower accuracy.' }),
     stt('stt-base', 'Balanced (base)', 'Xenova/whisper-base', 77, { recommended: true, note: 'Good Arabic + English. Recommended.' }),
