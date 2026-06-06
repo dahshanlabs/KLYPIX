@@ -196,6 +196,15 @@ const CURSOR_STALE_MS = 5000;
 // permanently locked. Must be > 2x the 5s heartbeat to tolerate one miss.
 const EDITING_STALE_MS = 12000;
 const EDITING_HEARTBEAT_MS = 5000;
+// Ghost-peer TTL: presence rows carry joined_at, refreshed by the 15s heartbeat
+// + every re-track. A crashed tab stops refreshing; Supabase's leave event is
+// not guaranteed, so we prune any row whose joined_at is older than this (>2x
+// the 15s heartbeat) so a dead peer's chip/cursor disappears instead of
+// lingering forever.
+const PRESENCE_STALE_MS = 35000;
+// Don't re-broadcast a cursor that barely moved — skips redundant ~30Hz traffic
+// when the pointer is hovering/jittering, cutting channel load at scale.
+const CURSOR_MIN_DELTA = 2;
 
 const MESSAGE_MAX_TEXT = 2000;
 const MESSAGE_BUFFER_MAX = 200;
@@ -230,6 +239,7 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
     // positions, which is what we want for cursor motion.
     const cursorLastPublishRef = useRef(0);
     const cursorQueuedRef = useRef<{ x: number; y: number } | null | undefined>(undefined);
+    const cursorLastPosRef = useRef<{ x: number; y: number } | null>(null);
     const cursorTimerRef = useRef<number | null>(null);
     const selectionLastPublishRef = useRef(0);
     const selectionQueuedRef = useRef<string[] | null>(null);
@@ -413,6 +423,10 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                     // during the provisional window; device_id alone is the
                     // reliable self-identifier.)
                     if (row.device_id === deviceId) continue;
+                    // Ghost-peer prune: a crashed tab leaves a stale presence row
+                    // (no leave event). joined_at is refreshed every ≤15s by a
+                    // live peer, so anything older is a ghost — skip it.
+                    if (row.joined_at && (now - row.joined_at) > PRESENCE_STALE_MS) continue;
                     const eph = ephemeralRef.get(row.device_id);
                     // Drop stale cursors so a peer that stopped moving doesn't
                     // leave their cursor floating forever after a network drop.
@@ -568,6 +582,17 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
                 // a presence event.
                 if (eph.editingAt != null && eph.editingItemId && (now - eph.editingAt) >= EDITING_STALE_MS) { needsSweep = true; break; }
             }
+            // Also sweep if a presence row has gone stale (ghost peer) so its
+            // chip/cursor is pruned even when no presence event fires to retrigger.
+            if (!needsSweep) {
+                const ps = channel.presenceState() as Record<string, PresenceRow[]>;
+                for (const slot of Object.values(ps)) {
+                    for (const row of slot) {
+                        if (row?.device_id && row.device_id !== deviceId && row.joined_at && (now - row.joined_at) > PRESENCE_STALE_MS) { needsSweep = true; break; }
+                    }
+                    if (needsSweep) break;
+                }
+            }
             if (needsSweep) computeAndSet();
         }, 2000);
 
@@ -643,6 +668,15 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
     const publishCursor = (world: { x: number; y: number } | null): void => {
         const channel = channelRef.current;
         if (!channel) return;
+        // Skip near-identical positions (hover jitter) to cut redundant ~30Hz
+        // traffic at scale. Always let through a null (cursor-left) + the first
+        // real move.
+        if (world && cursorLastPosRef.current
+            && Math.abs(world.x - cursorLastPosRef.current.x) < CURSOR_MIN_DELTA
+            && Math.abs(world.y - cursorLastPosRef.current.y) < CURSOR_MIN_DELTA) {
+            return;
+        }
+        cursorLastPosRef.current = world;
         cursorQueuedRef.current = world;
         const now = Date.now();
         const sinceLast = now - cursorLastPublishRef.current;

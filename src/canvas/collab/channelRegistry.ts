@@ -42,6 +42,10 @@ interface ChannelEntry {
 
 const channels = new Map<string, ChannelEntry>();
 
+// Reconnect backoff escalates 1s,2s,…up to 2^8≈15s, then holds at the cap (with
+// jitter) and emits one 'FAILED' so the UI can show a reconnecting state.
+const MAX_BACKOFF_STEP = 8;
+
 /** Per-device id used as the presence key + self-echo guard. Generated
  *  lazily and persisted to localStorage so the same browser tab keeps
  *  the same id across reloads. Shared by all collab subsystems for
@@ -116,7 +120,21 @@ export function acquireCanvasChannel(blobId: string, statusCb?: (status: string)
             // (refCount 0 / entry replaced) never triggers a phantom reconnect.
             if ((status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED')
                 && channels.get(blobId) === localEntry && localEntry.refCount > 0 && !reconnectTimer) {
-                const delay = Math.min(1000 * 2 ** attempt, 15000);
+                // Surface a one-time 'FAILED' once backoff has fully escalated so
+                // the UI can show "reconnecting…" instead of silently-dimmed chips
+                // — but KEEP retrying at the capped interval so we still recover
+                // when the network/token returns.
+                if (attempt === MAX_BACKOFF_STEP) {
+                    localEntry.currentStatus = 'FAILED';
+                    for (const cb of localEntry.statusListeners) { try { cb('FAILED'); } catch { /* */ } }
+                }
+                // Capped exponential backoff (clamp the EXPONENT so 2**attempt
+                // can't overflow to Infinity on a chronically-broken channel) +
+                // uniform jitter to break the thunder-herd when many peers
+                // reconnect together (an office-wifi blip would otherwise have
+                // them all retry in lockstep and re-saturate the socket).
+                const step = Math.min(attempt, MAX_BACKOFF_STEP);
+                const delay = Math.min(1000 * 2 ** step, 15000) + Math.floor(Math.random() * 500);
                 attempt++;
                 reconnectTimer = setTimeout(() => {
                     reconnectTimer = null;
