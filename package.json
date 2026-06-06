@@ -1,6 +1,6 @@
 {
   "name": "klypix",
-  "version": "1.1.0-final-25",
+  "version": "1.1.0-final-26",
   "main": "dist-electron/main.cjs",
   "type": "module",
   "description": "AI-powered quick desktop assistant for Windows",
@@ -16,7 +16,8 @@
     "dev:electron": "wait-on tcp:5173 && npx tsc -p tsconfig.electron.json && node scripts/build-electron.js && electron .",
     "build": "vite build && npx tsc -p tsconfig.electron.json && node scripts/build-electron.js && electron-builder",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
@@ -75,6 +76,7 @@
     "tailwindcss": "^3.4.19",
     "typescript": "^5.9.3",
     "vite": "^6.4.1",
+    "vitest": "^4.1.8",
     "wait-on": "^8.0.5"
   },
   "build": {

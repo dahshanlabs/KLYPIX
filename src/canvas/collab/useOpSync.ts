@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import { acquireCanvasChannel } from './channelRegistry';
+import { acquireCanvasChannel, getCollabDeviceId } from './channelRegistry';
 import { useCanvasStore } from '../state/canvasStore';
 import type { CanvasAction } from '../state/canvasStore';
+import { OpLog } from './shared/opLog';
 
 // Phase 3: op-log streaming.
 //
@@ -60,6 +61,9 @@ interface OpPayload {
     device_id: string;
     /** Lamport tick for approximate causal ordering. */
     lamport: number;
+    /** Globally-unique op id ("<deviceId>:<broadcastSeq>") for idempotency —
+     *  also stamped onto action.__opId so it survives server backfill. */
+    opId?: string;
     /** The canvas action verbatim, JSON-serialized. */
     action: CanvasAction;
 }
@@ -145,6 +149,15 @@ function loadLamport(blobId: string): number {
 function saveLamport(blobId: string, n: number): void {
     try { localStorage.setItem(lamportKey(blobId), String(n)); } catch { /* no-op */ }
 }
+// Per-blob broadcast sequence — the counter behind each op's unique opId.
+// Persisted so opIds stay unique (monotonic) across reloads.
+function bcSeqKey(blobId: string): string { return `klypix:bcseq:${blobId}`; }
+function loadBroadcastSeq(blobId: string): number {
+    try { const raw = localStorage.getItem(bcSeqKey(blobId)); const n = raw ? parseInt(raw, 10) : 0; return Number.isFinite(n) ? n : 0; } catch { return 0; }
+}
+function saveBroadcastSeq(blobId: string, n: number): void {
+    try { localStorage.setItem(bcSeqKey(blobId), String(n)); } catch { /* no-op */ }
+}
 
 // Phase 7: per-blob high-water mark for server-side ops. Tracks the seq
 // of the last op we successfully pulled/applied so the next backfill
@@ -203,10 +216,8 @@ const COALESCE_KEYS: Partial<Record<CanvasAction['type'], (a: CanvasAction) => s
 export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs): void {
     const { dispatch, subscribeActions } = useCanvasStore();
     const channelRef = useRef<RealtimeChannel | null>(null);
-    // Lamport clock — persisted per-blob so it survives reload. On mount
-    // we load the saved value so post-reload sends carry monotonically
-    // higher ticks than anything we queued before.
-    const lamportRef = useRef(0);
+    // Lamport clock + idempotency + drain-rebase live in a pure OpLog created
+    // per-blob inside the effect (hydrated from / persisted to localStorage).
     const connectedRef = useRef(false);
     const drainingRef = useRef(false);
     // Recent local edits keyed by item id, used for conflict detection.
@@ -219,14 +230,24 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
     // sign-in / sign-out (which would tear down Realtime mid-session).
     const authedRef = useRef(authed);
     authedRef.current = authed;
+    // 2026-06-06: read `active` via a ref so the op channel + OpLog stay stable
+    // per [blobId] and are NOT torn down/reset on an `active` flap (same fix as
+    // useCanvasCollab presence). `active` only gates OUTBOUND sends.
+    const activeRef = useRef(active);
+    activeRef.current = active;
 
     useEffect(() => {
         if (!blobId) return;
         let cancelled = false;
 
-        // Hydrate lamport from persisted value so a fresh tab continues
-        // from where the previous session left off.
-        lamportRef.current = Math.max(lamportRef.current, loadLamport(blobId));
+        // Pure convergence core (lamport + opId idempotency + drain rebase),
+        // hydrated from persisted lamport + broadcastSeq so a reloaded tab
+        // continues monotonically.
+        const opLog = new OpLog({
+            deviceId: getCollabDeviceId(),
+            lamport: loadLamport(blobId),
+            broadcastSeq: loadBroadcastSeq(blobId),
+        });
 
         // Phase 22.5: debounced persistence to take synchronous localStorage
         // writes off the keystroke hot path. Each UPDATE_ITEM previously
@@ -252,7 +273,8 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
             lamportSaveTimer = window.setTimeout(() => {
                 lamportSaveTimer = null;
                 if (lamportDirty) {
-                    saveLamport(blobId, lamportRef.current);
+                    saveLamport(blobId, opLog.lamport);
+                    saveBroadcastSeq(blobId, opLog.broadcastSeq);
                     lamportDirty = false;
                 }
             }, PERSIST_DEBOUNCE_MS);
@@ -263,7 +285,8 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
                 lamportSaveTimer = null;
             }
             if (lamportDirty) {
-                saveLamport(blobId, lamportRef.current);
+                saveLamport(blobId, opLog.lamport);
+                saveBroadcastSeq(blobId, opLog.broadcastSeq);
                 lamportDirty = false;
             }
         };
@@ -306,12 +329,6 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
         window.addEventListener('pagehide', beforeUnload);
         window.addEventListener('beforeunload', beforeUnload);
 
-        const bumpLamport = (): number => {
-            lamportRef.current += 1;
-            scheduleLamportSave();
-            return lamportRef.current;
-        };
-
         const enqueue = (q: QueuedOp): void => {
             queueCache.push(q);
             scheduleQueueSave();
@@ -337,10 +354,17 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
                     const channel = channelRef.current;
                     if (!channel) break;
                     try {
+                        // Drain REBASE: re-stamp to a CURRENT tick so this offline
+                        // op sorts AFTER anything we just backfilled, instead of
+                        // clobbering newer remote state with its stale offline
+                        // lamport. opId (on the action) is unchanged → still
+                        // deduped if a peer already saw it.
+                        const rebased = opLog.rebaseForDrain();
+                        scheduleLamportSave();
                         await channel.send({
                             type: 'broadcast',
                             event: 'op',
-                            payload: { device_id: deviceId, lamport: head.lamport, action: head.action } satisfies OpPayload,
+                            payload: { device_id: deviceId, lamport: rebased, opId: (head.action as any).__opId, action: head.action } satisfies OpPayload,
                         });
                         // Successful send — pop the head and schedule a save.
                         queueCache.shift();
@@ -385,6 +409,62 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
             }
         };
 
+        // Backfill isolation: while catching up from the server, BUFFER live
+        // inbound ops and apply them only AFTER backfill completes — so a live
+        // DELETE can't land before an older backfilled UPDATE and diverge.
+        let backfilling = false;
+        const pendingInbound: OpPayload[] = [];
+
+        // Apply one inbound op: dedupe by opId + clamp the clock (OpLog), run
+        // conflict detection, then dispatch via the SAME reducer path as local
+        // edits (single source of truth; no parallel apply path).
+        const processInbound = (p: OpPayload) => {
+            if (cancelled) return;
+            const action = p.action as CanvasAction;
+            if (!action || typeof action !== 'object' || !('type' in action)) return;
+            // Idempotency + lamport clamp. A duplicate opId (a drain/flush
+            // re-send) is dropped, so e.g. a re-sent ADD can't resurrect an
+            // item a later DELETE already removed.
+            if (!opLog.receive((action as any).__opId, p.lamport)) return;
+            scheduleLamportSave();
+            const now = Date.now();
+            const recent = recentLocalEditsRef.current;
+            const checkConflict = (
+                itemId: string,
+                remoteKind: 'overwritten' | 'deleted',
+                remotePatchKeys?: ReadonlyArray<string>,
+            ) => {
+                const entry = recent.get(itemId);
+                if (!entry) return;
+                if (now - entry.at > CONFLICT_WINDOW_MS) return;
+                if (remoteKind === 'overwritten' && entry.fields && remotePatchKeys) {
+                    const overlap = remotePatchKeys.some(k => entry.fields!.has(k));
+                    if (!overlap) return;
+                }
+                try {
+                    onConflictRef.current?.({
+                        kind: remoteKind,
+                        itemId,
+                        fromDeviceId: p.device_id,
+                        fields: remotePatchKeys ? Array.from(remotePatchKeys) : undefined,
+                    });
+                } catch { /* swallow */ }
+            };
+            if (action.type === 'UPDATE_ITEM') {
+                const patch = (action as any).patch;
+                const keys = patch && typeof patch === 'object' ? Object.keys(patch) : [];
+                checkConflict(action.id, 'overwritten', keys);
+            } else if (action.type === 'DELETE_ITEMS') {
+                for (const id of action.ids) checkConflict(id, 'deleted');
+            }
+            (action as any).__remote = true;
+            try {
+                dispatch(action);
+            } catch (err) {
+                console.warn('[opSync] failed to apply remote op:', err, action);
+            }
+        };
+
         // Phase 14: acquire the shared canvas channel via the registry.
         // useCanvasCollab + useAssetSync use the SAME channel via the same
         // registry call, so broadcasts hit one shared subscription instead
@@ -410,9 +490,18 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
                     if (cancelled) return;
                     void (async () => {
                         if (cancelled) return;
-                        await fastForwardIfFresh();
-                        if (cancelled) return;
-                        await backfillFromServer();
+                        backfilling = true;
+                        try {
+                            await fastForwardIfFresh();
+                            if (cancelled) return;
+                            await backfillFromServer();
+                        } finally {
+                            // Apply any live ops that arrived during backfill, in
+                            // arrival order, now that the server state is in.
+                            backfilling = false;
+                            const pend = pendingInbound.splice(0);
+                            for (const p of pend) processInbound(p);
+                        }
                         if (cancelled) return;
                         await drainQueue();
                     })();
@@ -426,74 +515,17 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
         const deviceId = acquired.deviceId;
         channelRef.current = channel;
 
-        // Inbound op handler: parse + apply via wrapped dispatch. We tag
-        // the action with `__remote: true` so the outbound listener below
-        // can skip it (preventing a re-broadcast loop). The reducer
-        // ignores the tag — it's a passthrough marker only the listener
-        // checks.
+        // Inbound op handler: self-echo guard, then either buffer (during
+        // backfill) or apply via processInbound (which dedupes by opId, clamps
+        // the clock, runs conflict detection, and dispatches through the normal
+        // reducer path — the single source of truth, no parallel apply path).
         channel.on('broadcast', { event: 'op' }, (msg: any) => {
             if (cancelled) return;
             const p = msg?.payload as OpPayload | undefined;
             if (!p || typeof p.device_id !== 'string') return;
             if (p.device_id === deviceId) return; // self-echo guard
-            // Bump our lamport beyond what we've seen so subsequent local
-            // sends carry a higher tick. Schedule a debounced save so the
-            // 500ms persistence cadence applies here too — a crash inside
-            // the window self-heals on the next remote op clamp anyway.
-            if (typeof p.lamport === 'number' && p.lamport > lamportRef.current) {
-                lamportRef.current = p.lamport;
-                scheduleLamportSave();
-            }
-            const action = p.action as CanvasAction;
-            if (!action || typeof action !== 'object' || !('type' in action)) return;
-            // Conflict detection (Phase 9, refined 2026-05-28): only flag
-            // a conflict when the remote op touches the SAME FIELD as our
-            // recent local edit — not when both clients are editing the
-            // same item from different angles (e.g. local moves it while
-            // peer types in it). Previous "any touch = conflict" produced
-            // dozens of false positives during normal concurrent work and
-            // drowned out the rare real-conflict signal.
-            const now = Date.now();
-            const recent = recentLocalEditsRef.current;
-            const checkConflict = (
-                itemId: string,
-                remoteKind: 'overwritten' | 'deleted',
-                remotePatchKeys?: ReadonlyArray<string>,
-            ) => {
-                const entry = recent.get(itemId);
-                if (!entry) return;
-                if (now - entry.at > CONFLICT_WINDOW_MS) return;
-                // Deletes are always-conflict (the whole item is gone, not
-                // just a field). For UPDATE overwrites, require at least one
-                // overlapping field between local + remote patches.
-                if (remoteKind === 'overwritten' && entry.fields && remotePatchKeys) {
-                    const overlap = remotePatchKeys.some(k => entry.fields!.has(k));
-                    if (!overlap) return;
-                }
-                try {
-                    onConflictRef.current?.({
-                        kind: remoteKind,
-                        itemId,
-                        fromDeviceId: p.device_id,
-                        fields: remotePatchKeys ? Array.from(remotePatchKeys) : undefined,
-                    });
-                } catch { /* swallow */ }
-            };
-            if (action.type === 'UPDATE_ITEM') {
-                const patch = (action as any).patch;
-                const keys = patch && typeof patch === 'object' ? Object.keys(patch) : [];
-                checkConflict(action.id, 'overwritten', keys);
-            } else if (action.type === 'DELETE_ITEMS') {
-                for (const id of action.ids) checkConflict(id, 'deleted');
-            }
-            // Mark + dispatch. The listener below will see __remote and skip.
-            (action as any).__remote = true;
-            console.log(`[opSync] broadcast INBOUND type=${action.type} from device=${p.device_id.slice(0, 12)}…`, action.type === 'UPDATE_ITEM' ? `id=${(action as any).id} patchKeys=${Object.keys((action as any).patch ?? {}).join(',')}` : '');
-            try {
-                dispatch(action);
-            } catch (err) {
-                console.warn('[opSync] failed to apply remote op:', err, action);
-            }
+            if (backfilling) { pendingInbound.push(p); return; } // hold until catch-up done
+            processInbound(p);
         });
 
         // 2026-05-28 hardening: on the FIRST SUBSCRIBED event of this
@@ -578,6 +610,11 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
                         console.log(`[opSync] backfill APPLYING op seq=${row.seq} from device=${row.device_id?.slice(0, 12)}… type=${(row.op as any)?.type}`);
                         const action = row.op as CanvasAction;
                         if (action && typeof action === 'object' && 'type' in action) {
+                            // Idempotency: if we already applied this exact op via
+                            // a live broadcast (it carries __opId), don't re-apply
+                            // it from the server log — prevents the resurrection /
+                            // double-apply when broadcast + backfill overlap.
+                            if (!opLog.receive((action as any).__opId, undefined)) { if (row.seq > sinceSeq) sinceSeq = row.seq; continue; }
                             (action as any).__remote = true;
                             try {
                                 dispatch(action);
@@ -604,7 +641,7 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
         const unsubscribe = subscribeActions((action) => {
             if ((action as any).__remote) return;
             if (!SYNCABLE_ACTIONS.has(action.type)) return;
-            if (!active) return; // background tab — don't broadcast
+            if (!activeRef.current) return; // background tab — don't broadcast
             // Phase 9: record this edit so an incoming remote op on the
             // same item within CONFLICT_WINDOW_MS can be detected as a
             // conflict. Opportunistically prune entries past the window
@@ -626,7 +663,12 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
             } else if (action.type === 'DELETE_ITEMS') {
                 for (const id of action.ids) recent.set(id, { at: now, type: 'delete' });
             }
-            const tick = bumpLamport();
+            // Stamp a unique opId (idempotency) + the next lamport tick. opId
+            // rides on the action (__opId) so it survives both broadcast AND
+            // server backfill — a re-send is then deduped on the receiver.
+            const { opId, lamport: tick } = opLog.stampLocal();
+            (action as any).__opId = opId;
+            scheduleLamportSave();
             // If not connected, skip the send attempt entirely — go straight
             // to the persistent queue so the drain-on-reconnect path is the
             // only flush. No coalescing here because the queue is the
@@ -689,6 +731,7 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
                 const payload: OpPayload = {
                     device_id: deviceId,
                     lamport: q.lamport,
+                    opId: (q.action as any).__opId,
                     action: q.action,
                 };
                 try {
@@ -755,5 +798,8 @@ export function useOpSync({ blobId, active, authed, onConflict }: UseOpSyncArgs)
             // tears the channel down when refCount hits 0.
             acquired.release();
         };
-    }, [blobId, active, dispatch, subscribeActions]);
+        // `active` intentionally NOT a dep — read via activeRef so an active
+        // flap doesn't tear down the op channel + reset the OpLog (idempotency
+        // seen-set). Lifecycle is per [blobId]; active only gates outbound.
+    }, [blobId, dispatch, subscribeActions]);
 }
