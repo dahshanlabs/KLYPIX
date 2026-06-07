@@ -66,6 +66,8 @@ as $$
 $$;
 
 -- Read access: a canvas owner or collaborator may subscribe.
+-- drop-then-create so re-running is idempotent (no 42710 "already exists").
+drop policy if exists "canvas collab channel members only" on realtime.messages;
 create policy "canvas collab channel members only"
     on realtime.messages
     for select
@@ -79,6 +81,7 @@ create policy "canvas collab channel members only"
     );
 
 -- Write access (broadcasting): same membership check.
+drop policy if exists "canvas collab channel members can write" on realtime.messages;
 create policy "canvas collab channel members can write"
     on realtime.messages
     for insert
