@@ -15,19 +15,60 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 let client: SupabaseClient | null = null;
 let lastAuthToken: string | null = null;
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Decode a JWT's `exp` (unix seconds) without verifying — just to schedule a
+ *  proactive refresh before it lapses. */
+function decodeJwtExpSec(token: string): number | null {
+    try {
+        const part = token.split('.')[1];
+        if (!part) return null;
+        const json = JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/')));
+        return typeof json.exp === 'number' ? json.exp : null;
+    } catch { return null; }
+}
+
+/** Pull a freshly-refreshed token from the main process (which runs
+ *  autoRefreshToken) and re-apply it to the Realtime client. */
+async function refreshRealtimeToken(): Promise<void> {
+    try {
+        const res = await (window as any).electron?.auth?.getAccessToken?.();
+        setRealtimeAuth(res?.token ?? null); // applies + reschedules
+    } catch {
+        scheduleTokenRefresh(lastAuthToken); // IPC hiccup → retry on the old schedule
+    }
+}
+
+/** Keep a VALID token applied across a long (multi-hour) session so a PRIVATE
+ *  channel doesn't silently die when the ~1h JWT expires (the stale-token bug
+ *  class). Re-primes at ~80% of remaining lifetime and reschedules each time.
+ *  No-op for a null token — public channels need no auth. */
+function scheduleTokenRefresh(token: string | null): void {
+    if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
+    if (!token) return;
+    const exp = decodeJwtExpSec(token);
+    if (!exp) return;
+    const remainingMs = exp * 1000 - Date.now();
+    // 80% of remaining life; clamp [10s, 55m] so we neither busy-loop on a
+    // near-expired token nor wait longer than a typical token lifetime.
+    const delay = Math.min(Math.max(remainingMs * 0.8, 10_000), 55 * 60_000);
+    refreshTimer = setTimeout(() => { refreshTimer = null; void refreshRealtimeToken(); }, delay);
+}
 
 /** Phase 12: set (or clear) the auth token the Realtime client uses to
  *  authenticate channel joins. Required once the server-side channel
  *  policy flips to `private: true` mode. No-op when called with the same
- *  token we've already applied (avoids reconnect churn). */
+ *  token we've already applied (avoids reconnect churn). Applying a token
+ *  also (re)arms the proactive refresh so long sessions stay authenticated. */
 export function setRealtimeAuth(token: string | null): void {
-    if (token === lastAuthToken) return;
+    if (token === lastAuthToken) { if (token) scheduleTokenRefresh(token); return; }
     lastAuthToken = token;
     try {
         getRealtimeClient().realtime.setAuth(token);
     } catch (err) {
         console.warn('[realtime] setAuth failed:', err);
     }
+    scheduleTokenRefresh(token);
 }
 
 /**
@@ -74,9 +115,13 @@ export function getRealtimeClient(): SupabaseClient {
                 detectSessionInUrl: false,
             },
             realtime: {
-                // Smaller cap than the 100 default — typical canvas op
-                // bursts are well under this and we're cost-conscious.
-                params: { eventsPerSecond: 30 },
+                // Send-rate cap. One active peer can emit cursor + selection +
+                // viewport + ops; at the old 30 it self-throttled and silently
+                // DROPPED its own outbound at 2+ peers. 100 (Supabase's default)
+                // gives real headroom — paired with cursor min-delta + coalesce
+                // so it's a safety net, not the load-bearing limiter. (Op
+                // batching, the structural fix, is the staged next step.)
+                params: { eventsPerSecond: 100 },
             },
         });
     }
