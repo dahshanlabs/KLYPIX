@@ -22,6 +22,10 @@ const ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZ
 
 const numPeers = Math.max(2, parseInt(process.argv[2] || '2', 10));
 const seconds = Math.max(3, parseInt(process.argv[3] || '8', 10));
+// `private` (4th arg) joins with config.private:true + NO auth token, to verify
+// that private channels DENY a non-member (anon) peer once Realtime
+// Authorization is enforced. PASS in private mode = peers are REJECTED.
+const PRIVATE = process.argv[4] === 'private';
 const TEST_ID = 'harness-' + Math.random().toString(36).slice(2, 10); // throwaway, never a real blob
 const CHANNEL = `klypix-canvas-${TEST_ID}`;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -34,7 +38,7 @@ function makePeer(i) {
         realtime: { params: { eventsPerSecond: 30 } },
     });
     const channel = client.channel(CHANNEL, {
-        config: { private: false, presence: { key: deviceId }, broadcast: { self: false } },
+        config: { private: PRIVATE, presence: { key: deviceId }, broadcast: { self: false } },
     });
     const state = { i, name, deviceId, client, channel, status: null, seenPeers: new Set(), gotBroadcast: false };
 

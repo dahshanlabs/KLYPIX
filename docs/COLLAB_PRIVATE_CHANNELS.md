@@ -2,6 +2,22 @@
 
 **Status:** built, **OFF by default**, **needs a 2-machine test before trusting.**
 
+**Update (final-27):** the prerequisite is now in — **token refresh** keeps a
+valid JWT applied to the Realtime client across multi-hour sessions
+(`supabaseRealtimeClient.ts`), so private channels no longer die when the ~1h
+token lapses. And the deny path is **headless-verified**: `node
+scripts/collab-sim.mjs 2 5 private` shows anon (non-member) peers get
+`TIMED_OUT/CLOSED` and **cannot subscribe** — the lockout works before you test.
+What the 2-PC test must still confirm: authed **members still sync**, and a
+**revoked** member is denied.
+
+> ⚠️ **CRITICAL ORDERING:** apply the SQL migration FIRST, *then* flip the flag.
+> A private channel with no RLS policy denies EVERYONE (including your members) —
+> the headless test demonstrates exactly this. Flip the flag before the SQL and
+> all collab breaks. Also confirm **Realtime Authorization is enabled** for the
+> project (Dashboard → Realtime); if, after applying the SQL, even un-revoked
+> members can't join, Authz isn't enforcing — enable it.
+
 ## The hole this closes
 
 The live collab channel (`klypix-canvas-<blobId>`) is a **public** Supabase
