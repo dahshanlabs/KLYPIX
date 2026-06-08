@@ -57,6 +57,38 @@ export function resolveClaudeConfigPath(): { path: string; exists: boolean; vari
     return { path: std.path, exists: false, variant: 'standard', allExisting: [] };
 }
 
+// Other MCP clients use the SAME { mcpServers: {...} } config shape as Claude
+// Desktop, so the atomic merger works unchanged — only the file location differs.
+//   • Cursor → ~/.cursor/mcp.json
+//   • Cline (saoudrizwan.claude-dev) → <VS Code|Cursor>/User/globalStorage/
+//       saoudrizwan.claude-dev/settings/cline_mcp_settings.json
+export type McpClient = 'claude' | 'cursor' | 'cline';
+
+export function findClientConfigLocations(client: McpClient): ClaudeConfigLocation[] {
+    if (client === 'claude') return findClaudeConfigLocations();
+    const home = os.homedir();
+    const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+    const locs: ClaudeConfigLocation[] = [];
+    if (client === 'cursor') {
+        const p = path.join(home, '.cursor', 'mcp.json');
+        locs.push({ path: p, exists: fileExists(p), variant: 'standard' });
+    } else if (client === 'cline') {
+        for (const editor of ['Code', 'Cursor']) {
+            const p = path.join(appData, editor, 'User', 'globalStorage', 'saoudrizwan.claude-dev', 'settings', 'cline_mcp_settings.json');
+            locs.push({ path: p, exists: fileExists(p), variant: 'standard' });
+        }
+    }
+    return locs;
+}
+
+export function resolveClientConfigPath(client: McpClient): { path: string; exists: boolean; variant: 'standard' | 'store'; allExisting: string[] } {
+    if (client === 'claude') return resolveClaudeConfigPath();
+    const locs = findClientConfigLocations(client);
+    const existing = locs.filter(l => l.exists);
+    if (existing.length) return { path: existing[0].path, exists: true, variant: 'standard', allExisting: existing.map(l => l.path) };
+    return { path: (locs[0] || { path: '' }).path, exists: false, variant: 'standard', allExisting: [] };
+}
+
 export interface ParsedConfig { ok: boolean; data?: any; raw?: string; error?: string; }
 export function safeReadJsonConfig(p: string): ParsedConfig {
     if (!fileExists(p)) return { ok: true, data: {}, raw: '' }; // missing == empty config

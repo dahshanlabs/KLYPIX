@@ -6,7 +6,7 @@ import { promisify } from 'util';
 import fs from 'fs';
 import * as os from 'os';
 import * as offlineManager from './offline/offlineManager';
-import { resolveClaudeConfigPath, safeReadJsonConfig, connectMcpServer } from './configMerger';
+import { resolveClaudeConfigPath, resolveClientConfigPath, safeReadJsonConfig, connectMcpServer } from './configMerger';
 // Prevent EPIPE and other uncaught errors from showing error dialogs
 process.on('uncaughtException', (err: any) => {
     if (err.message.includes('EPIPE') || err.message.includes('broken pipe')) {
@@ -2025,6 +2025,39 @@ ipcMain.handle('mcp:connect-claude-desktop', (_e: any, vaultArg?: string) => {
     // it rather than create a duplicate; otherwise create "klypix-canvas".
     const name = Object.keys(servers).find(k => /klypix/i.test(k)) || 'klypix-canvas';
     const vault = resolveAgentVault(vaultArg);
+    const entry = { command: 'npx', args: ['-y', 'klypix-mcp', '--vault', vault.replace(/\\/g, '/')] };
+    return connectMcpServer({ configPath: res.path, name, entry });
+});
+
+// Generic version for any MCP client (cursor | cline | claude) — same atomic
+// merger, different config file. Powers the "also connect Cursor/Cline" buttons.
+function normClient(c: unknown): 'claude' | 'cursor' | 'cline' {
+    return (c === 'cursor' || c === 'cline') ? c : 'claude';
+}
+ipcMain.handle('mcp:detect-client', (_e: any, client?: string) => {
+    const c = normClient(client);
+    const res = resolveClientConfigPath(c);
+    const parsed = safeReadJsonConfig(res.path);
+    const servers = (parsed.ok && parsed.data?.mcpServers && typeof parsed.data.mcpServers === 'object') ? parsed.data.mcpServers : {};
+    return {
+        client: c,
+        found: res.exists,
+        path: res.path,
+        parseError: parsed.ok ? null : parsed.error,
+        connectedAs: Object.keys(servers).find(k => /klypix/i.test(k)) || null,
+        otherServers: Object.keys(servers).filter(k => !/klypix/i.test(k)),
+        vault: resolveAgentVault(),
+    };
+});
+ipcMain.handle('mcp:connect-client', (_e: any, args?: { client?: string; vault?: string }) => {
+    const c = normClient(args?.client);
+    const res = resolveClientConfigPath(c);
+    if (!res.path) return { ok: false, error: `Couldn't locate a ${c} config location.` };
+    const parsed = safeReadJsonConfig(res.path);
+    if (!parsed.ok) return { ok: false, error: parsed.error };
+    const servers = (parsed.data?.mcpServers && typeof parsed.data.mcpServers === 'object') ? parsed.data.mcpServers : {};
+    const name = Object.keys(servers).find(k => /klypix/i.test(k)) || 'klypix-canvas';
+    const vault = resolveAgentVault(args?.vault);
     const entry = { command: 'npx', args: ['-y', 'klypix-mcp', '--vault', vault.replace(/\\/g, '/')] };
     return connectMcpServer({ configPath: res.path, name, entry });
 });
