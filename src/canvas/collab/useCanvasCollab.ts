@@ -424,6 +424,7 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
             });
         };
 
+        let lastPeersSig = '';
         const computeAndSet = () => {
             if (cancelled) return;
             const presenceState = channel.presenceState() as Record<string, PresenceRow[]>;
@@ -477,6 +478,11 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
             // 2026-05-28 diagnostics: log peer-count changes so the user
             // can see in DevTools when presence_state is/isn't getting
             // populated by remote track() calls.
+            // Skip setPeers (and the re-render) when nothing render-relevant
+            // changed, so the presence POLL below can run often without churn.
+            const sig = flat.map(p => `${p.deviceId}:${p.displayName}:${p.cursorX ?? ''},${p.cursorY ?? ''}:${p.editingItemId ?? ''}:${(p.selectionIds || []).join('|')}`).sort().join(';');
+            if (sig === lastPeersSig) return;
+            lastPeersSig = sig;
             if (flat.length > 0) {
                 console.log(`[collab] peers=${flat.length}:`, flat.map(p => `${p.displayName}(${p.deviceId.slice(0, 8)}…)`).join(', '));
             }
@@ -579,6 +585,23 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
         // Channel subscribe happens once inside acquireCanvasChannel —
         // status changes flow through onStatus above.
 
+        // 2026-06-08 FIX — peer cursors/chips never appeared even though both
+        // peers were SUBSCRIBED + tracked on the same canvas and op-sync worked.
+        // Root cause: the SHARED channel is subscribe()d inside the registry
+        // BEFORE these presence .on('sync'/'join'/'leave') handlers attach, and
+        // a presence binding added AFTER subscribe never fires (broadcast
+        // bindings survive a late attach — which is why op-sync/edits worked but
+        // presence didn't). channel.presenceState() is still maintained
+        // internally regardless of bindings, so we POLL it instead of waiting on
+        // the (missed) sync event: an immediate read + two quick follow-ups to
+        // catch peers already present at attach time, then a steady 1.5s poll so
+        // joins/leaves are picked up. The churn guard in computeAndSet keeps this
+        // cheap (no setPeers unless something render-relevant changed).
+        computeAndSet();
+        const presenceKick1 = window.setTimeout(computeAndSet, 600);
+        const presenceKick2 = window.setTimeout(computeAndSet, 1600);
+        const presencePoll = window.setInterval(computeAndSet, 1500);
+
         // Periodic stale-cursor sweep: every 2s, force a recompute so cursors
         // older than CURSOR_STALE_MS get filtered out. Without this, a peer
         // whose tab drops the network would leave their cursor frozen
@@ -631,6 +654,9 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
             channelRef.current = null;
             window.clearInterval(staleInterval);
             window.clearInterval(heartbeatInterval);
+            window.clearTimeout(presenceKick1);
+            window.clearTimeout(presenceKick2);
+            window.clearInterval(presencePoll);
             // untrack just our presence (other hooks on this same channel
             // may still need it alive). Then release our refCount; the
             // registry tears down the channel when refCount hits 0.
