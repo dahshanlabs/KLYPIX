@@ -33,3 +33,6 @@ npm-debug.log*
 
 # project-brain local capture state
 .claude/brain-capture-state.json
+
+# klypix-mcp .mcpb build artifact
+packages/klypix-mcp/dist/
