@@ -95,6 +95,24 @@ export function acquireCanvasChannel(blobId: string, statusCb?: (status: string)
                 broadcast: { self: false, ack: false },
             },
         });
+        // CRITICAL (proven headlessly): channel.presenceState() only ever
+        // populates if a presence handler is bound BEFORE subscribe(). A
+        // handler bound AFTER subscribe leaves presenceState() permanently
+        // EMPTY (broadcast bindings have no such requirement — which is why
+        // op-sync/edits worked but cursors/peer-chips never appeared). This
+        // shared channel is subscribed HERE in the registry, before any
+        // consumer attaches its handlers — so bind a no-op presence sync NOW to
+        // turn presence ON. Consumers (useCanvasCollab) then read
+        // channel.presenceState() via their poll + their own (post-subscribe)
+        // handlers ride along.
+        // sync + join + leave all required: 'sync' alone left the FIRST peer
+        // unable to see a LATER joiner (asymmetric) — 'join'/'leave' process the
+        // incremental diffs. Headless-proven: this trio bound pre-subscribe →
+        // symmetric convergence; consumers read channel.presenceState() (poll).
+        channel
+            .on('presence', { event: 'sync' }, () => { /* enables presence */ })
+            .on('presence', { event: 'join' }, () => { /* incremental join diff */ })
+            .on('presence', { event: 'leave' }, () => { /* incremental leave diff */ });
         entry = {
             channel,
             refCount: 0,
