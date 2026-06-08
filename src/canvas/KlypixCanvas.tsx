@@ -58,6 +58,7 @@ import { SmartCollectionsPanel } from './layout/SmartCollectionsPanel';
 import { saveTemplate } from './file/templates';
 import { setOpenCanvasLinkHandler } from './items/CanvasLinkItem';
 import { CanvasDashboard } from './dashboard/CanvasDashboard';
+import { usePendingInvitations } from '../hooks/usePendingInvitations';
 import { ShareModal } from './cloud/ShareModal';
 import { Share2, MessageSquare, AlertTriangle } from 'lucide-react';
 import { useCanvasCollab } from './collab/useCanvasCollab';
@@ -176,6 +177,13 @@ interface KlypixCanvasProps {
 
 export function KlypixCanvas({ appVisible = true }: KlypixCanvasProps) {
     const canvasBg = useGridSettings().background;
+    // Pending canvas-invitation count — sourced ONCE here (a single 20s poll
+    // shared across all tabs) and threaded down to every CanvasSurface so its
+    // Home button can badge it, mirroring the Canvas-tab badge. The hook is
+    // event-synced with App's own instance, so the two counts stay in lockstep
+    // without a second poller per tab.
+    const { invitations: pendingInvites } = usePendingInvitations();
+    const pendingInviteCount = pendingInvites.length;
     const [tabs, setTabs] = useState<TabInfo[]>(() => [{
         id: makeTabId(),
         meta: { id: '', title: 'Untitled', dirty: false },
@@ -320,6 +328,7 @@ export function KlypixCanvas({ appVisible = true }: KlypixCanvasProps) {
                                 openLauncherOnMount={t.openLauncherOnMount || launcherForTabId === t.id}
                                 onLauncherDismissed={launcherForTabId === t.id ? () => setLauncherForTabId(null) : undefined}
                                 onCloseCanvas={() => onCloseTab(t.id)}
+                                pendingInviteCount={pendingInviteCount}
                             />
                         </CanvasStoreProvider>
                     </div>
@@ -349,9 +358,13 @@ interface CanvasSurfaceProps {
     /** Close THIS canvas tab. Parent decides what to do when the last tab
      *  closes (currently: spawn a fresh Untitled). */
     onCloseCanvas?: () => void;
+    /** Count of pending canvas invitations — badges the Home button so the
+     *  user knows the launcher (reached via Home) holds something to accept.
+     *  Mirrors the Canvas-tab badge. 0 / undefined → no badge. */
+    pendingInviteCount?: number;
 }
 
-function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath, openLauncherOnMount, onLauncherDismissed, onCloseCanvas }: CanvasSurfaceProps = {}) {
+function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath, openLauncherOnMount, onLauncherDismissed, onCloseCanvas, pendingInviteCount }: CanvasSurfaceProps = {}) {
     const { state, dispatch, commit, pushSnapshot, undo } = useCanvasStore();
 
     // Phase 23: when this tab is active, register a canvas-items reader with
@@ -3364,7 +3377,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 center FAB (see below) so dictation has its own space and
                 doesn't get lost in the file-ops cluster. */}
             <div data-canvas-ui="1" className="absolute top-3 left-3 z-30 no-drag flex items-center gap-1 px-1 py-1 rounded-full bg-black/60 border border-white/10">
-                <FileOpButton label={tLocale('canvas_top.home')} onClick={() => setManualDashboardOpen(true)}><HomeIcon size={13} /></FileOpButton>
+                <FileOpButton label={tLocale('canvas_top.home')} onClick={() => setManualDashboardOpen(true)} badge={pendingInviteCount}><HomeIcon size={13} /></FileOpButton>
                 <span className="w-px h-4 bg-white/10 mx-0.5" />
                 <FileOpButton label={tLocale('canvas_top.new_short')} onClick={file.newFile}><FilePlus2 size={13} /></FileOpButton>
                 <FileOpButton label={tLocale('canvas_top.open_short')} onClick={file.open}><FolderOpen size={13} /></FileOpButton>
@@ -3955,8 +3968,12 @@ interface FileOpButtonProps {
     // Identifier read by outside-click handlers (e.g. OutlineSidebar) so a
     // toggle press isn't treated as an outside click that closes the panel.
     toggle?: string;
+    // Count badge in the upper-right (e.g. pending invitations on Home).
+    // Mirrors the Canvas-tab badge in ModeTabs. 0 / undefined → no badge.
+    // Takes precedence over `indicator` when both would render.
+    badge?: number;
 }
-function FileOpButton({ label, onClick, children, indicator, toggle }: FileOpButtonProps) {
+function FileOpButton({ label, onClick, children, indicator, toggle, badge }: FileOpButtonProps) {
     return (
         <button
             onClick={onClick}
@@ -3965,9 +3982,16 @@ function FileOpButton({ label, onClick, children, indicator, toggle }: FileOpBut
             className="relative w-7 h-7 flex items-center justify-center rounded-full text-white/50 hover:text-white hover:bg-white/10 transition-all cursor-pointer"
         >
             {children}
-            {indicator && (
+            {!!badge && badge > 0 ? (
+                <span
+                    className="absolute -top-1 -right-1 min-w-[14px] h-[14px] rounded-full bg-emerald-500 text-black text-[8px] font-bold flex items-center justify-center px-[3px]"
+                    style={{ lineHeight: 1 }}
+                >
+                    {badge > 9 ? '9+' : badge}
+                </span>
+            ) : indicator ? (
                 <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.7)]" />
-            )}
+            ) : null}
         </button>
     );
 }

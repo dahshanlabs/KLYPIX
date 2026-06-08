@@ -181,7 +181,7 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                 // Surface failure as a window.alert for v1. A nicer toast can
                 // come later — for now we just want the user to see WHY a
                 // shared canvas didn't open.
-                window.alert(`Couldn't open shared canvas: ${res.reason}${res.error ? ' — ' + res.error : ''}`);
+                window.alert(t('canvas.open_shared_failed').replace('{r}', `${res.reason}${res.error ? ' — ' + res.error : ''}`));
             }
         } finally {
             setOpeningPath(null);
@@ -485,7 +485,7 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                                 display: 'flex', alignItems: 'center', gap: 6,
                             }}>
                                 <Users size={10} />
-                                Shared by you
+                                {t('canvas.shared_by_you')}
                             </div>
                             {visible(sharedByYou).map(entry => (
                                 <SharedByYouRow
@@ -547,8 +547,8 @@ function PendingInviteRow({ invite, busy, onAccept, onDecline }: {
     onAccept: () => void;
     onDecline: () => void;
 }) {
-    const title = invite.title_hint || 'Untitled canvas';
-    const inviter = invite.invited_by?.display_name || invite.invited_by?.masked_email || 'Someone';
+    const title = invite.title_hint || t('canvas.untitled_canvas');
+    const inviter = invite.invited_by?.display_name || invite.invited_by?.masked_email || t('canvas.someone');
     // Relative expiry ("expires in 2h"). expires_at is ISO from the server.
     let expiresLabel = '';
     try {
@@ -556,9 +556,13 @@ function PendingInviteRow({ invite, busy, onAccept, onDecline }: {
         if (ms > 0) {
             const hr = Math.floor(ms / 3600000);
             const day = Math.floor(hr / 24);
-            expiresLabel = day >= 1 ? `expires in ${day}d` : hr >= 1 ? `expires in ${hr}h` : 'expires soon';
+            expiresLabel = day >= 1
+                ? t('canvas.expires_in_days').replace('{n}', String(day))
+                : hr >= 1
+                    ? t('canvas.expires_in_hours').replace('{n}', String(hr))
+                    : t('canvas.expires_soon');
         } else {
-            expiresLabel = 'expired';
+            expiresLabel = t('canvas.expired');
         }
     } catch { /* leave blank */ }
     return (
@@ -587,14 +591,14 @@ function PendingInviteRow({ invite, busy, onAccept, onDecline }: {
                     <bdi>{title}</bdi>
                 </div>
                 <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', marginTop: 2 }}>
-                    <bdi>{inviter}</bdi> invited you{expiresLabel ? ` · ${expiresLabel}` : ''}
+                    <bdi>{inviter}</bdi> {t('canvas.invited_you_to')}{expiresLabel ? ` · ${expiresLabel}` : ''}
                 </div>
             </div>
             {/* Decline (subtle) */}
             <button
                 onPointerDown={(e) => { e.stopPropagation(); if (!busy) onDecline(); }}
                 disabled={busy}
-                title="Decline"
+                title={t('canvas.decline')}
                 style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     width: 30, height: 30, borderRadius: 7, flexShrink: 0,
@@ -608,7 +612,7 @@ function PendingInviteRow({ invite, busy, onAccept, onDecline }: {
             <button
                 onPointerDown={(e) => { e.stopPropagation(); if (!busy) onAccept(); }}
                 disabled={busy}
-                title="Accept"
+                title={t('canvas.accept')}
                 style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     gap: 5, height: 30, padding: '0 12px', borderRadius: 7, flexShrink: 0,
@@ -620,7 +624,7 @@ function PendingInviteRow({ invite, busy, onAccept, onDecline }: {
                 {busy
                     ? <span style={{ width: 12, height: 12, border: '2px solid rgba(16,185,129,0.3)', borderTopColor: '#10b981', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.6s linear infinite' }} />
                     : <Check size={14} />}
-                Accept
+                {t('canvas.accept')}
             </button>
         </div>
     );
@@ -666,7 +670,7 @@ function SharedByYouRow({ entry, opening, onOpen }: SharedByYouRowProps) {
                 if (!opening) e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
             }}
             onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-            title={`${entry.filePath}\nShared by you · last push ${pushedAgo}`}
+            title={`${entry.filePath}\n${t('canvas.shared_by_you')} · ${t('canvas.last_shared').replace('{t}', pushedAgo)}`}
         >
             <div style={{
                 width: 36, height: 36, borderRadius: 8,
@@ -686,9 +690,9 @@ function SharedByYouRow({ entry, opening, onOpen }: SharedByYouRowProps) {
                     fontSize: 10, color: 'rgba(255,255,255,0.4)',
                     display: 'flex', alignItems: 'center', gap: 6, marginTop: 2,
                 }}>
-                    <span>last shared {pushedAgo}</span>
+                    <bdi>{t('canvas.last_shared').replace('{t}', pushedAgo)}</bdi>
                     <span style={{ opacity: 0.4 }}>·</span>
-                    <span style={{ color: 'rgba(16, 185, 129, 0.7)' }}>owner</span>
+                    <span style={{ color: 'rgba(16, 185, 129, 0.7)' }}>{t('canvas.role_owner')}</span>
                 </div>
             </div>
         </div>
@@ -712,8 +716,14 @@ interface SharedRowProps {
 // If key_b64 is null (legacy invitation predating key sharing), the row is
 // disabled — UI title explains why.
 function SharedRow({ entry, opening, onOpen, onLeave }: SharedRowProps) {
-    const title = entry.canvas_blobs?.title_hint || 'Untitled canvas';
+    const title = entry.canvas_blobs?.title_hint || t('canvas.untitled_canvas');
     const updatedAt = entry.canvas_blobs?.updated_at;
+    // When the current user accepted the invite (i.e. joined this canvas).
+    // Already fetched by useSharedCanvases — surface it as a friendly relative
+    // time so the user can see how long they've been a collaborator. Falls
+    // back to nothing for legacy rows without an accepted_at.
+    const joinedMs = entry.accepted_at ? new Date(entry.accepted_at).getTime() : NaN;
+    const joinedLabel = Number.isFinite(joinedMs) ? formatRelativeTime(joinedMs) : null;
     const canOpen = !!entry.key_b64;
     return (
         <div
@@ -730,7 +740,11 @@ function SharedRow({ entry, opening, onOpen, onLeave }: SharedRowProps) {
             }}
             onMouseEnter={(e) => { if (canOpen && !opening) e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            title={!canOpen ? 'This invitation was sent before key-sharing landed. Ask the owner for a fresh invite.' : 'Open shared canvas'}
+            title={!canOpen
+                ? t('canvas.invitation_too_old')
+                : updatedAt
+                    ? t('canvas.open_shared_updated').replace('{t}', new Date(updatedAt).toLocaleString())
+                    : t('canvas.open_shared')}
         >
             <div style={{
                 width: 36, height: 36, borderRadius: 8,
@@ -748,9 +762,11 @@ function SharedRow({ entry, opening, onOpen, onLeave }: SharedRowProps) {
                 </div>
                 <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
                     <Clock size={9} />
-                    {updatedAt ? new Date(updatedAt).toLocaleString() : 'unknown date'}
+                    <bdi>{joinedLabel
+                        ? t('canvas.joined').replace('{t}', joinedLabel)
+                        : updatedAt ? new Date(updatedAt).toLocaleString() : t('canvas.unknown_date')}</bdi>
                     <span style={{ opacity: 0.4 }}>·</span>
-                    <span style={{ color: 'rgba(16, 185, 129, 0.7)' }}>editor</span>
+                    <span style={{ color: 'rgba(16, 185, 129, 0.7)' }}>{t('canvas.role_editor')}</span>
                 </div>
             </div>
             {!canOpen && (
@@ -763,14 +779,14 @@ function SharedRow({ entry, opening, onOpen, onLeave }: SharedRowProps) {
                     borderRadius: 5,
                     flexShrink: 0,
                 }}>
-                    no key
+                    {t('canvas.no_key')}
                 </div>
             )}
             <button
                 onPointerDown={(e) => { e.stopPropagation(); }}
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); onLeave(); }}
                 title={t('canvas.remove_shared')}
-                aria-label="Leave shared canvas"
+                aria-label={t('canvas.leave_shared')}
                 style={{
                     padding: 4, borderRadius: 5,
                     background: 'transparent',
