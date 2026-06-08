@@ -379,11 +379,25 @@ export function useCanvasCollab(args: UseCanvasCollabArgs): UseCanvasCollabResul
             if (cancelled) return;
             if (status === 'SUBSCRIBED') {
                 setConnected(true);
-                // Tracking is owned by the re-track effect below (keyed on
-                // [connected, active, userId, displayName]). Flipping connected
-                // true fires it immediately → it track()s if active, untrack()s
-                // if not — on this SAME channel, with no teardown on flap.
-                console.log(`[collab] channel SUBSCRIBED (user=${userId ? userId.slice(0, 8) + '…' : 'provisional'}) on device ${deviceId.slice(0, 12)}… — presence handled by re-track effect`);
+                // Track presence on EVERY (re)subscribe — INCLUDING a canvas/
+                // blobId SWITCH. On a switch the channel changes but `connected`
+                // doesn't cleanly transition false→true at the right moment, so
+                // the re-track effect (keyed on `connected`) does NOT fire on the
+                // new channel — leaving this peer subscribed-but-INVISIBLE (the
+                // exact "both on the same canvas, no cursors" bug). Tracking
+                // here guarantees announcement on the live channel. Gated on
+                // activeRef so a background tab still doesn't announce; the
+                // re-track effect still handles in-place active/identity changes
+                // (double-track is harmless — same row).
+                if (activeRef.current) {
+                    void channel.track({
+                        user_id: userId ?? null,
+                        device_id: deviceId,
+                        display_name: nameRef.current || displayName || 'Guest',
+                        joined_at: Date.now(),
+                    } satisfies PresenceRow);
+                }
+                console.log(`[collab] channel SUBSCRIBED (user=${userId ? userId.slice(0, 8) + '…' : 'provisional'}) on device ${deviceId.slice(0, 12)}… — tracked=${activeRef.current}`);
             } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
                 console.warn(`[collab] channel status: ${status}`);
                 setConnected(false);
