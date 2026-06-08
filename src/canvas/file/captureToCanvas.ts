@@ -34,8 +34,8 @@ export interface CaptureTarget {
 /**
  * Convert a captured base64 JPEG (full-screen or snip) into an ImageItem
  * centered on (worldX, worldY). Mirrors fileToItem's image branch: bytes
- * registered as an asset, optional thumbnail, zoom-compensated display
- * size so the screenshot looks the same size on canvas regardless of zoom.
+ * registered as an asset, optional thumbnail, and a zoom-independent world
+ * size so the screenshot bakes identical geometry on every collaborator's PC.
  */
 export async function base64JpegToImageItem(
     base64: string,
@@ -62,9 +62,15 @@ export async function base64JpegToImageItem(
         const { w: nw, h: nh } = await imageNaturalSize(asset.blobUrl);
         const capW = Math.min(MAX_DEFAULT_W, Math.max(40, nw / HEADROOM));
         const scale = nw > capW ? capW / nw : 1;
-        const vz = Math.max(0.01, target.viewZoom);
-        const w = Math.round((nw * scale) / vz);
-        const h = Math.round((nh * scale) / vz);
+        // Zoom-independent world size: the same screenshot bakes identical world
+        // geometry on every PC, regardless of each viewer's local view.zoom
+        // (which is never synced in collab). Previously we divided by the
+        // capturing PC's zoom, so two collaborators at different zoom levels
+        // sized the image differently relative to hand-drawn shapes. Best-in-
+        // class parity — Figma/tldraw place media at a fixed canvas size, not
+        // scaled by the creator's zoom.
+        const w = Math.round(nw * scale);
+        const h = Math.round(nh * scale);
 
         return {
             id: newId('img'),

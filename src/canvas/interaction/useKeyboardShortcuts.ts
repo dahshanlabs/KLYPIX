@@ -359,8 +359,10 @@ async function pasteFromClipboard({ state, commit, dispatch }: PasteCtx): Promis
     // coords + a repeat-paste stagger offset so rapid pastes don't stack
     // invisibly. NEVER change the view from here — Rule 3.
     const center = nextPasteCenter(state.view);
-    const zoom = Math.max(0.01, state.view.zoom);
-    const targetWorldW = TARGET_PASTE_SCREEN_W / zoom;
+    // Zoom-independent world width: a pasted image bakes the same world size on
+    // every PC regardless of each viewer's local view.zoom (never synced in
+    // collab). Matches Figma/tldraw — placed media has a fixed canvas size.
+    const targetWorldW = TARGET_PASTE_SCREEN_W;
 
     // Canvas owns the clipboard (renderer did a canvas copy and no external
     // change has been observed since). Short-circuit to the in-canvas

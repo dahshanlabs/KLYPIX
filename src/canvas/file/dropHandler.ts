@@ -131,16 +131,16 @@ export async function fileToItem(file: File, target: DropTarget, indexOffset = 0
             const HEADROOM = 2;
             const capW = Math.min(MAX_DEFAULT_W, Math.max(40, nw / HEADROOM));
             const scale = nw > capW ? capW / nw : 1;
-            // Compensate for current view zoom so the image looks
-            // ~520 screen-px wide at any zoom level. At 100% = normal
-            // world size. At 2% = 50× world size → same screen px.
-            const vz = Math.max(0.01, target.viewZoom ?? 1);
+            // Zoom-independent world size: a dropped image bakes the same world
+            // geometry on every PC regardless of each viewer's local view.zoom
+            // (never synced in collab). Best-in-class parity with Figma/tldraw —
+            // placed media has a fixed canvas size, not scaled by the dropper's zoom.
             const image: ImageItem = {
                 ...baseProps,
                 id: newId('img'),
                 type: 'image',
-                w: Math.round((nw * scale) / vz),
-                h: Math.round((nh * scale) / vz),
+                w: Math.round(nw * scale),
+                h: Math.round(nh * scale),
                 src: '',                  // legacy fallback; assetId is the new path
                 assetId: asset.id,
                 thumbnailAssetId,

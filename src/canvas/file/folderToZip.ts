@@ -124,9 +124,9 @@ export async function folderToItem(
         fileName: `${entry.name}.zip`,
     });
 
-    // Counter-zoom so the card looks ~360 screen-px wide regardless of
-    // current view zoom. Matches the convention in fileToItem.
-    const zoomComp = 1 / Math.max(0.01, target.viewZoom ?? 1);
+    // Zoom-independent world size: the folder card bakes the same world size on
+    // every PC regardless of each viewer's local view.zoom (never synced in
+    // collab). Matches Figma/tldraw — placed media has a fixed canvas size.
     const x = target.x + indexOffset * 24;
     const y = target.y + indexOffset * 24;
     const z = target.zIndexStart + indexOffset;
@@ -141,10 +141,10 @@ export async function folderToItem(
         type: 'file',
         x,
         y,
-        w: Math.round(360 * zoomComp),
+        w: 360,
         // Tree view height grows with entry count, capped so a 5000-file
         // folder doesn't produce a card taller than the viewport.
-        h: Math.round(Math.min(440, 96 + manifest.length * 18) * zoomComp),
+        h: Math.min(440, 96 + manifest.length * 18),
         zIndex: z,
         locked: false,
         parentId: null,
