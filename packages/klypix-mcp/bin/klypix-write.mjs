@@ -16,13 +16,14 @@
 //   supports | questions | costs | blocks.
 
 import fs from 'fs';
-import { buildKlypix, atomicWrite } from './klypix-format.mjs';
+import { buildKlypix, atomicWrite } from '../src/klypix-format.mjs';
 
 const args = process.argv.slice(2);
 const outIdx = args.indexOf('--out');
 const outArg = outIdx >= 0 ? args[outIdx + 1] : null;
-// Spec path = first positional that isn't a flag and isn't the --out value
-// (else `--out x.klypix` with a stdin spec mis-reads x as the spec). null → stdin.
+// The spec path is the first POSITIONAL arg that isn't a flag AND isn't the
+// value consumed by --out (else `--out x.klypix` with stdin spec mis-reads x as
+// the spec). null → read the spec from stdin.
 const specPath = args.find((a, i) => !a.startsWith('--') && i !== outIdx + 1) || null;
 
 let spec;
