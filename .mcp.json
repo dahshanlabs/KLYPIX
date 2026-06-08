@@ -2,10 +2,7 @@
   "mcpServers": {
     "klypix-canvas": {
       "command": "node",
-      "args": ["scripts/klypix-mcp-server.mjs"],
-      "env": {
-        "KLYPIX_VAULT": "${KLYPIX_VAULT}"
-      }
+      "args": ["scripts/klypix-mcp-server.mjs", "--vault", "C:/Users/HP/Desktop"]
     }
   }
 }
