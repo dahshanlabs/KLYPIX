@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FilePlus2, FolderOpen, Save, SaveAll, X as CloseIcon, Paperclip, Pin, Copy, Home as HomeIcon } from 'lucide-react';
+import { FilePlus2, FolderOpen, Save, SaveAll, X as CloseIcon, Paperclip, Pin, Copy, Home as HomeIcon, Plug } from 'lucide-react';
 import { t as tLocale, useLocale } from '../i18n/strings';
 
 // Map raw tool keys → translation keys for the bottom-right status bar.
@@ -3385,6 +3385,27 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 <FileOpButton label={tLocale('canvas_top.save_as_short')} onClick={file.saveAs}><SaveAll size={13} /></FileOpButton>
                 <FileOpButton label={tLocale('canvas_top.close_canvas')} onClick={() => onCloseCanvas?.()}><CloseIcon size={13} /></FileOpButton>
                 <FileOpButton label={state.filePath ? tLocale('canvas_top.share_canvas') : tLocale('canvas_top.save_first_share')} onClick={() => setShareOpen(true)}><Share2 size={13} /></FileOpButton>
+                <span className="w-px h-4 bg-white/10 mx-0.5" />
+                {/* "Make this canvas my agent's brain" — point the agent's vault at
+                    this canvas's folder + write the klypix-mcp entry into Claude
+                    Desktop's config (one click; reuses the atomic merger). */}
+                <FileOpButton label="Make this my agent's brain (connect to Claude)" onClick={async () => {
+                    const el = (window as any).electron;
+                    const fp = state.filePath;
+                    if (!fp) {
+                        setToast({ text: 'Save this canvas first, then click again to make it your agent’s brain', id: Date.now(), kind: 'simple' });
+                        try { await file.save(); } catch { /* user cancelled save */ }
+                        return;
+                    }
+                    const folder = fp.replace(/[\\/][^\\/]+$/, '');
+                    try {
+                        await el?.vault?.setDefaultPath?.(folder);
+                        const r = await el?.mcp?.connectClaudeDesktop?.(folder);
+                        setToast({ text: r?.ok ? 'This canvas is now your agent’s brain — restart Claude Desktop, then ask it to read this canvas' : (r?.error || 'Could not connect to Claude Desktop'), id: Date.now(), kind: 'simple' });
+                    } catch {
+                        setToast({ text: 'Connect failed', id: Date.now(), kind: 'simple' });
+                    }
+                }}><Plug size={13} /></FileOpButton>
                 {/* Live collab presence — renders nothing when no peers. */}
                 {collab.peers.length > 0 && (
                     <>
@@ -3849,14 +3870,23 @@ interface AgentToastProps {
 
 function AgentToast({ text, keyVal, simple, onDismiss, onPin }: AgentToastProps) {
     const [hovered, setHovered] = useState(false);
+    // Keep the latest onDismiss in a ref so the auto-dismiss timer below is
+    // NOT a dependency of it. onDismiss (`() => setToast(null)`) is a fresh
+    // closure on every parent render; during live collab the canvas
+    // re-renders many times per second (peer presence/cursors at ~10Hz), so
+    // depending on onDismiss meant the timer was cleared-and-restarted on
+    // every render and never actually fired — leaving status toasts ("Live
+    // collab reconnected") stuck on screen indefinitely.
+    const dismissRef = useRef(onDismiss);
+    dismissRef.current = onDismiss;
     useEffect(() => {
         if (hovered) return;
         // Simple toasts (OCR/system feedback) get a short, fire-and-forget
         // duration. Agent answer toasts keep the 10s pin window.
         const ms = simple ? 2500 : 10_000;
-        const t = setTimeout(onDismiss, ms);
+        const t = setTimeout(() => dismissRef.current(), ms);
         return () => clearTimeout(t);
-    }, [hovered, keyVal, onDismiss, simple]);
+    }, [hovered, keyVal, simple]);
 
     return (
         <div
