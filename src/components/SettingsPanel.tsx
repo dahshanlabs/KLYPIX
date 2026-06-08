@@ -28,7 +28,7 @@ import {
     X, Keyboard, Clipboard as ClipboardIcon, Sparkles, Lock, Info, Plus, Trash2,
     AlertCircle, Check, ChevronLeft, User as UserIcon, Mic, MicOff, Volume2, VolumeX,
     Shield, ShieldOff, Eye, EyeOff, ExternalLink, Globe, FileText, Zap, Bot,
-    Eraser, Download, Minus, Square, Copy as CopyIcon, Languages, FolderOpen,
+    Eraser, Download, Minus, Square, Copy as CopyIcon, Languages, FolderOpen, Plug, Loader2,
 } from 'lucide-react';
 import clsx, { type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -111,7 +111,7 @@ export function SettingsPanel({ onClose, settings, auth, t }: Props) {
     }, [onClose]);
 
     return (
-        <div className="absolute inset-0 z-[200] bg-[#1c1c1c]/97 backdrop-blur-2xl flex flex-col no-drag animate-in fade-in duration-200">
+        <div className="absolute inset-0 z-[200] bg-[#1c1c1c]/[0.97] backdrop-blur-2xl flex flex-col no-drag animate-in fade-in duration-200">
             {/* Title bar — mirrors the chat header (back · title · window controls).
                 The bar itself is `drag` so the user can move the window by
                 grabbing it; inner buttons are `no-drag` so clicks go to the
@@ -166,7 +166,7 @@ export function SettingsPanel({ onClose, settings, auth, t }: Props) {
                                 className={cn(
                                     'flex items-center gap-2.5 px-3 py-2 rounded-lg text-left text-[12.5px] font-semibold transition-all',
                                     active
-                                        ? 'bg-white/8 text-white shadow-sm'
+                                        ? 'bg-white/10 text-white shadow-sm'
                                         : 'text-white/55 hover:text-white/85 hover:bg-white/5',
                                 )}
                             >
@@ -189,7 +189,7 @@ export function SettingsPanel({ onClose, settings, auth, t }: Props) {
                     {section === 'voice' && <VoiceSection settings={settings} tx={tx} />}
                     {section === 'power' && <PowerButtonSection settings={settings} tx={tx} />}
                     {section === 'clipboard' && <ClipboardSection tx={tx} />}
-                    {section === 'canvas' && <div className="flex flex-col gap-6"><VaultSection tx={tx} /><OfflineModelsPanel tx={tx} /></div>}
+                    {section === 'canvas' && <div className="flex flex-col gap-6"><VaultSection tx={tx} /><MCPConnectionSection tx={tx} /><OfflineModelsPanel tx={tx} /></div>}
                     {section === 'privacy' && <PrivacySection settings={settings} tx={tx} />}
                     {section === 'agent' && <AgentSection tx={tx} />}
                     {section === 'about' && <AboutSection tx={tx} />}
@@ -1047,6 +1047,115 @@ function VaultSection({ tx }: { tx: (k: string, fb: string) => string }) {
                         </>
                     )}
                 </div>
+            </div>
+        </Section>
+    );
+}
+
+// One-click "Connect to Claude": writes the klypix-mcp server into the user's
+// claude_desktop_config.json (atomically, preserving their other servers) so
+// their everyday agent can read & write their canvases with no manual config.
+function MCPConnectionSection({ tx }: { tx: (k: string, fb: string) => string }) {
+    const mcp = (window as any).electron?.mcp;
+    const [info, setInfo] = useState<any>(null);
+    const [busy, setBusy] = useState(false);
+    const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
+    const refresh = () => {
+        mcp?.detectClaudeDesktop?.()
+            .then((r: any) => setInfo(r))
+            .catch(() => setInfo({ unavailable: true }));
+    };
+    useEffect(() => { refresh(); }, []);
+
+    const connect = async () => {
+        if (!mcp?.connectClaudeDesktop) return;
+        setBusy(true); setResult(null);
+        try {
+            const r = await mcp.connectClaudeDesktop();
+            if (r?.ok) {
+                setResult({ ok: true, msg: r.action === 'unchanged'
+                    ? tx('settings.mcp.unchanged', "Already connected. If you don't see the tools, restart Claude Desktop.")
+                    : tx('settings.mcp.connected', 'Connected! Restart Claude Desktop, then ask it to "list my canvases".') });
+                refresh();
+            } else {
+                setResult({ ok: false, msg: r?.error || tx('settings.mcp.failed', 'Could not write the Claude config.') });
+            }
+        } catch (e: any) {
+            setResult({ ok: false, msg: e?.message || tx('settings.mcp.failed', 'Could not write the Claude config.') });
+        } finally { setBusy(false); }
+    };
+
+    const connected = !!info?.connectedAs;
+    const parseError = info?.parseError;
+
+    return (
+        <Section
+            title={tx('settings.mcp.title', 'Connect to Claude')}
+            caption={tx('settings.mcp.caption', 'One click lets Claude Desktop read & write your canvases — no config files to edit. Your other MCP servers stay intact.')}
+        >
+            <div className="rounded-xl bg-white/[0.03] border border-white/10 p-4 flex flex-col gap-3">
+                <div className="flex items-start gap-2 text-[12.5px]">
+                    {connected
+                        ? <Check size={15} className="text-emerald-400 mt-0.5 shrink-0" />
+                        : <Plug size={15} className="text-white/45 mt-0.5 shrink-0" />}
+                    <div className="text-white/75">
+                        {info == null && tx('settings.mcp.checking', 'Checking your Claude Desktop config…')}
+                        {info?.unavailable && tx('settings.mcp.unavailable', 'Connection helper unavailable in this build.')}
+                        {info && !info.unavailable && (connected
+                            ? tx('settings.mcp.isConnected', 'Your canvases are connected to Claude Desktop.') + (info.connectedAs ? ` (${info.connectedAs})` : '')
+                            : info.found
+                                ? tx('settings.mcp.foundNotConnected', 'Claude Desktop found — not connected yet.')
+                                : tx('settings.mcp.notFound', "No Claude Desktop config yet — we'll create one when you connect."))}
+                    </div>
+                </div>
+
+                {info?.vault && (
+                    <div className="text-[11.5px] text-white/45">
+                        {tx('settings.mcp.vaultLine', 'Agent reads canvases from:')} <span className="text-white/70 break-all">{info.vault}</span>
+                        <span className="text-white/30"> · {tx('settings.mcp.vaultHint', 'change in the Vault section above')}</span>
+                    </div>
+                )}
+
+                {parseError && (
+                    <div className="flex items-start gap-2 text-[12px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded-lg p-2.5">
+                        <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                        <span>{parseError}</span>
+                    </div>
+                )}
+
+                <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                        onClick={connect}
+                        disabled={busy || !!parseError}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed text-[12.5px] font-medium transition-colors"
+                    >
+                        {busy ? <Loader2 size={14} className="animate-spin" /> : <Plug size={14} />}
+                        {connected ? tx('settings.mcp.update', 'Update connection') : tx('settings.mcp.connect', 'Connect to Claude')}
+                    </button>
+                    {info?.path && (
+                        <button
+                            onClick={() => (window as any).electron?.openExternal?.(info.path)}
+                            className="px-3 py-1.5 rounded-lg bg-white/5 text-white/55 hover:bg-white/10 text-[12.5px] transition-colors"
+                            title={info.path}
+                        >
+                            {tx('settings.mcp.openConfig', 'Open config')}
+                        </button>
+                    )}
+                </div>
+
+                {result && (
+                    <div className={cn('flex items-start gap-2 text-[12px] rounded-lg p-2.5 border',
+                        result.ok ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' : 'text-red-300 bg-red-500/10 border-red-500/20')}>
+                        {result.ok ? <Check size={14} className="mt-0.5 shrink-0" /> : <AlertCircle size={14} className="mt-0.5 shrink-0" />}
+                        <span>{result.msg}</span>
+                    </div>
+                )}
+
+                {connected && Array.isArray(info?.otherServers) && info.otherServers.length > 0 && (
+                    <div className="text-[11px] text-white/35">
+                        {tx('settings.mcp.preserved', 'Other MCP servers kept:')} {info.otherServers.join(', ')}
+                    </div>
+                )}
             </div>
         </Section>
     );

@@ -336,6 +336,12 @@ contextBridge.exposeInMainWorld('electron', {
         removeServer: (name: string) => ipcRenderer.invoke('mcp:remove-server', { name }),
         getConfigPath: () => ipcRenderer.invoke('mcp:get-config-path'),
         getConfigs: () => ipcRenderer.invoke('mcp:get-configs'),
+        // One-click "Connect to Claude" — write klypix-mcp into the user's
+        // claude_desktop_config.json (atomic, preserves their other servers).
+        detectClaudeDesktop: (): Promise<{ found: boolean; path: string; variant: string; parseError: string | null; connectedAs: string | null; otherServers: string[]; vault: string }> =>
+            ipcRenderer.invoke('mcp:detect-claude-desktop'),
+        connectClaudeDesktop: (vault?: string): Promise<{ ok: boolean; action?: string; name?: string; path?: string; backup?: string; otherServers?: string[]; error?: string }> =>
+            ipcRenderer.invoke('mcp:connect-claude-desktop', vault),
     },
     // ── Document Generation ────────────────────────────────────────────────
     generateFile: (opts: any) => ipcRenderer.invoke('generate-file', opts),

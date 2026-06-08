@@ -6,6 +6,7 @@ import { promisify } from 'util';
 import fs from 'fs';
 import * as os from 'os';
 import * as offlineManager from './offline/offlineManager';
+import { resolveClaudeConfigPath, safeReadJsonConfig, connectMcpServer } from './configMerger';
 // Prevent EPIPE and other uncaught errors from showing error dialogs
 process.on('uncaughtException', (err: any) => {
     if (err.message.includes('EPIPE') || err.message.includes('broken pipe')) {
@@ -1988,6 +1989,44 @@ ipcMain.handle('vault:list-canvases', () => {
     };
     visit(root, 0);
     return out;
+});
+
+// ── Connect to Claude (one-click MCP) — write the klypix-mcp server into the
+// user's claude_desktop_config.json so their everyday agent reads/writes their
+// canvases with NO manual JSON editing. The atomic merger (configMerger.ts)
+// preserves any other MCP servers they already have.
+function resolveAgentVault(override?: unknown): string {
+    if (typeof override === 'string' && override.trim()) return override;
+    const v = getVaultPath();
+    if (v) return v;
+    try { return app.getPath('desktop'); } catch { return os.homedir(); }
+}
+ipcMain.handle('mcp:detect-claude-desktop', () => {
+    const res = resolveClaudeConfigPath();
+    const parsed = safeReadJsonConfig(res.path);
+    const servers = (parsed.ok && parsed.data?.mcpServers && typeof parsed.data.mcpServers === 'object') ? parsed.data.mcpServers : {};
+    const connectedAs = Object.keys(servers).find(k => /klypix/i.test(k)) || null;
+    return {
+        found: res.exists,
+        path: res.path,
+        variant: res.variant,
+        parseError: parsed.ok ? null : parsed.error,
+        connectedAs,
+        otherServers: Object.keys(servers).filter(k => !/klypix/i.test(k)),
+        vault: resolveAgentVault(),
+    };
+});
+ipcMain.handle('mcp:connect-claude-desktop', (_e: any, vaultArg?: string) => {
+    const res = resolveClaudeConfigPath();
+    const parsed = safeReadJsonConfig(res.path);
+    if (!parsed.ok) return { ok: false, error: parsed.error };
+    const servers = (parsed.data?.mcpServers && typeof parsed.data.mcpServers === 'object') ? parsed.data.mcpServers : {};
+    // Reuse an existing klypix* entry (e.g. a hand-added "klypix") so we UPDATE
+    // it rather than create a duplicate; otherwise create "klypix-canvas".
+    const name = Object.keys(servers).find(k => /klypix/i.test(k)) || 'klypix-canvas';
+    const vault = resolveAgentVault(vaultArg);
+    const entry = { command: 'npx', args: ['-y', 'klypix-mcp', '--vault', vault.replace(/\\/g, '/')] };
+    return connectMcpServer({ configPath: res.path, name, entry });
 });
 
 // ── Offline models (on-demand OCR/STT install; nothing bundled) ──
