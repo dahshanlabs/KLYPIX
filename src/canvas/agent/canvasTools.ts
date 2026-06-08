@@ -29,7 +29,7 @@ export const CANVAS_TOOLS: FunctionDeclaration[] = [
     },
     {
         name: 'canvas_search',
-        description: 'Full-text search across all canvas text items. Returns matching ids with context.',
+        description: 'Search across ALL canvas items (text, files, images, code, containers). Returns, per hit: id, type, title, a snippet, #tags, position {x,y}, and connection count — so you can locate a card and avoid creating duplicates. Search before you create.',
         parameters: {
             type: SchemaType.OBJECT,
             properties: {
@@ -64,6 +64,29 @@ export const CANVAS_TOOLS: FunctionDeclaration[] = [
                 y: { type: SchemaType.NUMBER },
             },
             required: ['title', 'body', 'x', 'y'],
+        },
+    },
+    {
+        name: 'canvas_write_batch',
+        description: 'Add SEVERAL cards at once without cluttering: cards whose text already exists on the canvas (or repeat within the batch) are skipped, and the rest are stacked so they never overlap. Prefer this over many canvas_create_card calls. Returns {created:[ids], skippedDuplicates:[...]}. Search first, then batch-write what is genuinely new.',
+        parameters: {
+            type: SchemaType.OBJECT,
+            properties: {
+                cards: {
+                    type: SchemaType.ARRAY,
+                    description: 'Cards to add. Each: { title, body }.',
+                    items: {
+                        type: SchemaType.OBJECT,
+                        properties: {
+                            title: { type: SchemaType.STRING },
+                            body: { type: SchemaType.STRING },
+                        },
+                    },
+                },
+                x: { type: SchemaType.NUMBER },
+                y: { type: SchemaType.NUMBER },
+            },
+            required: ['cards'],
         },
     },
     {

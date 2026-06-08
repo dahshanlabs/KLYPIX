@@ -455,18 +455,27 @@ export async function executeToolCall(call: ToolCall, ctx: ToolExecContext): Pro
         }
 
         case 'canvas_search': {
+            // Rich results across ALL item types (not just text) so the agent can
+            // FIND a card — and tell duplicates apart — before it WRITES: returns
+            // id, type, title, a longer snippet, #tags, position, and connection
+            // degree. Mirrors the MCP search_canvases shape.
             const q = String(call.args.query || '').toLowerCase();
             if (!q) return { name: call.name, result: JSON.stringify([]) };
-            const hits: Array<{ id: string; snippet: string }> = [];
+            const hits: Array<{ id: string; type: string; title: string; text: string | null; tags: string[]; pos: { x: number; y: number }; connections: number }> = [];
             for (const id of s.order) {
                 const it = s.items[id];
-                if (!it || it.type !== 'text') continue;
-                const idx = it.content.toLowerCase().indexOf(q);
-                if (idx >= 0) {
-                    const start = Math.max(0, idx - 20);
-                    const end = Math.min(it.content.length, idx + q.length + 40);
-                    hits.push({ id, snippet: it.content.slice(start, end) });
-                }
+                if (!it) continue;
+                const text = it.type === 'text' ? (it.content || '') : '';
+                const title = labelFor(it);
+                if (!(`${text} ${title}`).toLowerCase().includes(q)) continue;
+                const tags = it.type === 'text' ? (it.content.match(/#[\p{L}\w-]+/gu) || []) : [];
+                const degree = Object.values(s.connections).filter((c: any) => c.fromId === id || c.toId === id).length;
+                hits.push({
+                    id, type: it.type, title,
+                    text: text ? text.replace(/\s+/g, ' ').slice(0, 240) : null,
+                    tags, pos: { x: Math.round(it.x), y: Math.round(it.y) }, connections: degree,
+                });
+                if (hits.length >= 20) break;
             }
             return { name: call.name, result: JSON.stringify(hits) };
         }
@@ -521,6 +530,56 @@ export async function executeToolCall(call: ToolCall, ctx: ToolExecContext): Pro
             };
             ctx.dispatch({ type: 'ADD_ITEM', item });
             return { name: call.name, result: JSON.stringify({ id: item.id, ok: true }) };
+        }
+
+        case 'canvas_write_batch': {
+            // Add several cards at once WITHOUT cluttering: skip any whose text
+            // already exists on the canvas (and dups within the batch), and stack
+            // them so they never overlap. Returns created ids + skipped dups so the
+            // agent knows what landed. The curation companion to rich search.
+            const rawCards: any[] = Array.isArray(call.args.cards) ? call.args.cards : [];
+            if (!rawCards.length) return { name: call.name, result: JSON.stringify({ ok: false, error: 'No cards provided.' }) };
+            const norm = (t: string) => t.replace(/\s+/g, ' ').trim().toLowerCase();
+            const existing = new Set<string>();
+            for (const id of s.order) { const it = s.items[id]; if (it?.type === 'text' && it.content) existing.add(norm(it.content)); }
+            const cardW = 420, cardH = 140, gap = 24;
+            const base = resolveAgentCardPosition(s, Number(call.args.x) || 0, Number(call.args.y) || 0, cardW, cardH);
+            const bg = getCurrentGridSettings().background;
+            const created: string[] = [];
+            const skipped: string[] = [];
+            const seenInBatch = new Set<string>();
+            let row = 0;
+            for (const c of rawCards) {
+                const title = String(c?.title || '').trim();
+                const body = String(c?.body ?? c?.content ?? '').trim();
+                const content = title ? `${title.toUpperCase()}\n\n${body}` : body;
+                const key = norm(content);
+                if (!content || existing.has(key) || seenInBatch.has(key)) { skipped.push(title || body.slice(0, 30)); continue; }
+                seenInBatch.add(key);
+                const item: TextItem = {
+                    id: newId('agent'),
+                    type: 'text',
+                    x: base.x,
+                    y: base.y + row * (cardH + gap),
+                    w: cardW,
+                    h: cardH,
+                    zIndex: s.order.length + row,
+                    locked: false,
+                    parentId: null,
+                    createdAt: Date.now(),
+                    createdBy: 'agent',
+                    content,
+                    fontSize: 13,
+                    color: defaultTextColorFor(bg),
+                    border: true,
+                    borderColor: 'rgba(16,185,129,0.5)',
+                    heading: false,
+                };
+                ctx.dispatch({ type: 'ADD_ITEM', item });
+                created.push(item.id);
+                row++;
+            }
+            return { name: call.name, result: JSON.stringify({ ok: true, created, skippedDuplicates: skipped }) };
         }
 
         case 'canvas_connect_items': {
