@@ -322,39 +322,46 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                     below to canvases carrying that #tag. O(1) Set check per row
                     on toggle — no file reads. Hidden when the vault has no tags. */}
                 {tags.length > 0 && (
-                    <div
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onWheel={(e) => e.stopPropagation()}
-                        style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center', maxHeight: 84, overflowY: 'auto' }}
-                    >
-                        {tags.map(({ tag, count }) => {
-                            const key = tag.toLowerCase();
-                            const on = selectedTags.has(key);
-                            return (
+                    <div style={{ marginBottom: 14, flexShrink: 0 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.4)', marginBottom: 7 }}>
+                            FILTER BY TAG
+                        </div>
+                        <div
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onWheel={(e) => e.stopPropagation()}
+                            style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'flex-start', maxHeight: 120, overflowY: 'auto' }}
+                        >
+                            {tags.map(({ tag, count }) => {
+                                const key = tag.toLowerCase();
+                                const on = selectedTags.has(key);
+                                return (
+                                    <button
+                                        key={key}
+                                        onPointerDown={(e) => { e.stopPropagation(); toggleTag(key); }}
+                                        title={`${count} canvas${count === 1 ? '' : 'es'} tagged #${tag}`}
+                                        style={{
+                                            display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0,
+                                            fontSize: 11.5, fontWeight: 600, padding: '4px 10px', borderRadius: 999,
+                                            cursor: 'pointer', whiteSpace: 'nowrap', lineHeight: 1.4,
+                                            background: on ? '#10b981' : 'rgba(16,185,129,0.12)',
+                                            color: on ? '#06281f' : '#10b981',
+                                            border: '1px solid rgba(16,185,129,0.3)',
+                                        }}
+                                    >
+                                        #{tag}
+                                        <span style={{ opacity: 0.6, fontWeight: 500 }}>{count}</span>
+                                    </button>
+                                );
+                            })}
+                            {selectedTags.size > 0 && (
                                 <button
-                                    key={key}
-                                    onPointerDown={(e) => { e.stopPropagation(); toggleTag(key); }}
-                                    title={`${count} canvas${count === 1 ? '' : 'es'}`}
-                                    style={{
-                                        fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 999,
-                                        cursor: 'pointer', whiteSpace: 'nowrap',
-                                        background: on ? '#10b981' : 'rgba(16,185,129,0.12)',
-                                        color: on ? '#06281f' : '#10b981',
-                                        border: '1px solid rgba(16,185,129,0.3)',
-                                    }}
+                                    onPointerDown={(e) => { e.stopPropagation(); setSelectedTags(new Set()); }}
+                                    style={{ fontSize: 11, padding: '4px 10px', borderRadius: 999, cursor: 'pointer', background: 'transparent', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.12)', flexShrink: 0, lineHeight: 1.4 }}
                                 >
-                                    #{tag}
+                                    {t('canvas.clear_filter')} · {matchingPaths?.size ?? 0}
                                 </button>
-                            );
-                        })}
-                        {selectedTags.size > 0 && (
-                            <button
-                                onPointerDown={(e) => { e.stopPropagation(); setSelectedTags(new Set()); }}
-                                style={{ fontSize: 11, padding: '3px 9px', borderRadius: 999, cursor: 'pointer', background: 'transparent', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.12)' }}
-                            >
-                                {t('canvas.clear_filter')} · {matchingPaths?.size ?? 0}
-                            </button>
-                        )}
+                            )}
+                        </div>
                     </div>
                 )}
 
