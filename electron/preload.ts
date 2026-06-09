@@ -343,9 +343,9 @@ contextBridge.exposeInMainWorld('electron', {
         connectClaudeDesktop: (vault?: string): Promise<{ ok: boolean; action?: string; name?: string; path?: string; backup?: string; otherServers?: string[]; error?: string }> =>
             ipcRenderer.invoke('mcp:connect-claude-desktop', vault),
         // Generic — also connect Cursor / Cline (same merger, different config file).
-        detectClient: (client: 'claude' | 'cursor' | 'cline'): Promise<{ client: string; found: boolean; path: string; parseError: string | null; connectedAs: string | null; otherServers: string[]; vault: string }> =>
+        detectClient: (client: 'claude' | 'cursor' | 'cline' | 'claudecode'): Promise<{ client: string; found: boolean; path: string; parseError: string | null; connectedAs: string | null; otherServers: string[]; vault: string }> =>
             ipcRenderer.invoke('mcp:detect-client', client),
-        connectClient: (client: 'claude' | 'cursor' | 'cline', vault?: string): Promise<{ ok: boolean; action?: string; name?: string; path?: string; error?: string }> =>
+        connectClient: (client: 'claude' | 'cursor' | 'cline' | 'claudecode', vault?: string): Promise<{ ok: boolean; action?: string; name?: string; path?: string; error?: string }> =>
             ipcRenderer.invoke('mcp:connect-client', { client, vault }),
     },
     // ── Document Generation ────────────────────────────────────────────────

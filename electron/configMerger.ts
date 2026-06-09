@@ -62,7 +62,7 @@ export function resolveClaudeConfigPath(): { path: string; exists: boolean; vari
 //   • Cursor → ~/.cursor/mcp.json
 //   • Cline (saoudrizwan.claude-dev) → <VS Code|Cursor>/User/globalStorage/
 //       saoudrizwan.claude-dev/settings/cline_mcp_settings.json
-export type McpClient = 'claude' | 'cursor' | 'cline';
+export type McpClient = 'claude' | 'cursor' | 'cline' | 'claudecode';
 
 export function findClientConfigLocations(client: McpClient): ClaudeConfigLocation[] {
     if (client === 'claude') return findClaudeConfigLocations();
@@ -77,6 +77,13 @@ export function findClientConfigLocations(client: McpClient): ClaudeConfigLocati
             const p = path.join(appData, editor, 'User', 'globalStorage', 'saoudrizwan.claude-dev', 'settings', 'cline_mcp_settings.json');
             locs.push({ path: p, exists: fileExists(p), variant: 'standard' });
         }
+    } else if (client === 'claudecode') {
+        // Claude Code (CLI) — user-global MCP servers live at root-level
+        // mcpServers in ~/.claude.json (per the official MCP docs). This file
+        // also holds auth + per-project state, so the atomic add-only merger is
+        // essential — never rewrite it wholesale.
+        const p = path.join(home, '.claude.json');
+        locs.push({ path: p, exists: fileExists(p), variant: 'standard' });
     }
     return locs;
 }

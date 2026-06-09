@@ -2031,8 +2031,8 @@ ipcMain.handle('mcp:connect-claude-desktop', (_e: any, vaultArg?: string) => {
 
 // Generic version for any MCP client (cursor | cline | claude) — same atomic
 // merger, different config file. Powers the "also connect Cursor/Cline" buttons.
-function normClient(c: unknown): 'claude' | 'cursor' | 'cline' {
-    return (c === 'cursor' || c === 'cline') ? c : 'claude';
+function normClient(c: unknown): 'claude' | 'cursor' | 'cline' | 'claudecode' {
+    return (c === 'cursor' || c === 'cline' || c === 'claudecode') ? c : 'claude';
 }
 ipcMain.handle('mcp:detect-client', (_e: any, client?: string) => {
     const c = normClient(client);
@@ -2058,7 +2058,8 @@ ipcMain.handle('mcp:connect-client', (_e: any, args?: { client?: string; vault?:
     const servers = (parsed.data?.mcpServers && typeof parsed.data.mcpServers === 'object') ? parsed.data.mcpServers : {};
     const name = Object.keys(servers).find(k => /klypix/i.test(k)) || 'klypix-canvas';
     const vault = resolveAgentVault(args?.vault);
-    const entry = { command: 'npx', args: ['-y', 'klypix-mcp', '--vault', vault.replace(/\\/g, '/')] };
+    const entry: any = { command: 'npx', args: ['-y', 'klypix-mcp', '--vault', vault.replace(/\\/g, '/')] };
+    if (c === 'claudecode') entry.type = 'stdio'; // Claude Code's JSON needs an explicit stdio type
     return connectMcpServer({ configPath: res.path, name, entry });
 });
 

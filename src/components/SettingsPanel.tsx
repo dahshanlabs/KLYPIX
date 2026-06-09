@@ -28,7 +28,7 @@ import {
     X, Keyboard, Clipboard as ClipboardIcon, Sparkles, Lock, Info, Plus, Trash2,
     AlertCircle, Check, ChevronLeft, User as UserIcon, Mic, MicOff, Volume2, VolumeX,
     Shield, ShieldOff, Eye, EyeOff, ExternalLink, Globe, FileText, Zap, Bot,
-    Eraser, Download, Minus, Square, Copy as CopyIcon, Languages, FolderOpen, Plug, Loader2,
+    Eraser, Download, Minus, Square, Copy as CopyIcon, Languages, FolderOpen, Plug, Loader2, Terminal,
 } from 'lucide-react';
 import clsx, { type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -1085,12 +1085,12 @@ function MCPConnectionSection({ tx }: { tx: (k: string, fb: string) => string })
         } finally { setBusy(false); }
     };
 
-    const connectOther = async (client: 'cursor' | 'cline') => {
+    const connectOther = async (client: 'cursor' | 'cline' | 'claudecode') => {
         if (!mcp?.connectClient) return;
         setBusy(true); setResult(null);
         try {
             const r = await mcp.connectClient(client);
-            const label = client.charAt(0).toUpperCase() + client.slice(1);
+            const label = client === 'claudecode' ? 'Claude Code' : client.charAt(0).toUpperCase() + client.slice(1);
             setResult({ ok: !!r?.ok, msg: r?.ok ? `Connected to ${label} — restart it to see your canvas tools.` : (r?.error || `Could not connect ${label}.`) });
         } catch (e: any) {
             setResult({ ok: false, msg: e?.message || `Could not connect ${client}.` });
@@ -1157,6 +1157,7 @@ function MCPConnectionSection({ tx }: { tx: (k: string, fb: string) => string })
 
                 <div className="flex items-center gap-2 flex-wrap pt-0.5">
                     <span className="text-[11px] text-white/35">{tx('settings.mcp.also', 'Also connect (same canvases):')}</span>
+                    <button onClick={() => connectOther('claudecode')} disabled={busy} className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 text-white/65 hover:bg-white/10 disabled:opacity-40 text-[11.5px] transition-colors"><Terminal size={12} />Claude Code</button>
                     <button onClick={() => connectOther('cursor')} disabled={busy} className="px-2.5 py-1 rounded-lg bg-white/5 text-white/55 hover:bg-white/10 disabled:opacity-40 text-[11.5px] transition-colors">Cursor</button>
                     <button onClick={() => connectOther('cline')} disabled={busy} className="px-2.5 py-1 rounded-lg bg-white/5 text-white/55 hover:bg-white/10 disabled:opacity-40 text-[11.5px] transition-colors">Cline</button>
                 </div>
