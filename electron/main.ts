@@ -279,33 +279,65 @@ while ($true) {
 let psProcess: any = null;
 let psReady = false;
 let psScriptPath = '';
+let psStopping = false;        // true while the app is intentionally stopping the scanner \u2014 suppresses auto-restart
+let psRestartTimer: any = null; // pending auto-restart timer (debounce: at most one restart in flight)
+let psRestartAttempts = 0;      // consecutive restart attempts, for exponential backoff (reset on a healthy round-trip)
 function startPersistentPS() {
     const os = require('os');
     psScriptPath = path.join(os.tmpdir(), 'klypix_scanner.ps1');
     fs.writeFileSync(psScriptPath, '\ufeff' + PS_SCRIPT_CONTENT, 'utf8');
-    psProcess = spawn('powershell', [
+    psStopping = false;
+    const child = spawn('powershell', [
         '-NoProfile', '-NoLogo', '-ExecutionPolicy', 'Bypass', '-File', psScriptPath
     ], {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
     });
+    psProcess = child;
     psReady = true;
-    psProcess.on('exit', (code: any) => {
+    // Guard every handler against firing for a process we've already replaced.
+    // A single death can emit both 'error' and 'exit' (and race a concurrent
+    // EPIPE write-catch). Without the `psProcess !== child` check, a late 'exit'
+    // from an OLD process would null out the HEALTHY new one we just spawned.
+    child.on('exit', (code: any) => {
+        if (psProcess !== child) return;
         console.log(`[PersistentPS] Exited with code ${code}`);
         psReady = false;
         psProcess = null;
+        schedulePSRestart(`exited (code ${code})`);
     });
-    psProcess.on('error', (err: any) => {
+    child.on('error', (err: any) => {
+        if (psProcess !== child) return;
         console.error('[PersistentPS] Error:', err.message);
         psReady = false;
         psProcess = null;
+        schedulePSRestart(`spawn error: ${err.message}`);
     });
-    psProcess.stderr?.on('data', (data: any) => {
+    child.stderr?.on('data', (data: any) => {
         const msg = data.toString().trim();
         if (msg)
             console.warn('[PersistentPS stderr]', msg);
     });
     console.log('[PersistentPS] Started');
+}
+// Auto-restart the window scanner if it dies. Previously a death via the
+// 'exit'/'error' handlers was PERMANENT \u2014 only an EPIPE on the next write
+// restarted it \u2014 so once the scanner died, every getActiveWindowInfo fell back
+// to a slow per-call `powershell` spawn. That is the "Alt+Space gets sluggish
+// after a while" half of the reported bug. Debounced (one restart in flight),
+// exponential backoff capped at 30s, and suppressed during intentional shutdown.
+function schedulePSRestart(reason: string) {
+    if (psStopping) return;          // app is quitting / stopPersistentPS was called
+    if (psRestartTimer) return;      // a restart is already pending
+    const delay = Math.min(30000, 1000 * Math.pow(2, psRestartAttempts));
+    psRestartAttempts++;
+    console.warn(`[PersistentPS] ${reason} \u2014 restarting in ${delay}ms (attempt ${psRestartAttempts})`);
+    psRestartTimer = setTimeout(() => {
+        psRestartTimer = null;
+        if (psStopping) return;
+        try { startPersistentPS(); }
+        catch (e: any) { console.error('[PersistentPS] Restart failed:', e?.message); schedulePSRestart('restart threw'); }
+    }, delay);
 }
 function sendPSCommand(command: string, timeoutMs = 12000): Promise<string[]> {
     return new Promise((resolve, reject) => {
@@ -333,6 +365,7 @@ function sendPSCommand(command: string, timeoutMs = 12000): Promise<string[]> {
                 done = true;
                 clearTimeout(timer);
                 cleanup();
+                psRestartAttempts = 0; // a completed round-trip means the scanner is healthy → reset backoff
                 const startIdx = output.indexOf('<<BEGIN_RESULT>>') + '<<BEGIN_RESULT>>'.length;
                 const endIdx = output.indexOf('<<END_RESULT>>');
                 const resultBlock = output.substring(startIdx, endIdx).trim();
@@ -349,15 +382,21 @@ function sendPSCommand(command: string, timeoutMs = 12000): Promise<string[]> {
         catch (writeErr: any) {
             done = true;
             cleanup();
-            // EPIPE = PS process died, try to restart it
-            console.error('[PersistentPS] Write failed, restarting:', writeErr.message);
+            // EPIPE = PS process died mid-write. Drop the dead process and route
+            // through the shared debounced restart so a concurrent 'exit'/'error'
+            // handler can't double-spawn. (Nulling psProcess first makes that
+            // process's own exit handler short-circuit on the `!== child` guard.)
+            console.error('[PersistentPS] Write failed:', writeErr.message);
             psReady = false;
-            startPersistentPS();
+            if (psProcess) { try { psProcess.kill(); } catch { /* no-op */ } psProcess = null; }
+            schedulePSRestart('pipe broken (EPIPE)');
             reject(new Error('PS process pipe broken, restarting'));
         }
     });
 }
 function stopPersistentPS() {
+    psStopping = true;                 // intentional stop → suppress auto-restart
+    if (psRestartTimer) { clearTimeout(psRestartTimer); psRestartTimer = null; }
     if (psProcess && psProcess.stdin) {
         try {
             psProcess.stdin.write('EXIT\n');
@@ -877,6 +916,37 @@ async function toggleWindow() {
     if (!mainWindow)
         return;
     if (mainWindow.isVisible() && !mainWindow.isMinimized()) {
+        // ── Summon-to-front for the canvas-fullscreen window ──────────────────
+        // The small overlay is alwaysOnTop, so "visible" always means the user
+        // can see it → the pure toggle below is correct, and we must NOT gate it
+        // on isFocused() (focus is unreliable on transparent+alwaysOnTop windows;
+        // this file patches around that in ~5 places). But the canvas-FULLSCREEN
+        // window is a normal taskbar app — applyOverlayMode(false) drops
+        // alwaysOnTop — so it can be fully occluded by another app (your IDE)
+        // while still isVisible()===true. The old guard then HID that already-
+        // invisible window, so the first Alt+Space looked dead and a second was
+        // needed. Here we RAISE it instead. preCanvasFullscreenBounds is the
+        // fullscreen-mode marker; isFocused() is reliable for this window
+        // precisely because it is NOT alwaysOnTop.
+        if (preCanvasFullscreenBounds && !mainWindow.isFocused()) {
+            // Reuse the two raise techniques already proven in this file: the
+            // app-level focus steal + window/webContents focus (focus-window
+            // IPC) and show()+focus() (second-instance handler); moveTop() fixes
+            // z-order. Deliberately: no setOpacity(0)/fade (the window is already
+            // visible, so fading 0→1 IS the flicker the user reported); do NOT
+            // touch alwaysOnTop/skipTaskbar (keep it a normal taskbar window so
+            // Win+D still minimizes it); do NOT write savedBounds (that is the
+            // hide path's job, and writing it here would desync fullscreen
+            // restore).
+            try {
+                app.focus({ steal: true });
+                mainWindow.show();
+                mainWindow.moveTop();
+                mainWindow.focus();
+                mainWindow.webContents.focus();
+            } catch { /* no-op */ }
+            return;
+        }
         // If canvas was in fullscreen, remember it AND save the pre-canvas
         // small bounds separately so re-opening goes back to full size,
         // exiting canvas keeps the small position.
