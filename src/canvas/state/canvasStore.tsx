@@ -56,10 +56,27 @@ function topZKeyForParent(
 // LOAD_FILE to harden against pre-v2 files that slipped past the migration
 // (hand-edited canvas.json, bugs in the loader, etc.). Items that already
 // have a zKey keep theirs untouched — this is NOT a re-sort, just a fill.
+// A zKey is valid iff the fractional-indexing lib accepts it as a neighbor.
+// Agent/CLI writers historically emitted hand-rolled keys like 'z00013'/'a0000'
+// that the lib REJECTS — see ensureZKeys.
+function isValidZKey(k: string): boolean {
+    try { generateKeyBetween(k, null); return true; } catch { return false; }
+}
+
 function ensureZKeys(
     items: Record<string, CanvasItem>,
     order: string[],
 ): Record<string, CanvasItem> {
+    // Heal INVALID keys first. An agent/CLI-written canvas can carry z-keys the
+    // fractional-indexing lib rejects (e.g. 'z00013'); opening it then adding an
+    // item threw "invalid order key" and unmounted the whole canvas. We can't
+    // safely interleave around a bad neighbor, so if ANY key is invalid rebuild
+    // the whole sequence from `order` (the z-order source of truth → stacking is
+    // preserved). This is what makes agent-written canvases openable.
+    for (const id of order) {
+        const k = items[id]?.zKey;
+        if (k && !isValidZKey(k)) return syncOrderKeys(items, order);
+    }
     const missingIndexes: number[] = [];
     for (let i = 0; i < order.length; i++) {
         const it = items[order[i]];
