@@ -2133,6 +2133,20 @@ ipcMain.handle('mcp:connect-client', (_e: any, args?: { client?: string; vault?:
     return connectMcpServer({ configPath: res.path, name, entry });
 });
 
+// "Make this canvas my project brain" — write a PER-PROJECT .mcp.json into the
+// chosen folder pointing klypix-mcp at that folder, so ANY coding agent opened
+// there (Claude Code, Cursor, Cline, Antigravity…) auto-reads its brain.klypix.
+// Per-project (not global) → each project folder is its own brain scope, and
+// multiple agents in the same folder share the one brain.klypix file. Atomic
+// merge preserves any existing .mcp.json servers.
+ipcMain.handle('mcp:write-project-config', (_e: any, folder?: string) => {
+    if (typeof folder !== 'string' || !folder) return { ok: false, error: 'No project folder given.' };
+    const cfgPath = path.join(folder, '.mcp.json');
+    const vault = folder.replace(/\\/g, '/');
+    const entry = { type: 'stdio', command: 'npx', args: ['-y', 'klypix-mcp', '--vault', vault] };
+    return connectMcpServer({ configPath: cfgPath, name: 'klypix-canvas', entry });
+});
+
 // ── Offline models (on-demand OCR/STT install; nothing bundled) ──
 ipcMain.handle('offline:list', () => offlineManager.getCatalogWithState());
 ipcMain.handle('offline:install', (_e: any, id: string) =>

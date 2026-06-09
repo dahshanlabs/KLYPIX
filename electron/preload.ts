@@ -347,6 +347,9 @@ contextBridge.exposeInMainWorld('electron', {
             ipcRenderer.invoke('mcp:detect-client', client),
         connectClient: (client: 'claude' | 'cursor' | 'cline' | 'claudecode', vault?: string): Promise<{ ok: boolean; action?: string; name?: string; path?: string; error?: string }> =>
             ipcRenderer.invoke('mcp:connect-client', { client, vault }),
+        // Write a per-project .mcp.json into a folder (for "make this my project brain").
+        writeProjectConfig: (folder: string): Promise<{ ok: boolean; action?: string; path?: string; error?: string }> =>
+            ipcRenderer.invoke('mcp:write-project-config', folder),
     },
     // ── Document Generation ────────────────────────────────────────────────
     generateFile: (opts: any) => ipcRenderer.invoke('generate-file', opts),

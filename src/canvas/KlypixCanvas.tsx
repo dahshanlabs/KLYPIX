@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { FilePlus2, FolderOpen, Save, SaveAll, X as CloseIcon, Paperclip, Pin, Copy, Home as HomeIcon, Plug } from 'lucide-react';
 import { t as tLocale, useLocale } from '../i18n/strings';
 
@@ -173,9 +174,18 @@ interface KlypixCanvasProps {
     /** App-level visibility. False when the user is on the Chat tab — we stay
         mounted to preserve tab state, but hide visually and gate side effects. */
     appVisible?: boolean;
+    /** When provided (canvas mode), the file-tab strip is PORTALED into this
+        element — the app title bar — so the tabs live in the header (browser /
+        VS Code style) instead of a separate faded strip below it. Null in chat
+        mode (the slot isn't rendered); the tab bar then simply doesn't render. */
+    tabSlot?: HTMLElement | null;
+    /** Measured title-bar height. The canvas is absolute inset-0 behind the
+        z-100 title bar; we pad the surface down by this so the top file-ops bar
+        and toasts clear the header (the old tab strip used to be that spacer). */
+    headerOffset?: number;
 }
 
-export function KlypixCanvas({ appVisible = true }: KlypixCanvasProps) {
+export function KlypixCanvas({ appVisible = true, tabSlot = null, headerOffset = 0 }: KlypixCanvasProps) {
     const canvasBg = useGridSettings().background;
     // Pending canvas-invitation count — sourced ONCE here (a single 20s poll
     // shared across all tabs) and threaded down to every CanvasSurface so its
@@ -303,15 +313,23 @@ export function KlypixCanvas({ appVisible = true }: KlypixCanvasProps) {
             // when a user types past the viewport edge — that was moving
             // the toolbar/minimap/footer off-screen on long lines.
             className="absolute inset-0 z-[70] no-drag flex flex-col"
-            style={{ overflow: 'clip', backgroundColor: canvasBg, display: appVisible ? 'flex' : 'none' }}
+            style={{ overflow: 'clip', backgroundColor: canvasBg, display: appVisible ? 'flex' : 'none', paddingTop: headerOffset }}
         >
-            <TabBar
-                tabs={tabMetas}
-                activeId={activeId}
-                onSwitch={setActiveId}
-                onClose={onCloseTab}
-                onNew={onNewTab}
-            />
+            {/* Tabs live in the app title bar (portaled into tabSlot), not as a
+                separate strip below it. When the slot isn't mounted yet (the
+                frame a chat→canvas switch commits) we render nothing rather than
+                briefly flashing the old strip — the canvas surface just fills. */}
+            {tabSlot && createPortal(
+                <TabBar
+                    tabs={tabMetas}
+                    activeId={activeId}
+                    onSwitch={setActiveId}
+                    onClose={onCloseTab}
+                    onNew={onNewTab}
+                    variant="inline"
+                />,
+                tabSlot,
+            )}
             <div className="relative flex-1">
                 {tabs.map((t) => (
                     <div
@@ -3386,25 +3404,25 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 <FileOpButton label={tLocale('canvas_top.close_canvas')} onClick={() => onCloseCanvas?.()}><CloseIcon size={13} /></FileOpButton>
                 <FileOpButton label={state.filePath ? tLocale('canvas_top.share_canvas') : tLocale('canvas_top.save_first_share')} onClick={() => setShareOpen(true)}><Share2 size={13} /></FileOpButton>
                 <span className="w-px h-4 bg-white/10 mx-0.5" />
-                {/* "Make this canvas my agent's brain" — point the agent's vault at
-                    this canvas's folder + write the klypix-mcp entry into Claude
-                    Desktop's config (one click; reuses the atomic merger). */}
-                <FileOpButton label="Make this my agent's brain (connect to Claude)" onClick={async () => {
+                {/* "Make this canvas a project brain" — saves THIS canvas as
+                    <folder>/brain.klypix AND writes a per-project .mcp.json there,
+                    so any coding agent (Claude Code / Cursor / Cline / Antigravity)
+                    opened in that folder auto-reads it. One click, both jobs. */}
+                <FileOpButton label="Make this canvas a project brain (for coding agents)" onClick={async () => {
                     const el = (window as any).electron;
-                    const fp = state.filePath;
-                    if (!fp) {
-                        setToast({ text: 'Save this canvas first, then click again to make it your agent’s brain', id: Date.now(), kind: 'simple' });
-                        try { await file.save(); } catch { /* user cancelled save */ }
-                        return;
-                    }
-                    const folder = fp.replace(/[\\/][^\\/]+$/, '');
-                    try {
-                        await el?.vault?.setDefaultPath?.(folder);
-                        const r = await el?.mcp?.connectClaudeDesktop?.(folder);
-                        setToast({ text: r?.ok ? 'This canvas is now your agent’s brain — restart Claude Desktop, then ask it to read this canvas' : (r?.error || 'Could not connect to Claude Desktop'), id: Date.now(), kind: 'simple' });
-                    } catch {
-                        setToast({ text: 'Connect failed', id: Date.now(), kind: 'simple' });
-                    }
+                    const folder = await el?.vault?.chooseFolder?.();
+                    if (!folder) return;
+                    setToast({ text: 'Setting up project brain…', id: Date.now(), kind: 'simple' });
+                    const brainPath = String(folder).replace(/[\\/]+$/, '') + '/brain.klypix';
+                    const saved = await file.saveCopyTo?.(brainPath);
+                    if (!saved?.ok) { setToast({ text: saved?.error || 'Could not save brain.klypix', id: Date.now(), kind: 'simple' }); return; }
+                    const r = await el?.mcp?.writeProjectConfig?.(folder);
+                    setToast({
+                        text: r?.ok
+                            ? 'Project brain ready — open your coding agent in that folder; it reads brain.klypix'
+                            : (r?.error || 'Saved brain.klypix, but couldn’t write .mcp.json'),
+                        id: Date.now(), kind: 'simple',
+                    });
                 }}><Plug size={13} /></FileOpButton>
                 {/* Live collab presence — renders nothing when no peers. */}
                 {collab.peers.length > 0 && (

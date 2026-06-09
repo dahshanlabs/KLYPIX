@@ -372,6 +372,19 @@ export function useAnyFile(tabActive = true, skipAutosaveCheck = false) {
         return { ok: false, cancelled: res.cancelled };
     }, [dispatch]);
 
+    // Save a COPY of the current canvas to an explicit .klypix path — no dialog,
+    // no change to the open canvas's filePath/dirty. Used by "Make this my
+    // project brain" to write <folder>/brain.klypix while the user keeps editing
+    // the original.
+    const saveCopyTo = useCallback(async (filePath: string): Promise<{ ok: boolean; error?: string }> => {
+        const api = getApi();
+        if (!api?.saveKlypix) return { ok: false, error: 'canvas save IPC unavailable' };
+        const s = stateRef.current;
+        const v4 = buildV4Payload(s, s.title);
+        const res = await api.saveKlypix({ filePath, ...v4 });
+        return res.ok ? { ok: true } : { ok: false, error: res.error };
+    }, []);
+
     const open = useCallback(async (): Promise<{ ok: boolean; cancelled?: boolean; error?: string }> => {
         const api = getApi();
         if (!api?.open) return { ok: false, error: 'canvas IPC unavailable' };
@@ -563,5 +576,5 @@ export function useAnyFile(tabActive = true, skipAutosaveCheck = false) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tabActive, skipAutosaveCheck]);
 
-    return { newFile, save: doSave, saveAs, open, openByPath, restoreFromSnapshot, restoreSettled, flushAutosaveNow: flushAutosave };
+    return { newFile, save: doSave, saveAs, saveCopyTo, open, openByPath, restoreFromSnapshot, restoreSettled, flushAutosaveNow: flushAutosave };
 }
