@@ -342,14 +342,32 @@ export async function appendToKlypix(buffer, addition) {
 const BRAIN_GEOM = { TITLE_BAR: 40, PAD: 14, CARD_GAP: 10, CARD_W: 300, FONT: 12, LINE_H: 17, START: 80, COL_GAP: 44 };
 BRAIN_GEOM.AREA_W = BRAIN_GEOM.CARD_W + BRAIN_GEOM.PAD * 2;
 
+// Chars that fit on one line at CARD_W / brain font.
+function brainCPL() { return Math.max(8, Math.floor(BRAIN_GEOM.CARD_W / (BRAIN_GEOM.FONT * 0.5))); }
+
+// Hard-wrap text to ~CARD_W by inserting newlines at word boundaries. KLYPIX text
+// cards show a long SINGLE line as-typed (no auto-wrap until you resize), so a
+// captured decision with no newlines runs off the box. Baking in line breaks
+// makes brain cards render as tidy multi-line blocks regardless of that.
+function wrapText(text, cpl = brainCPL()) {
+    const out = [];
+    for (const para of String(text ?? '').split('\n')) {
+        if (para.length <= cpl) { out.push(para); continue; }
+        let line = '';
+        for (const tok of para.split(/(\s+)/)) {
+            if (line && (line + tok).trimEnd().length > cpl) { out.push(line.trimEnd()); line = tok.replace(/^\s+/, ''); }
+            else line += tok;
+            while (line.length > cpl) { out.push(line.slice(0, cpl)); line = line.slice(cpl); } // break an over-long word
+        }
+        if (line.trim()) out.push(line.trimEnd());
+    }
+    return out.join('\n');
+}
+
 function measureCardH(text) {
-    // Estimate WRAPPED lines at CARD_W — captured decisions are long prose with
-    // few explicit newlines; counting only "\n" lines under-sizes them and cards
-    // overlap. ~CARD_W/(FONT*0.5) chars fit per line.
-    const cpl = Math.max(8, Math.floor(BRAIN_GEOM.CARD_W / (BRAIN_GEOM.FONT * 0.5)));
-    let lines = 0;
-    for (const ln of String(text ?? '').split('\n')) lines += Math.max(1, Math.ceil((ln.length || 1) / cpl));
-    return Math.max(40, Math.round(lines * BRAIN_GEOM.LINE_H) + 18);
+    // text is already hard-wrapped to ≤CPL, so \n-line count is the real height.
+    const lines = String(text ?? '').split('\n').length;
+    return Math.max(40, Math.round(Math.max(1, lines) * BRAIN_GEOM.LINE_H) + 16);
 }
 // Container the next NEW area goes to the right of the rightmost item.
 function nextContainerX(canvas) {
@@ -427,12 +445,13 @@ export async function appendIntoContainers(buffer, addition) {
         const area = (card.area || areaOfCard(card)).toString().trim() || 'Notes';
         const ctnId = ensureContainer(area);
         const ctn = canvas.positions[ctnId];
-        const h = measureCardH(card.text);
+        const wrapped = wrapText(String(card.text));
+        const h = measureCardH(wrapped);
         const cy = containerChildBottom(canvas, ctnId);
         const id = `txt_${rand()}`;
         zip.file(`items/${shard(id)}/${id}.json`, JSON.stringify({
             type: 'text', locked: false, createdAt: now, createdBy: 'agent',
-            content: String(card.text), fontSize: G.FONT,
+            content: wrapped, fontSize: G.FONT,
             color: card.color || '#e8e8ed', border: true, borderColor: card.color || 'rgba(16,185,129,0.35)',
             fillColor: 'rgba(18,18,26,0.85)', heading: !!card.heading, fontFamily: 'Thmanyah Sans',
             fontWeight: card.heading ? 'bold' : 'normal', fontStyle: 'normal',
@@ -464,9 +483,10 @@ export async function tidyBrain(buffer) {
     const meta = new Map(); // id -> { h }
     for (const c of struct.cards) {
         if (c.type === 'container') continue;
-        meta.set(c.id, { h: measureCardH(String(c.text ?? '')) });
+        const wrapped = wrapText(String(c.text ?? ''));
+        meta.set(c.id, { h: measureCardH(wrapped) });
         const ip = `items/${shard(c.id)}/${c.id}.json`;
-        try { const f = zip.file(ip); if (f) { const j = JSON.parse(await f.async('string')); j.fontSize = G.FONT; zip.file(ip, JSON.stringify(j)); } } catch { /* leave as-is */ }
+        try { const f = zip.file(ip); if (f) { const j = JSON.parse(await f.async('string')); j.fontSize = G.FONT; j.content = wrapped; zip.file(ip, JSON.stringify(j)); } } catch { /* leave as-is */ }
     }
 
     const containerIds = new Set(struct.cards.filter(c => c.type === 'container').map(c => c.id));
