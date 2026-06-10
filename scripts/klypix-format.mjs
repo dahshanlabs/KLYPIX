@@ -456,7 +456,7 @@ export async function appendIntoContainers(buffer, addition) {
         zip.file(`items/${shard(id)}/${id}.json`, JSON.stringify({
             type: 'text', locked: false, createdAt: now, createdBy: 'agent',
             content: wrapped, fontSize: G.FONT,
-            color: card.color || '#e8e8ed', border: true, borderColor: card.color || 'rgba(16,185,129,0.35)',
+            color: card.color || '#e8e8ed', border: true, borderColor: card.borderColor || card.color || 'rgba(16,185,129,0.45)',
             fillColor: 'rgba(18,18,26,0.85)', heading: !!card.heading, fontFamily: 'Thmanyah Sans',
             fontWeight: card.heading ? 'bold' : 'normal', fontStyle: 'normal',
             textDecoration: 'none', textAlign: 'left', verticalAlign: 'top',

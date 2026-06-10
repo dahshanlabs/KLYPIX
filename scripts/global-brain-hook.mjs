@@ -24,7 +24,8 @@ import crypto from 'crypto';
 const CWD = process.cwd();
 const BRAIN = path.resolve(CWD, 'brain.klypix');
 const STATE = path.resolve(CWD, '.claude', 'brain-capture-state.json');
-const MARKER = /🧠\s*BRAIN\s*(?:\[([^\]]+)\])?\s*:\s*(.+)$/i;
+// 🧠 BRAIN [Area]: decision  ·  [Area] ?: open question  ·  [Area] !: milestone
+const MARKER = /🧠\s*BRAIN\s*(?:\[([^\]]+)\])?\s*([?!]?)\s*:\s*(.+)$/i;
 const sha = (s) => crypto.createHash('sha1').update(s).digest('hex').slice(0, 16);
 
 const readState = () => { try { return new Set(JSON.parse(fs.readFileSync(STATE, 'utf8')).seen || []); } catch { return new Set(); } };
@@ -54,21 +55,25 @@ async function capture(lib) {
         if (!text.includes('🧠')) continue;
         for (const raw of text.split('\n')) {
             const m = MARKER.exec(raw.trim()); if (!m) continue;
-            const area = (m[1] || '').trim(), body = m[2].trim(); if (!body) continue;
-            const card = (area ? `${area}: ${body}` : body) + (area ? `\n#${area.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : '');
+            const area = (m[1] || '').trim(), type = m[2] || '', body = m[3].trim(); if (!body) continue;
+            // Type → scannable prefix + border color: ? open question (amber),
+            // ! milestone (blue), else decision (green).
+            const prefix = type === '?' ? '❓ ' : type === '!' ? '🏁 ' : '';
+            const borderColor = type === '?' ? 'rgba(245,166,35,0.8)' : type === '!' ? 'rgba(59,130,246,0.8)' : 'rgba(16,185,129,0.6)';
+            const card = (area ? `${area}: ${prefix}${body}` : `${prefix}${body}`) + (area ? `\n#${area.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : '');
             // Same hash as the legacy brain-capture.mjs so a project's existing
             // state file stays compatible (no double-capture during the switch
             // to the global hook). State is already per-project; the vault
             // cross-brain footgun is handled by per-brain state files in Phase 3.
             const key = sha((area + '|' + body).toLowerCase());
             if (seen.has(key)) continue;
-            seen.add(key); cards.push({ text: card, area });
+            seen.add(key); cards.push({ text: card, area, borderColor });
         }
     }
     if (!cards.length) return;
     // Route each captured decision INTO its [Area] container (find-or-create) so
     // the brain stays a clean areas-as-containers map, not a rightward strip.
-    const buf = await lib.appendIntoContainers(fs.readFileSync(BRAIN), { cards: cards.map(c => ({ text: c.text, color: '#8b9cff', area: c.area })) });
+    const buf = await lib.appendIntoContainers(fs.readFileSync(BRAIN), { cards: cards.map(c => ({ text: c.text, color: '#e8e8ed', borderColor: c.borderColor, area: c.area })) });
     await lib.atomicWrite(BRAIN, buf);
     writeState(seen);
     process.stderr.write(`[brain] captured ${cards.length} decision(s) → brain.klypix\n`);
