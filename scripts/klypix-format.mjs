@@ -335,6 +335,162 @@ export async function appendToKlypix(buffer, addition) {
     return out;
 }
 
+// ── Area-grouped layout (project brain) ──────────────────────────────────────
+// Captured decisions carry an [Area]; these route cards INTO titled area
+// containers (find-or-create) so the brain stays a clean areas-as-containers map
+// instead of a rightward strip. Non-destructive, valid z-keys, atomic round-trip.
+const BRAIN_GEOM = { TITLE_BAR: 44, PAD: 16, CARD_GAP: 12, CARD_W: 280, FONT: 15, LINE_H: 21, START: 80, COL_GAP: 48 };
+BRAIN_GEOM.AREA_W = BRAIN_GEOM.CARD_W + BRAIN_GEOM.PAD * 2;
+
+function measureCardH(text) {
+    const lines = String(text ?? '').split('\n');
+    return Math.max(40, Math.round(lines.length * BRAIN_GEOM.LINE_H) + 18);
+}
+// Container the next NEW area goes to the right of the rightmost item.
+function nextContainerX(canvas) {
+    const all = Object.values(canvas.positions);
+    return all.length ? Math.max(...all.map(p => (p.x || 0) + (p.w || BRAIN_GEOM.AREA_W))) + BRAIN_GEOM.COL_GAP : BRAIN_GEOM.START;
+}
+// Bottom y of a container's current children (where the next card stacks).
+function containerChildBottom(canvas, ctnId) {
+    const ctn = canvas.positions[ctnId];
+    let cy = ctn.y + BRAIN_GEOM.TITLE_BAR + BRAIN_GEOM.PAD;
+    for (const id of canvas.order) {
+        const p = canvas.positions[id];
+        if (p && p.parentId === ctnId) cy = Math.max(cy, p.y + (p.h || 40) + BRAIN_GEOM.CARD_GAP);
+    }
+    return cy;
+}
+// Best-effort area name for a card: "Area: …" first-line prefix → first #tag → 'Notes'.
+function areaOfCard(card) {
+    const line1 = String(card.text || '').split('\n')[0].trim();
+    const m = line1.match(/^([^:\n]{1,40}):\s+\S/);
+    if (m) return m[1].trim();
+    if (Array.isArray(card.tags) && card.tags[0]) return String(card.tags[0]);
+    return 'Notes';
+}
+async function finalizeBrainZip(zip, canvas, manifest, now) {
+    if (manifest) {
+        manifest.updatedAt = new Date(now).toISOString();
+        manifest.stats = manifest.stats || {};
+        manifest.stats.itemCount = canvas.order.length;
+        zip.file('manifest.json', JSON.stringify(manifest));
+    }
+    zip.file('canvas.json', JSON.stringify(canvas));
+    const out = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    try { await parseKlypix(out); }
+    catch (e) { throw new Error('brain write produced an unparseable .klypix — aborting to protect the brain: ' + (e?.message || e)); }
+    return out;
+}
+
+// Append cards routed INTO their [Area] container (find-or-create), so captures
+// self-organize. addition.cards = [{ text, color?, area? }]. Non-destructive to
+// existing items. Falls back to the flat appender for legacy/no-positions files.
+export async function appendIntoContainers(buffer, addition) {
+    const { zip, canvas, manifest, isV4, struct } = await parseKlypix(buffer);
+    if (!isV4 || !canvas.positions) return appendToKlypix(buffer, addition);
+    const newCards = (addition?.cards || []).filter(c => c && typeof c.text === 'string' && c.text.trim());
+    if (newCards.length === 0) throw new Error('nothing to add — provide cards[] with text');
+
+    const now = Date.now();
+    const rand = () => Math.random().toString(36).slice(2, 10);
+    const G = BRAIN_GEOM;
+    canvas.order = Array.isArray(canvas.order) ? canvas.order : [];
+    const existingTop = Object.values(canvas.positions).map(p => p && p.zKey).filter(k => k && isValidZKey(k)).sort().pop() || null;
+    const nextZKey = makeZKeyGen(existingTop);
+
+    const byTitle = new Map();
+    for (const c of struct.cards) if (c.type === 'container') { const t = (c.title || '').trim().toLowerCase(); if (t && !byTitle.has(t)) byTitle.set(t, c.id); }
+    let ctnX = nextContainerX(canvas);
+    const ensureContainer = (area) => {
+        const key = area.toLowerCase();
+        let id = byTitle.get(key);
+        if (id) return id;
+        id = `ctn_${rand()}`;
+        zip.file(`items/${shard(id)}/${id}.json`, JSON.stringify({
+            type: 'container', locked: false, createdAt: now, createdBy: 'agent',
+            title: area, collapsed: false, scopeLocked: false, borderColor: '#10b981',
+        }));
+        canvas.positions[id] = { x: ctnX, y: G.START, w: G.AREA_W, h: G.TITLE_BAR + G.PAD * 2, zKey: nextZKey(), zIndex: canvas.order.length, parentId: null };
+        canvas.order.push(id);
+        byTitle.set(key, id);
+        ctnX += G.AREA_W + G.COL_GAP;
+        return id;
+    };
+
+    for (const card of newCards) {
+        const area = (card.area || areaOfCard(card)).toString().trim() || 'Notes';
+        const ctnId = ensureContainer(area);
+        const ctn = canvas.positions[ctnId];
+        const h = measureCardH(card.text);
+        const cy = containerChildBottom(canvas, ctnId);
+        const id = `txt_${rand()}`;
+        zip.file(`items/${shard(id)}/${id}.json`, JSON.stringify({
+            type: 'text', locked: false, createdAt: now, createdBy: 'agent',
+            content: String(card.text), fontSize: G.FONT,
+            color: card.color || '#e8e8ed', border: true, borderColor: card.color || 'rgba(16,185,129,0.35)',
+            fillColor: 'rgba(18,18,26,0.85)', heading: !!card.heading, fontFamily: 'Thmanyah Sans',
+            fontWeight: card.heading ? 'bold' : 'normal', fontStyle: 'normal',
+            textDecoration: 'none', textAlign: 'left', verticalAlign: 'top',
+        }));
+        canvas.positions[id] = { x: ctn.x + G.PAD, y: cy, w: G.CARD_W, h, zKey: nextZKey(), zIndex: canvas.order.length, parentId: ctnId };
+        canvas.order.push(id);
+        ctn.h = (cy + h + G.PAD) - ctn.y;
+    }
+    return finalizeBrainZip(zip, canvas, manifest, now);
+}
+
+// Tidy an EXISTING brain: re-parent every root-level text card into its [Area]
+// container (find-or-create), grouping the messy strip into clean areas. Moves
+// cards (keeps their ids → connections preserved); never drops a card. Caller
+// should back up first; this round-trip-verifies before returning.
+export async function tidyBrain(buffer) {
+    const { zip, canvas, manifest, isV4, struct } = await parseKlypix(buffer);
+    if (!isV4 || !canvas.positions) throw new Error('tidy supports v4 .klypix only');
+    const now = Date.now();
+    const rand = () => Math.random().toString(36).slice(2, 10);
+    const G = BRAIN_GEOM;
+    canvas.order = Array.isArray(canvas.order) ? canvas.order : [];
+    const top = Object.values(canvas.positions).map(p => p && p.zKey).filter(k => k && isValidZKey(k)).sort().pop() || null;
+    const nextZKey = makeZKeyGen(top);
+
+    const byTitle = new Map();
+    for (const c of struct.cards) if (c.type === 'container') { const t = (c.title || '').trim().toLowerCase(); if (t && !byTitle.has(t)) byTitle.set(t, c.id); }
+    let ctnX = nextContainerX(canvas);
+    const ensureContainer = (area) => {
+        const key = area.toLowerCase();
+        let id = byTitle.get(key);
+        if (id) return id;
+        id = `ctn_${rand()}`;
+        zip.file(`items/${shard(id)}/${id}.json`, JSON.stringify({
+            type: 'container', locked: false, createdAt: now, createdBy: 'agent',
+            title: area, collapsed: false, scopeLocked: false, borderColor: '#10b981',
+        }));
+        canvas.positions[id] = { x: ctnX, y: G.START, w: G.AREA_W, h: G.TITLE_BAR + G.PAD * 2, zKey: nextZKey(), zIndex: canvas.order.length, parentId: null };
+        canvas.order.push(id);
+        byTitle.set(key, id);
+        ctnX += G.AREA_W + G.COL_GAP;
+        return id;
+    };
+
+    let moved = 0;
+    const rootText = struct.cards.filter(c => c.type !== 'container' && canvas.positions[c.id] && canvas.positions[c.id].parentId == null);
+    for (const c of rootText) {
+        const area = areaOfCard(c);
+        const ctnId = ensureContainer(area);
+        const ctn = canvas.positions[ctnId];
+        const p = canvas.positions[c.id];
+        const h = (p && p.h) || measureCardH(c.text);
+        const cy = containerChildBottom(canvas, ctnId);
+        const zKey = (p && p.zKey && isValidZKey(p.zKey)) ? p.zKey : nextZKey();
+        canvas.positions[c.id] = { ...p, x: ctn.x + G.PAD, y: cy, w: G.CARD_W, h, parentId: ctnId, zKey };
+        ctn.h = (cy + h + G.PAD) - ctn.y;
+        moved++;
+    }
+    const out = await finalizeBrainZip(zip, canvas, manifest, now);
+    return { buffer: out, moved, containers: byTitle.size };
+}
+
 /**
  * Build a RICH "map" .klypix: areas become titled containers, their cards
  * stack inside, connections draw across. Produces a real spatial board (used by

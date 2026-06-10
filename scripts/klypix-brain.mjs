@@ -16,7 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { buildKlypix, parseKlypix, structToMarkdown, atomicWrite } from './klypix-format.mjs';
+import { buildKlypix, parseKlypix, structToMarkdown, atomicWrite, tidyBrain } from './klypix-format.mjs';
 
 const [, , cmd, ...rest] = process.argv;
 const BRAIN = path.resolve(process.cwd(), 'brain.klypix');
@@ -84,14 +84,28 @@ async function cmdList() {
     }
 }
 
+async function cmdTidy() {
+    if (!fs.existsSync(BRAIN)) { console.error('No brain here. Create one: klypix-brain new'); process.exit(1); }
+    const orig = fs.readFileSync(BRAIN);
+    // Back up first — tidy moves root cards into [Area] containers; the .bak is
+    // the escape hatch. tidyBrain itself round-trip-verifies before returning.
+    const bak = BRAIN + '.bak';
+    try { fs.writeFileSync(bak, orig); } catch { /* non-fatal */ }
+    const { buffer, moved, containers } = await tidyBrain(orig);
+    await atomicWrite(BRAIN, buffer);
+    console.log(`Tidied ${BRAIN} — grouped ${moved} card(s) into ${containers} area container(s).`);
+    console.log(`Backup saved: ${bak}`);
+}
+
 async function main() {
     switch (cmd) {
         case 'new': return cmdNew();
         case 'read': return cmdRead();
         case 'which': return cmdWhich();
         case 'list': return cmdList();
+        case 'tidy': return cmdTidy();
         default:
-            console.log('usage: klypix-brain <new [title] | read | which | list [dir]>');
+            console.log('usage: klypix-brain <new [title] | read | which | list [dir] | tidy>');
             process.exit(cmd ? 1 : 0);
     }
 }

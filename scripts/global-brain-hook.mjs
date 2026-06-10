@@ -62,11 +62,13 @@ async function capture(lib) {
             // cross-brain footgun is handled by per-brain state files in Phase 3.
             const key = sha((area + '|' + body).toLowerCase());
             if (seen.has(key)) continue;
-            seen.add(key); cards.push(card);
+            seen.add(key); cards.push({ text: card, area });
         }
     }
     if (!cards.length) return;
-    const buf = await lib.appendToKlypix(fs.readFileSync(BRAIN), { cards: cards.map(text => ({ text, color: '#8b9cff' })) });
+    // Route each captured decision INTO its [Area] container (find-or-create) so
+    // the brain stays a clean areas-as-containers map, not a rightward strip.
+    const buf = await lib.appendIntoContainers(fs.readFileSync(BRAIN), { cards: cards.map(c => ({ text: c.text, color: '#8b9cff', area: c.area })) });
     await lib.atomicWrite(BRAIN, buf);
     writeState(seen);
     process.stderr.write(`[brain] captured ${cards.length} decision(s) → brain.klypix\n`);
