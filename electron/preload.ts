@@ -351,6 +351,13 @@ contextBridge.exposeInMainWorld('electron', {
         writeProjectConfig: (folder: string): Promise<{ ok: boolean; action?: string; path?: string; error?: string }> =>
             ipcRenderer.invoke('mcp:write-project-config', folder),
     },
+    // Solution ③ — global Claude Code auto-load hook (install/remove ~/.claude/settings.json hooks).
+    projectBrain: {
+        status: (): Promise<{ installed: boolean; scriptsPresent: boolean; hooksPresent: boolean; settingsPath: string; brainDir: string; parseError: string | null }> =>
+            ipcRenderer.invoke('project-brain:status'),
+        install: (): Promise<{ ok: boolean; error?: string; backup?: string }> => ipcRenderer.invoke('project-brain:install'),
+        uninstall: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('project-brain:uninstall'),
+    },
     // ── Document Generation ────────────────────────────────────────────────
     generateFile: (opts: any) => ipcRenderer.invoke('generate-file', opts),
     // ── Updater ──────────────────────────────────────────────────────────────

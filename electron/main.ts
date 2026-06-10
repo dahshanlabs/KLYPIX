@@ -7,6 +7,7 @@ import fs from 'fs';
 import * as os from 'os';
 import * as offlineManager from './offline/offlineManager';
 import { resolveClaudeConfigPath, resolveClientConfigPath, safeReadJsonConfig, connectMcpServer } from './configMerger';
+import { projectBrainStatus, installProjectBrainHook, uninstallProjectBrainHook } from './projectBrainInstaller';
 // Prevent EPIPE and other uncaught errors from showing error dialogs
 process.on('uncaughtException', (err: any) => {
     if (err.message.includes('EPIPE') || err.message.includes('broken pipe')) {
@@ -2185,6 +2186,13 @@ ipcMain.handle('mcp:write-project-config', (_e: any, folder?: string) => {
     const rulesWritten = writeBrainRules(folder); // ② auto-read instruction (agent-neutral)
     return { ...cfg, rulesWritten };
 });
+
+// Solution ③ — auto-load: install/remove the GLOBAL Claude Code SessionStart+Stop
+// hooks (~/.claude/settings.json) so any project's brain.klypix is read/captured with
+// zero prompting. Safe atomic merge (preserves the user's other hooks).
+ipcMain.handle('project-brain:status', () => projectBrainStatus());
+ipcMain.handle('project-brain:install', () => installProjectBrainHook());
+ipcMain.handle('project-brain:uninstall', () => uninstallProjectBrainHook());
 
 // ── Offline models (on-demand OCR/STT install; nothing bundled) ──
 ipcMain.handle('offline:list', () => offlineManager.getCatalogWithState());

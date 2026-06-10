@@ -89,7 +89,11 @@
     },
     "files": [
       "dist/**/*",
-      "dist-electron/**/*"
+      "dist-electron/**/*",
+      "!dist-electron/project-brain/**/*"
+    ],
+    "extraResources": [
+      { "from": "dist-electron/project-brain", "to": "project-brain" }
     ],
     "win": {
       "target": "nsis",

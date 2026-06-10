@@ -1097,6 +1097,25 @@ function MCPConnectionSection({ tx }: { tx: (k: string, fb: string) => string })
         } finally { setBusy(false); }
     };
 
+    // Solution ③ — global Claude Code auto-load hook toggle.
+    const [brainStatus, setBrainStatus] = useState<any>(null);
+    const refreshBrain = () => (window as any).electron?.projectBrain?.status?.().then((s: any) => setBrainStatus(s)).catch(() => { /* unavailable */ });
+    useEffect(() => { refreshBrain(); }, []);
+    const toggleBrainHook = async () => {
+        const pb = (window as any).electron?.projectBrain;
+        if (!pb) return;
+        const was = !!brainStatus?.installed;
+        setBusy(true); setResult(null);
+        try {
+            const r = was ? await pb.uninstall() : await pb.install();
+            setResult({ ok: !!r?.ok, msg: r?.ok
+                ? (was ? 'Auto-load disabled.' : 'Auto-load enabled — restart Claude Code; it will read ./brain.klypix at the start of every session.')
+                : (r?.error || 'Could not update the Claude Code hook.') });
+            refreshBrain();
+        } catch (e: any) { setResult({ ok: false, msg: e?.message || 'Failed.' }); }
+        finally { setBusy(false); }
+    };
+
     const connected = !!info?.connectedAs;
     const parseError = info?.parseError;
 
@@ -1160,6 +1179,17 @@ function MCPConnectionSection({ tx }: { tx: (k: string, fb: string) => string })
                     <button onClick={() => connectOther('claudecode')} disabled={busy} className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 text-white/65 hover:bg-white/10 disabled:opacity-40 text-[11.5px] transition-colors"><Terminal size={12} />Claude Code</button>
                     <button onClick={() => connectOther('cursor')} disabled={busy} className="px-2.5 py-1 rounded-lg bg-white/5 text-white/55 hover:bg-white/10 disabled:opacity-40 text-[11.5px] transition-colors">Cursor</button>
                     <button onClick={() => connectOther('cline')} disabled={busy} className="px-2.5 py-1 rounded-lg bg-white/5 text-white/55 hover:bg-white/10 disabled:opacity-40 text-[11.5px] transition-colors">Cline</button>
+                </div>
+
+                {/* Solution ③ — global auto-load: Claude Code reads ./brain.klypix every session, no prompting. */}
+                <div className="flex items-center justify-between gap-3 pt-2 mt-1 border-t border-white/5">
+                    <div className="text-[11.5px] text-white/55 flex items-center gap-1.5 min-w-0">
+                        <Terminal size={12} className="shrink-0" />
+                        <span className="truncate">{tx('settings.mcp.autoload', 'Auto-load brains in Claude Code')} <span className="text-white/30">· reads ./brain.klypix each session</span></span>
+                    </div>
+                    <button onClick={toggleBrainHook} disabled={busy} className={cn('px-2.5 py-1 rounded-lg text-[11.5px] font-medium transition-colors disabled:opacity-40 shrink-0', brainStatus?.installed ? 'bg-emerald-500/25 text-emerald-200 hover:bg-emerald-500/35' : 'bg-white/5 text-white/60 hover:bg-white/10')}>
+                        {brainStatus?.installed ? 'On — disable' : 'Enable'}
+                    </button>
                 </div>
 
                 {result && (

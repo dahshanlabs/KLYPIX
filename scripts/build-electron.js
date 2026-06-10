@@ -60,3 +60,26 @@ function fixRequirePaths(dir) {
 fixRequirePaths('dist-electron');
 
 console.log('Electron build fixup complete.');
+
+// Bundle the project-brain hook assets so the packaged app can install them into
+// ~/.claude/project-brain (Settings → "auto-load brains in Claude Code"). Ships the
+// 3 scripts + their runtime deps; reaches resources/project-brain via extraResources.
+const PB_OUT = 'dist-electron/project-brain';
+fs.mkdirSync(PB_OUT, { recursive: true });
+for (const s of ['global-brain-hook.mjs', 'klypix-format.mjs', 'klypix-brain.mjs']) {
+  const src = path.join('scripts', s);
+  if (fs.existsSync(src)) fs.copyFileSync(src, path.join(PB_OUT, s));
+}
+const copyTree = (src, dest) => {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const e of fs.readdirSync(src, { withFileTypes: true })) {
+    const sp = path.join(src, e.name), dp = path.join(dest, e.name);
+    if (e.isDirectory()) copyTree(sp, dp); else if (e.isFile()) fs.copyFileSync(sp, dp);
+  }
+};
+for (const dep of ['jszip', 'fractional-indexing', 'lie', 'pako', 'immediate', 'setimmediate', 'readable-stream', 'safe-buffer', 'core-util-is', 'inherits', 'isarray', 'process-nextick-args', 'string_decoder', 'util-deprecate']) {
+  const s = path.join('node_modules', dep);
+  if (fs.existsSync(s) && !fs.existsSync(path.join(PB_OUT, 'node_modules', dep))) copyTree(s, path.join(PB_OUT, 'node_modules', dep));
+}
+fs.writeFileSync(path.join(PB_OUT, 'package.json'), JSON.stringify({ name: 'klypix-project-brain', private: true, type: 'module' }, null, 2));
+console.log('Bundled project-brain hook assets → ' + PB_OUT);
