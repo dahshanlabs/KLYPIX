@@ -654,7 +654,10 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeer
             clamp, and the position can't be desynced by the parent's CSS
             transform. zIndex above the rings so the cursor reads on top. */}
         {collabPeers && collabPeers.length > 0 && (
-            <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 1000 }}>
+            // z below the app toolbars (Tailwind z-30+) but above the canvas content
+            // + selection ring (z-5), so a peer cursor reads over the canvas yet never
+            // covers the UI chrome.
+            <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 20 }}>
                 <RemoteCursors peers={collabPeers} view={view} />
             </div>
         )}
@@ -662,7 +665,7 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeer
             peer is actively editing. Screen-space layer so the pill
             keeps fixed pixel size at any zoom. zIndex just under cursors
             so a moving cursor reads on top when they overlap. */}
-        <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 999 }}>
+        <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 19 }}>
             <RemoteLockBadges view={view} />
         </div>
         {/* Drawing resize handles — only when exactly ONE drawing is
