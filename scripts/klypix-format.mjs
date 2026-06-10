@@ -342,8 +342,10 @@ export async function appendToKlypix(buffer, addition) {
 const BRAIN_GEOM = { TITLE_BAR: 40, PAD: 14, CARD_GAP: 10, CARD_W: 300, FONT: 12, LINE_H: 17, START: 80, COL_GAP: 44 };
 BRAIN_GEOM.AREA_W = BRAIN_GEOM.CARD_W + BRAIN_GEOM.PAD * 2;
 
-// Chars that fit on one line at CARD_W / brain font.
-function brainCPL() { return Math.max(8, Math.floor(BRAIN_GEOM.CARD_W / (BRAIN_GEOM.FONT * 0.5))); }
+// Chars that fit on one rendered line. The bordered card has 10px L/R padding,
+// so the text area is CARD_W-20; use a conservative char width (font*0.62) so a
+// wrapped line never RE-wraps in-app (which would double a card's height).
+function brainCPL() { return Math.max(8, Math.floor((BRAIN_GEOM.CARD_W - 24) / (BRAIN_GEOM.FONT * 0.62))); }
 
 // Hard-wrap text to ~CARD_W by inserting newlines at word boundaries. KLYPIX text
 // cards show a long SINGLE line as-typed (no auto-wrap until you resize), so a
@@ -365,9 +367,11 @@ function wrapText(text, cpl = brainCPL()) {
 }
 
 function measureCardH(text) {
-    // text is already hard-wrapped to ≤CPL, so \n-line count is the real height.
-    const lines = String(text ?? '').split('\n').length;
-    return Math.max(40, Math.round(Math.max(1, lines) * BRAIN_GEOM.LINE_H) + 16);
+    // text is hard-wrapped to ≤CPL, so the \n-line count is the rendered line
+    // count. Match the bordered card (lineHeight 1.35*font + 8/8 vertical padding
+    // + border) and over-estimate slightly → small gaps, never overlap.
+    const lines = Math.max(1, String(text ?? '').split('\n').length);
+    return Math.max(40, Math.ceil(lines * BRAIN_GEOM.FONT * 1.45) + 26);
 }
 // Container the next NEW area goes to the right of the rightmost item.
 function nextContainerX(canvas) {
