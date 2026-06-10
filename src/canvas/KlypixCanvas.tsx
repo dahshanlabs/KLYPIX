@@ -3417,10 +3417,11 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                     const saved = await file.saveCopyTo?.(brainPath);
                     if (!saved?.ok) { setToast({ text: saved?.error || 'Could not save brain.klypix', id: Date.now(), kind: 'simple' }); return; }
                     const r = await el?.mcp?.writeProjectConfig?.(folder);
+                    const rules = Array.isArray(r?.rulesWritten) && r.rulesWritten.length ? ` + ${r.rulesWritten.join('/')}` : '';
                     setToast({
                         text: r?.ok
-                            ? 'Project brain ready — open your coding agent in that folder; it reads brain.klypix'
-                            : (r?.error || 'Saved brain.klypix, but couldn’t write .mcp.json'),
+                            ? `Project brain ready — brain.klypix + .mcp.json${rules}. New sessions in that folder auto-read it.`
+                            : (r?.error || 'Saved brain.klypix, but couldn’t finish setup'),
                         id: Date.now(), kind: 'simple',
                     });
                 }}><Plug size={13} /></FileOpButton>

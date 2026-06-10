@@ -2139,12 +2139,44 @@ ipcMain.handle('mcp:connect-client', (_e: any, args?: { client?: string; vault?:
 // Per-project (not global) → each project folder is its own brain scope, and
 // multiple agents in the same folder share the one brain.klypix file. Atomic
 // merge preserves any existing .mcp.json servers.
+// Write the "read brain.klypix first" instruction into the project's agent-rules
+// files (CLAUDE.md + AGENTS.md) so a NEW session in ANY coding agent auto-reads
+// the brain — having the MCP tools isn't enough; the agent must be TOLD to read
+// it at session start. Idempotent via the klypix-brain markers; never clobbers
+// the user's existing content (replaces only our block, else appends).
+function writeBrainRules(folder: string): string[] {
+    const block = [
+        '<!-- klypix-brain:start -->',
+        '## 🧠 Project brain — brain.klypix',
+        'This project keeps a living spatial memory at `./brain.klypix` (a KLYPIX canvas).',
+        '**At the start of each session, READ it first** via the klypix MCP (`read_canvas`',
+        'with "brain") to recall the project\'s areas, decisions, and open questions. When you',
+        'make a real decision or finish a meaningful piece, **APPEND it** (`add_to_canvas`',
+        '"brain"). It is the shared human↔agent memory for this project.',
+        '<!-- klypix-brain:end -->',
+        '',
+    ].join('\n');
+    const re = /<!-- klypix-brain:start -->[\s\S]*?<!-- klypix-brain:end -->\n?/;
+    const written: string[] = [];
+    for (const name of ['CLAUDE.md', 'AGENTS.md']) {
+        const p = path.join(folder, name);
+        let existing = '';
+        try { existing = fs.readFileSync(p, 'utf8'); } catch { /* missing → create */ }
+        const next = re.test(existing)
+            ? existing.replace(re, block)
+            : (existing.trim() ? existing.replace(/\s*$/, '') + '\n\n' + block : block);
+        try { fs.writeFileSync(p, next, 'utf8'); written.push(name); } catch { /* skip unwritable */ }
+    }
+    return written;
+}
 ipcMain.handle('mcp:write-project-config', (_e: any, folder?: string) => {
     if (typeof folder !== 'string' || !folder) return { ok: false, error: 'No project folder given.' };
     const cfgPath = path.join(folder, '.mcp.json');
     const vault = folder.replace(/\\/g, '/');
     const entry = { type: 'stdio', command: 'npx', args: ['-y', 'klypix-mcp', '--vault', vault] };
-    return connectMcpServer({ configPath: cfgPath, name: 'klypix-canvas', entry });
+    const cfg = connectMcpServer({ configPath: cfgPath, name: 'klypix-canvas', entry });
+    const rulesWritten = writeBrainRules(folder); // ② auto-read instruction (agent-neutral)
+    return { ...cfg, rulesWritten };
 });
 
 // ── Offline models (on-demand OCR/STT install; nothing bundled) ──
