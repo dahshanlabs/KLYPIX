@@ -106,6 +106,8 @@ interface ConnectionPathProps {
     c: Connection;
     aRect: Rect;
     bRect: Rect;
+    aRot: number;
+    bRot: number;
     connScale: number;
     isSelected: boolean;
     onPickConnection?: (id: string, additive: boolean) => void;
@@ -123,7 +125,7 @@ function getMarkerId(color: string | undefined): string {
 }
 
 const ConnectionPath = React.memo(function ConnectionPath({
-    c, aRect, bRect, connScale, isSelected, onPickConnection,
+    c, aRect, bRect, aRot, bRot, connScale, isSelected, onPickConnection,
 }: ConnectionPathProps) {
     const rel = styleForConnection(c);
     const hasExplicitColor = !!c.color && c.color !== '#10b981';
@@ -133,8 +135,8 @@ const ConnectionPath = React.memo(function ConnectionPath({
     const baseWidth = (c.width || 2) + rel.widthBoost;
     const width = baseWidth * connScale + (isSelected ? 1.5 : 0);
     const hasArrowEnd = !!c.arrowHead;
-    const path = bezierBetween(aRect, bRect, hasArrowEnd, width);
-    const mid = midpoint(aRect, bRect, hasArrowEnd, width);
+    const path = bezierBetween(aRect, bRect, hasArrowEnd, width, aRot, bRot);
+    const mid = midpoint(aRect, bRect, hasArrowEnd, width, aRot, bRot);
     const arrowMarker = hasArrowEnd ? getMarkerId(stroke) : undefined;
     return (
         <g>
@@ -199,6 +201,8 @@ const ConnectionPath = React.memo(function ConnectionPath({
         prev.connScale === next.connScale &&
         prev.isSelected === next.isSelected &&
         prev.onPickConnection === next.onPickConnection &&
+        prev.aRot === next.aRot &&
+        prev.bRot === next.bRot &&
         rectEq(prev.aRect, next.aRect) &&
         rectEq(prev.bRect, next.bRect)
     );
@@ -306,6 +310,8 @@ function ConnectionsLayerImpl({ connections, items, hiddenIds, selectedIds, onPi
                         c={c}
                         aRect={aRect}
                         bRect={bRect}
+                        aRot={a.rotation || 0}
+                        bRot={b.rotation || 0}
                         connScale={connScale}
                         isSelected={isSelected}
                         onPickConnection={onPickConnection}
@@ -425,21 +431,40 @@ function arrowApexOffset(strokeWidth: number): number {
  *  relationship icon on top of the arrow. Takes RECTs (rendered
  *  bounds) so collapsed containers anchor to the capsule, not the
  *  phantom expanded frame. */
-function midpoint(a: Rect, b: Rect, hasArrowEnd: boolean, strokeWidth: number): { x: number; y: number } {
-    const centerA = rectCenter(a);
-    const centerB = rectCenter(b);
-    const p1 = sideAnchorToward(a, centerB.x, centerB.y);
-    const p2Anchor = sideAnchorToward(b, centerA.x, centerA.y);
-    // Match the endpoint offset bezierBetween uses so the icon stays
-    // anchored to the actual rendered path midpoint.
-    const p2 = hasArrowEnd ? pushOutward(p2Anchor, arrowApexOffset(strokeWidth)) : p2Anchor;
+/** Rotate point (px,py) around center (cx,cy) by `deg` degrees. */
+function rotatePoint(px: number, py: number, cx: number, cy: number, deg: number): { x: number; y: number } {
+    if (!deg) return { x: px, y: py };
+    const rad = deg * Math.PI / 180, cos = Math.cos(rad), sin = Math.sin(rad);
+    const dx = px - cx, dy = py - cy;
+    return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+}
+
+/** Endpoints + bezier control points, ROTATION-AWARE. The facing side is chosen
+ *  in each rect's LOCAL (unrotated) frame, then the anchor + its perpendicular
+ *  handle are rotated back to world by the item's `rotation` — so arrows stay
+ *  glued to a rotated shape's edges instead of its original axis-aligned bbox. */
+function bezierPoints(a: Rect, b: Rect, hasArrowEnd: boolean, strokeWidth: number, aRot = 0, bRot = 0) {
+    const ca = rectCenter(a), cb = rectCenter(b);
+    // Which side faces the other item — decided in each item's own (unrotated) frame.
+    const cbInA = rotatePoint(cb.x, cb.y, ca.x, ca.y, -aRot);
+    const caInB = rotatePoint(ca.x, ca.y, cb.x, cb.y, -bRot);
+    const s1 = sideAnchorToward(a, cbInA.x, cbInA.y);
+    let s2 = sideAnchorToward(b, caInB.x, caInB.y);
+    if (hasArrowEnd) s2 = pushOutward(s2, arrowApexOffset(strokeWidth));
+    const p1 = rotatePoint(s1.x, s1.y, ca.x, ca.y, aRot);   // anchor → world
+    const p2 = rotatePoint(s2.x, s2.y, cb.x, cb.y, bRot);
     const mag = handleMag(p1, p2);
-    const h1 = handleForSide(p1, p1.side, mag);
-    const h2 = handleForSide(p2, p2.side, mag);
+    const h1 = handleForSide(s1, s1.side, mag);             // perpendicular handle (local)
+    const h2 = handleForSide(s2, s2.side, mag);
+    const c1 = rotatePoint(h1.cx, h1.cy, ca.x, ca.y, aRot); // handle → world
+    const c2 = rotatePoint(h2.cx, h2.cy, cb.x, cb.y, bRot);
+    return { p1, c1, c2, p2 };
+}
+
+function midpoint(a: Rect, b: Rect, hasArrowEnd: boolean, strokeWidth: number, aRot = 0, bRot = 0): { x: number; y: number } {
+    const { p1, c1, c2, p2 } = bezierPoints(a, b, hasArrowEnd, strokeWidth, aRot, bRot);
     // Bezier midpoint at t=0.5: (p1 + 3·c1 + 3·c2 + p2) / 8
-    const x = (p1.x + 3 * h1.cx + 3 * h2.cx + p2.x) / 8;
-    const y = (p1.y + 3 * h1.cy + 3 * h2.cy + p2.y) / 8;
-    return { x, y };
+    return { x: (p1.x + 3 * c1.x + 3 * c2.x + p2.x) / 8, y: (p1.y + 3 * c1.y + 3 * c2.y + p2.y) / 8 };
 }
 
 /** S-curve between the two rect SIDES. Arrow leaves the source side
@@ -453,16 +478,9 @@ function midpoint(a: Rect, b: Rect, hasArrowEnd: boolean, strokeWidth: number): 
  *  (which is widest at the middle, narrowest at the apex) is wider
  *  than the path stroke at every point the stroke renders — so the
  *  line is fully swallowed by the arrow head with no edges peeking out. */
-export function bezierBetween(a: Rect, b: Rect, hasArrowEnd: boolean, strokeWidth: number): string {
-    const centerA = rectCenter(a);
-    const centerB = rectCenter(b);
-    const p1 = sideAnchorToward(a, centerB.x, centerB.y);
-    const p2Anchor = sideAnchorToward(b, centerA.x, centerA.y);
-    const p2 = hasArrowEnd ? pushOutward(p2Anchor, arrowApexOffset(strokeWidth)) : p2Anchor;
-    const mag = handleMag(p1, p2);
-    const h1 = handleForSide(p1, p1.side, mag);
-    const h2 = handleForSide(p2, p2.side, mag);
-    return `M ${p1.x} ${p1.y} C ${h1.cx} ${h1.cy}, ${h2.cx} ${h2.cy}, ${p2.x} ${p2.y}`;
+export function bezierBetween(a: Rect, b: Rect, hasArrowEnd: boolean, strokeWidth: number, aRot = 0, bRot = 0): string {
+    const { p1, c1, c2, p2 } = bezierPoints(a, b, hasArrowEnd, strokeWidth, aRot, bRot);
+    return `M ${p1.x} ${p1.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${p2.x} ${p2.y}`;
 }
 
 /** Bezier from rect side to an arbitrary world point — used for
