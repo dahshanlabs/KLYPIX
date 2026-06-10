@@ -484,9 +484,10 @@ export async function tidyBrain(buffer) {
     for (const c of struct.cards) {
         if (c.type === 'container') continue;
         const wrapped = wrapText(String(c.text ?? ''));
-        meta.set(c.id, { h: measureCardH(wrapped) });
+        let createdAt = 0;
         const ip = `items/${shard(c.id)}/${c.id}.json`;
-        try { const f = zip.file(ip); if (f) { const j = JSON.parse(await f.async('string')); j.fontSize = G.FONT; j.content = wrapped; zip.file(ip, JSON.stringify(j)); } } catch { /* leave as-is */ }
+        try { const f = zip.file(ip); if (f) { const j = JSON.parse(await f.async('string')); createdAt = Number(j.createdAt) || 0; j.fontSize = G.FONT; j.content = wrapped; zip.file(ip, JSON.stringify(j)); } } catch { /* leave as-is */ }
+        meta.set(c.id, { h: measureCardH(wrapped), createdAt });
     }
 
     const containerIds = new Set(struct.cards.filter(c => c.type === 'container').map(c => c.id));
@@ -526,7 +527,8 @@ export async function tidyBrain(buffer) {
     // nothing overlaps (fixes pre-existing map containers too) + grow each box.
     for (const ctnId of containerIds) {
         const ctn = canvas.positions[ctnId]; if (!ctn) continue;
-        const kids = canvas.order.filter(id => canvas.positions[id] && canvas.positions[id].parentId === ctnId);
+        const kids = canvas.order.filter(id => canvas.positions[id] && canvas.positions[id].parentId === ctnId)
+            .sort((a, b) => (meta.get(a)?.createdAt || 0) - (meta.get(b)?.createdAt || 0)); // chronological: oldest → newest
         let cy = ctn.y + G.TITLE_BAR + G.PAD;
         for (const id of kids) {
             const h = meta.get(id)?.h || 40;
