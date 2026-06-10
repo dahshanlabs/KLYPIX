@@ -339,12 +339,17 @@ export async function appendToKlypix(buffer, addition) {
 // Captured decisions carry an [Area]; these route cards INTO titled area
 // containers (find-or-create) so the brain stays a clean areas-as-containers map
 // instead of a rightward strip. Non-destructive, valid z-keys, atomic round-trip.
-const BRAIN_GEOM = { TITLE_BAR: 44, PAD: 16, CARD_GAP: 12, CARD_W: 280, FONT: 15, LINE_H: 21, START: 80, COL_GAP: 48 };
+const BRAIN_GEOM = { TITLE_BAR: 40, PAD: 14, CARD_GAP: 10, CARD_W: 300, FONT: 12, LINE_H: 17, START: 80, COL_GAP: 44 };
 BRAIN_GEOM.AREA_W = BRAIN_GEOM.CARD_W + BRAIN_GEOM.PAD * 2;
 
 function measureCardH(text) {
-    const lines = String(text ?? '').split('\n');
-    return Math.max(40, Math.round(lines.length * BRAIN_GEOM.LINE_H) + 18);
+    // Estimate WRAPPED lines at CARD_W — captured decisions are long prose with
+    // few explicit newlines; counting only "\n" lines under-sizes them and cards
+    // overlap. ~CARD_W/(FONT*0.5) chars fit per line.
+    const cpl = Math.max(8, Math.floor(BRAIN_GEOM.CARD_W / (BRAIN_GEOM.FONT * 0.5)));
+    let lines = 0;
+    for (const ln of String(text ?? '').split('\n')) lines += Math.max(1, Math.ceil((ln.length || 1) / cpl));
+    return Math.max(40, Math.round(lines * BRAIN_GEOM.LINE_H) + 18);
 }
 // Container the next NEW area goes to the right of the rightmost item.
 function nextContainerX(canvas) {
@@ -454,39 +459,63 @@ export async function tidyBrain(buffer) {
     const top = Object.values(canvas.positions).map(p => p && p.zKey).filter(k => k && isValidZKey(k)).sort().pop() || null;
     const nextZKey = makeZKeyGen(top);
 
+    // Normalize every text card to the compact brain font (so the render matches
+    // our height measure → no overlap) + cache each card's measured height.
+    const meta = new Map(); // id -> { h }
+    for (const c of struct.cards) {
+        if (c.type === 'container') continue;
+        meta.set(c.id, { h: measureCardH(String(c.text ?? '')) });
+        const ip = `items/${shard(c.id)}/${c.id}.json`;
+        try { const f = zip.file(ip); if (f) { const j = JSON.parse(await f.async('string')); j.fontSize = G.FONT; zip.file(ip, JSON.stringify(j)); } } catch { /* leave as-is */ }
+    }
+
+    const containerIds = new Set(struct.cards.filter(c => c.type === 'container').map(c => c.id));
     const byTitle = new Map();
     for (const c of struct.cards) if (c.type === 'container') { const t = (c.title || '').trim().toLowerCase(); if (t && !byTitle.has(t)) byTitle.set(t, c.id); }
-    let ctnX = nextContainerX(canvas);
-    const ensureContainer = (area) => {
-        const key = area.toLowerCase();
-        let id = byTitle.get(key);
-        if (id) return id;
-        id = `ctn_${rand()}`;
-        zip.file(`items/${shard(id)}/${id}.json`, JSON.stringify({
-            type: 'container', locked: false, createdAt: now, createdBy: 'agent',
-            title: area, collapsed: false, scopeLocked: false, borderColor: '#10b981',
-        }));
-        canvas.positions[id] = { x: ctnX, y: G.START, w: G.AREA_W, h: G.TITLE_BAR + G.PAD * 2, zKey: nextZKey(), zIndex: canvas.order.length, parentId: null };
-        canvas.order.push(id);
-        byTitle.set(key, id);
-        ctnX += G.AREA_W + G.COL_GAP;
-        return id;
-    };
 
-    let moved = 0;
+    // Group ROOT text cards by [Area].
     const rootText = struct.cards.filter(c => c.type !== 'container' && canvas.positions[c.id] && canvas.positions[c.id].parentId == null);
-    for (const c of rootText) {
-        const area = areaOfCard(c);
-        const ctnId = ensureContainer(area);
-        const ctn = canvas.positions[ctnId];
-        const p = canvas.positions[c.id];
-        const h = (p && p.h) || measureCardH(c.text);
-        const cy = containerChildBottom(canvas, ctnId);
-        const zKey = (p && p.zKey && isValidZKey(p.zKey)) ? p.zKey : nextZKey();
-        canvas.positions[c.id] = { ...p, x: ctn.x + G.PAD, y: cy, w: G.CARD_W, h, parentId: ctnId, zKey };
-        ctn.h = (cy + h + G.PAD) - ctn.y;
-        moved++;
+    const groups = new Map(); // key -> { title, ids: [] }
+    for (const c of rootText) { const a = areaOfCard(c); const k = a.toLowerCase(); if (!groups.has(k)) groups.set(k, { title: a, ids: [] }); groups.get(k).ids.push(c.id); }
+
+    // Create new-area containers, shelf-packed into a GRID below existing content;
+    // assign every root card a parentId (final positions come in the re-flow).
+    const allPos = Object.values(canvas.positions);
+    const baseY = allPos.length ? Math.max(...allPos.map(p => (p.y || 0) + (p.h || 0))) + 60 : G.START;
+    const newAreas = [...groups.values()].filter(g => !byTitle.has(g.title.toLowerCase()));
+    const cols = Math.max(1, Math.min(4, Math.ceil(Math.sqrt(Math.max(1, newAreas.length)))));
+    let colIdx = 0, rowTopY = baseY, rowMaxH = 0, colX = G.START, moved = 0;
+    const assignTo = (ctnId, ids) => { for (const id of ids) { const p = canvas.positions[id]; canvas.positions[id] = { ...p, parentId: ctnId, zKey: (p && p.zKey && isValidZKey(p.zKey)) ? p.zKey : nextZKey() }; moved++; } };
+
+    for (const grp of groups.values()) {
+        const existingId = byTitle.get(grp.title.toLowerCase());
+        if (existingId) { assignTo(existingId, grp.ids); continue; }
+        const estH = G.TITLE_BAR + G.PAD + grp.ids.reduce((s, id) => s + (meta.get(id)?.h || 40) + G.CARD_GAP, 0) + G.PAD;
+        if (colIdx >= cols) { rowTopY += rowMaxH + G.COL_GAP; rowMaxH = 0; colIdx = 0; colX = G.START; }
+        const ax = colX, ay = rowTopY;
+        const ctnId = `ctn_${rand()}`;
+        zip.file(`items/${shard(ctnId)}/${ctnId}.json`, JSON.stringify({ type: 'container', locked: false, createdAt: now, createdBy: 'agent', title: grp.title, collapsed: false, scopeLocked: false, borderColor: '#10b981' }));
+        canvas.order.push(ctnId);
+        canvas.positions[ctnId] = { x: ax, y: ay, w: G.AREA_W, h: estH, zKey: nextZKey(), zIndex: canvas.order.length, parentId: null };
+        byTitle.set(grp.title.toLowerCase(), ctnId); containerIds.add(ctnId);
+        assignTo(ctnId, grp.ids);
+        colX += G.AREA_W + G.COL_GAP; colIdx++; rowMaxH = Math.max(rowMaxH, estH);
     }
+
+    // FINAL re-flow: stack EVERY container's children at the compact height so
+    // nothing overlaps (fixes pre-existing map containers too) + grow each box.
+    for (const ctnId of containerIds) {
+        const ctn = canvas.positions[ctnId]; if (!ctn) continue;
+        const kids = canvas.order.filter(id => canvas.positions[id] && canvas.positions[id].parentId === ctnId);
+        let cy = ctn.y + G.TITLE_BAR + G.PAD;
+        for (const id of kids) {
+            const h = meta.get(id)?.h || 40;
+            canvas.positions[id] = { ...canvas.positions[id], x: ctn.x + G.PAD, y: cy, w: G.CARD_W, h };
+            cy += h + G.CARD_GAP;
+        }
+        ctn.h = Math.max(G.TITLE_BAR + G.PAD * 2, (cy - G.CARD_GAP + G.PAD) - ctn.y);
+    }
+
     const out = await finalizeBrainZip(zip, canvas, manifest, now);
     return { buffer: out, moved, containers: byTitle.size };
 }
