@@ -56,6 +56,10 @@ async function capture(lib) {
         for (const raw of text.split('\n')) {
             const m = MARKER.exec(raw.trim()); if (!m) continue;
             const area = (m[1] || '').trim(), type = m[2] || '', body = m[3].trim(); if (!body) continue;
+            // Skip EXAMPLE/doc markers so explaining the syntax doesn't pollute the
+            // brain: a placeholder body like "<decision>", or a marker shown inside a
+            // code span (a backtick before the 🧠). Real markers are emitted plainly.
+            if (/<[^>]{1,40}>/.test(body) || /`[^`]*🧠/.test(raw)) continue;
             // Type → scannable prefix + border color: ? open question (amber),
             // ! milestone (blue), else decision (green).
             const prefix = type === '?' ? '❓ ' : type === '!' ? '🏁 ' : '';
