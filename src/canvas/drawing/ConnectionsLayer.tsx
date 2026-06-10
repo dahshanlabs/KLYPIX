@@ -115,6 +115,13 @@ function rectEq(a: Rect, b: Rect): boolean {
     return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
 }
 
+// Per-color arrowhead marker id. Markers are emitted dynamically (one per used
+// color) with a REAL fill — Chromium/Electron does NOT support SVG2 context-stroke,
+// so the old single fill="context-stroke" marker rendered invisible (no arrowheads).
+function getMarkerId(color: string | undefined): string {
+    return 'klpx-arrow-' + String(color || '#10b981').replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
 const ConnectionPath = React.memo(function ConnectionPath({
     c, aRect, bRect, connScale, isSelected, onPickConnection,
 }: ConnectionPathProps) {
@@ -128,7 +135,7 @@ const ConnectionPath = React.memo(function ConnectionPath({
     const hasArrowEnd = !!c.arrowHead;
     const path = bezierBetween(aRect, bRect, hasArrowEnd, width);
     const mid = midpoint(aRect, bRect, hasArrowEnd, width);
-    const arrowMarker = !hasArrowEnd ? undefined : 'klpx-arrow';
+    const arrowMarker = hasArrowEnd ? getMarkerId(stroke) : undefined;
     return (
         <g>
             <path
@@ -215,6 +222,12 @@ function ConnectionsLayerImpl({ connections, items, hiddenIds, selectedIds, onPi
     const hasPreview = !!(previewFrom && previewToWorld);
     if (list.length === 0 && !hasPreview) return null;
 
+    // Real-fill arrowhead marker per stroke color used (visible in Electron +
+    // color-matched). styleForConnection mirrors ConnectionPath's stroke logic.
+    const markerColors = new Set<string>();
+    for (const c of list) { const rel = styleForConnection(c); markerColors.add((c.color && c.color !== '#10b981') ? c.color : rel.color); }
+    markerColors.add(previewColor || '#10b981');
+
     return (
         <svg
             style={{
@@ -269,6 +282,14 @@ function ConnectionsLayerImpl({ connections, items, hiddenIds, selectedIds, onPi
                 <marker id="klpx-arrow-orange" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" fill="#f97316" />
                 </marker>
+                {/* Dynamic real-fill markers, one per color in use — these are what
+                    actually render the arrowheads (context-stroke above is inert in
+                    Electron). Covers any custom color, not just the fixed palette. */}
+                {Array.from(markerColors).map(col => (
+                    <marker key={col} id={getMarkerId(col)} viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill={col} />
+                    </marker>
+                ))}
             </defs>
             {list.map(c => {
                 const a = items[c.fromId];
@@ -296,10 +317,9 @@ function ConnectionsLayerImpl({ connections, items, hiddenIds, selectedIds, onPi
                     d={bezierToPoint(rectOf(previewFrom), previewToWorld, previewWidth ?? 2)}
                     stroke={previewColor ?? '#10b981'}
                     strokeWidth={previewWidth ?? 2}
-                    strokeDasharray="6 4"
                     fill="none"
-                    opacity={0.85}
-                    markerEnd="url(#klpx-arrow)"
+                    opacity={0.9}
+                    markerEnd={`url(#${getMarkerId(previewColor ?? '#10b981')})`}
                 />
             )}
         </svg>
