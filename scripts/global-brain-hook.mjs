@@ -74,7 +74,9 @@ async function capture(lib) {
     // Route each captured decision INTO its [Area] container (find-or-create) so
     // the brain stays a clean areas-as-containers map, not a rightward strip.
     const buf = await lib.appendIntoContainers(fs.readFileSync(BRAIN), { cards: cards.map(c => ({ text: c.text, color: '#e8e8ed', borderColor: c.borderColor, area: c.area })) });
-    await lib.atomicWrite(BRAIN, buf);
+    // Re-pack the whole grid so a container that grew never overlaps its neighbor.
+    let out = buf; try { out = (await lib.tidyBrain(buf)).buffer; } catch { /* keep append result if tidy fails */ }
+    await lib.atomicWrite(BRAIN, out);
     writeState(seen);
     process.stderr.write(`[brain] captured ${cards.length} decision(s) → brain.klypix\n`);
 }
