@@ -9,6 +9,7 @@ import { t as tLocale, useLocale } from '../i18n/strings';
 function translateTool(tool: string): string {
     const map: Record<string, string> = {
         select: 'status.select_tool',
+        pan: 'status.pan_tool',
         pen: 'status.pen_tool',
         type: 'status.text_tool',
         box: 'status.box_tool',
@@ -27,6 +28,7 @@ import { useCanvasKeyboardShortcuts } from './interaction/useKeyboardShortcuts';
 import { useAnyFile } from './file/useAnyFile';
 import { serialize } from './file/anyFormat';
 import { fileToItem } from './file/dropHandler';
+import { preferOffline, sttInstalledTier } from '../services/offlineStt';
 import { folderToItem } from './file/folderToZip';
 import { registerCloseSnapshot, captureCloseSnapshot } from './dashboard/closeSnapshotRegistry';
 import { pushClosedCanvas } from './dashboard/recentlyClosedStore';
@@ -88,13 +90,25 @@ import { useGridSettings, hexToRgba, gridAlphaFor, isDarkBackground, defaultText
 import { CanvasSettingsPopover } from './interaction/CanvasSettingsPopover';
 import { createAudioTranscribeController, type VoiceStatus } from './interaction/audioTranscribe';
 import { setDictateIntoHandler } from './interaction/voiceBridge';
-import { Search as SearchIcon, List, Layers, Play, Mic, History as HistoryIcon, Stamp as StampIcon, Filter as FilterIcon, FilePlus as LinkPlusIcon, Maximize2 as FitIcon, Clipboard as ClipboardIcon } from 'lucide-react';
+import { Search as SearchIcon, List, Layers, Play, Mic, History as HistoryIcon, Stamp as StampIcon, Filter as FilterIcon, FilePlus as LinkPlusIcon, Maximize2 as FitIcon, Clipboard as ClipboardIcon, Plus as PlusIcon, Minus as MinusIcon } from 'lucide-react';
 import { openWithPrefix as openPaletteWithPrefix } from './../palette/paletteStore';
 import { newId } from './items/types';
 import type { CanvasItem, ContainerItem, TextItem, StyleRun, Connection } from './items/types';
 import { applyStyleToRange, getSelectionStyle, type ItemTextDefaults } from './items/styleRuns';
 import type { FormatPatch } from './interaction/ContextMenu';
 import { DEFAULT_TEXT_COLOR } from './items/types';
+
+// One-time discoverability nudge: the first time a media file is dropped/pasted
+// and on-device transcription isn't fully set up, point the user at the Settings
+// download (one click, no terminal setup). Shown once, ever — never nags.
+function maybeOfflineSttTip(setToast: (t: { text: string; id: number }) => void): void {
+    try {
+        if (localStorage.getItem('klypix:tip:offlineStt') === '1') return;
+        if (preferOffline() && sttInstalledTier()) return; // already transcribing on-device
+        localStorage.setItem('klypix:tip:offlineStt', '1');
+        setToast({ text: tLocale('canvas.tip.offline_stt'), id: Date.now() });
+    } catch { /* localStorage quota — skip the tip */ }
+}
 
 // Auto-tag a just-dropped/pasted item in the background. Only applies to
 // FileItem and ImageItem (text notes are agent-tagged via a different path).
@@ -1858,6 +1872,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 if (item) {
                     commit({ type: 'ADD_ITEM', item });
                     kickAutoTag(item, d.file, dispatch);
+                    if (item.type === 'video' || item.type === 'audio') maybeOfflineSttTip(setToast);
                 }
             }
         }
@@ -1913,6 +1928,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                         if (item) {
                             commit({ type: 'ADD_ITEM', item });
                             kickAutoTag(item, files[i], dispatch);
+                            if (item.type === 'video' || item.type === 'audio') maybeOfflineSttTip(setToast);
                         }
                     }
                 })().catch((err) => console.warn('[canvas paste] file ingest failed:', err));
@@ -2118,6 +2134,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     // Space-held hand-pan wins over the tool's native cursor.
     const cursor =
         spaceHeld ? 'grab' :
+        state.tool === 'pan' ? 'grab' :
         state.tool === 'type' ? 'text' :
         state.tool === 'select' ? 'default' :
         'crosshair';
@@ -3393,8 +3410,12 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
 
             {/* File ops + nav — top left. Mic lives separately as a bottom-
                 center FAB (see below) so dictation has its own space and
-                doesn't get lost in the file-ops cluster. */}
-            <div data-canvas-ui="1" className="absolute top-3 left-3 z-30 no-drag flex items-center gap-1 px-1 py-1 rounded-full bg-black/60 border border-white/10">
+                doesn't get lost in the file-ops cluster.
+                left-[68px], not left-3: the vertical tool rail hugs x=12-58,
+                and at high display scale (150% → short CSS viewport) its
+                vertically-centered top reaches this row — offsetting past it
+                means the two can never overlap at any window height. */}
+            <div data-canvas-ui="1" className="absolute top-3 left-[68px] z-30 no-drag flex items-center gap-1 px-1 py-1 rounded-full bg-black/60 border border-white/10">
                 <FileOpButton label={tLocale('canvas_top.home')} onClick={() => setManualDashboardOpen(true)} badge={pendingInviteCount}><HomeIcon size={13} /></FileOpButton>
                 <span className="w-px h-4 bg-white/10 mx-0.5" />
                 <FileOpButton label={tLocale('canvas_top.new_short')} onClick={file.newFile}><FilePlus2 size={13} /></FileOpButton>
@@ -3552,7 +3573,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             {conflictPanelOpen && (
                 <div
                     data-canvas-ui="1"
-                    className="absolute top-12 left-3 z-30 no-drag w-80 max-h-80 overflow-y-auto rounded-lg bg-[#0e0e14] border border-white/10 shadow-2xl"
+                    className="absolute top-12 left-[68px] z-30 no-drag w-80 max-h-80 overflow-y-auto rounded-lg bg-[#0e0e14] border border-white/10 shadow-2xl"
                     style={{ backdropFilter: 'blur(8px)' }}
                 >
                     <div className="flex items-center justify-between px-3 py-2 border-b border-white/5 sticky top-0 bg-[#0e0e14]">
@@ -3961,6 +3982,13 @@ function ZoomControl({ zoom, onZoomTo, onFit }: ZoomControlProps) {
         setEditing(false);
     };
 
+    // Same 1.2× step as the Ctrl+= / Ctrl+- shortcuts, clamped to the
+    // store's [2%, 400%] range so repeated clicks can't drift past it.
+    const step = (dir: 1 | -1) => {
+        const target = dir === 1 ? zoom * 1.2 : zoom / 1.2;
+        onZoomTo(Math.max(ZOOM_MIN_PCT / 100, Math.min(ZOOM_MAX_PCT / 100, target)));
+    };
+
     return (
         <span className="flex items-center gap-1">
             <button
@@ -3969,6 +3997,13 @@ function ZoomControl({ zoom, onZoomTo, onFit }: ZoomControlProps) {
                 className="w-5 h-5 flex items-center justify-center rounded text-white/50 hover:text-white hover:bg-white/10 transition-colors"
             >
                 <FitIcon size={10} />
+            </button>
+            <button
+                onClick={() => step(-1)}
+                title={tLocale('canvas.zoom_out')}
+                className="w-5 h-5 flex items-center justify-center rounded text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+            >
+                <MinusIcon size={10} />
             </button>
             {editing ? (
                 <input
@@ -3999,6 +4034,13 @@ function ZoomControl({ zoom, onZoomTo, onFit }: ZoomControlProps) {
                     {currentPct}%
                 </button>
             )}
+            <button
+                onClick={() => step(1)}
+                title={tLocale('canvas.zoom_in')}
+                className="w-5 h-5 flex items-center justify-center rounded text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+            >
+                <PlusIcon size={10} />
+            </button>
             <button
                 onClick={() => onZoomTo(1)}
                 title={tLocale('canvas.reset_zoom')}
