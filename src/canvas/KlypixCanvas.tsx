@@ -3408,7 +3408,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                     <folder>/brain.klypix AND writes a per-project .mcp.json there,
                     so any coding agent (Claude Code / Cursor / Cline / Antigravity)
                     opened in that folder auto-reads it. One click, both jobs. */}
-                <FileOpButton label="Make this canvas a project brain (for coding agents)" onClick={async () => {
+                <FileOpButton label="🧠 Make this canvas your coding agent's brain — pick a project folder; writes brain.klypix + .mcp.json + CLAUDE.md/AGENTS.md there so Claude Code, Cursor & Cline auto-read it every session" onClick={async () => {
                     const el = (window as any).electron;
                     const folder = await el?.vault?.chooseFolder?.();
                     if (!folder) return;
@@ -3424,7 +3424,12 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                             : (r?.error || 'Saved brain.klypix, but couldn’t finish setup'),
                         id: Date.now(), kind: 'simple',
                     });
-                }}><Plug size={13} /></FileOpButton>
+                }}>
+                    <span className="relative inline-flex items-center justify-center">
+                        <Plug size={13} />
+                        <span className="absolute -bottom-1 -right-1.5 text-[10px] leading-none pointer-events-none select-none">🧠</span>
+                    </span>
+                </FileOpButton>
                 {/* Live collab presence — renders nothing when no peers. */}
                 {collab.peers.length > 0 && (
                     <>
