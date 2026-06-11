@@ -9,7 +9,8 @@
     "email": "abdullah@dahshanlabs.com",
     "url": "https://dahshanlabs.com"
   },
-  "license": "MIT",
+  "license": "UNLICENSED",
+  "private": true,
   "scripts": {
     "dev": "concurrently \"npm run dev:vite\" \"npm run dev:electron\"",
     "dev:vite": "vite",
