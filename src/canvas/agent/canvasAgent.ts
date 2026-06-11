@@ -3,7 +3,7 @@ import { getApiKeySync } from '../../api/gemini';
 import { renderItemsForPrompt, type CommandScope } from './canvasScopeResolver';
 import type { CanvasItem } from '../items/types';
 import { CANVAS_TOOLS } from './canvasTools';
-import { executeToolCall, type ToolExecContext } from './canvasToolExecutor';
+import { executeToolCall, type ToolExecContext, type ToolResult } from './canvasToolExecutor';
 
 // Multi-turn tool-calling loop for the canvas agent. Replaces the Slice 6
 // prompt→text path. The agent can call any canvas_* tool, get a result, and
@@ -61,6 +61,20 @@ export interface AgentRunResult {
     finalMessage: string;
     toolCalls: number;
     error?: string;
+}
+
+// Serialize tool EXECUTION across all concurrent runs (parallel-agents Stage 2).
+// Model thinking (generateContent) still runs in parallel — the slow part — but
+// canvas mutations go one-at-a-time through this shared lock, so two runs'
+// read-modify-write tools (organize, compile, layout) can't interleave on the
+// single canvasStore. Fast tools (add a card) hold it only momentarily.
+let toolLock: Promise<unknown> = Promise.resolve();
+function withToolLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = toolLock.then(fn, fn);
+    // Keep the chain alive but isolate failures so one rejected tool doesn't
+    // poison the lock for every other run.
+    toolLock = run.then(() => undefined, () => undefined);
+    return run;
 }
 
 export async function runCanvasAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
@@ -138,13 +152,18 @@ ${command}`;
         let shouldStop = false;
         for (const call of calls) {
             if (signal?.aborted) return { finalMessage, toolCalls, error: 'aborted' };
-            toolCalls++;
             onProgress?.({ turn: turns, activity: `running ${call.name}`, tool: call.name });
 
-            const result = await executeToolCall(
-                { name: call.name, args: (call.args || {}) as Record<string, any> },
-                ctx,
+            // Serialize the canvas mutation across concurrent runs; re-check
+            // abort once we actually hold the lock (a Stop while queued behind
+            // another run's slow tool shouldn't then mutate the canvas).
+            const result = await withToolLock<ToolResult | null>(() =>
+                signal?.aborted
+                    ? Promise.resolve(null)
+                    : executeToolCall({ name: call.name, args: (call.args || {}) as Record<string, any> }, ctx),
             );
+            if (!result) return { finalMessage, toolCalls, error: 'aborted' };
+            toolCalls++;
 
             responseParts.push({
                 functionResponse: {
