@@ -449,6 +449,7 @@ const strings: Strings = {
     'canvas.close_dashboard': { en: 'Close dashboard', ar: 'إغلاق لوحة التحكم' },
     'canvas.remove_shared': { en: 'Remove from shared list (unlink yourself — owner is not notified)', ar: 'إزالة من قائمة المشاركة (إلغاء الربط — لن يُخطر المالك)' },
     'canvas.remove_recent': { en: 'Remove from recent (file on disk is untouched)', ar: 'إزالة من الأخيرة (لن يُحذف الملف من القرص)' },
+    'canvas.reveal_explorer': { en: 'Show in Explorer', ar: 'إظهار في مستكشف الملفات' },
     'share.title': { en: 'Share canvas', ar: 'مشاركة اللوحة' },
     'share.copy_link': { en: 'Copy link', ar: 'نسخ الرابط' },
     'share.copied': { en: 'Copied', ar: 'تم النسخ' },

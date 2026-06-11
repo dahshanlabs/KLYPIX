@@ -480,7 +480,7 @@ export interface ViewState {
     zoom: number;
 }
 
-export type CanvasTool = 'type' | 'select' | 'box' | 'line' | 'pen' | 'connect' | 'eraser';
+export type CanvasTool = 'type' | 'select' | 'pan' | 'box' | 'line' | 'pen' | 'connect' | 'eraser';
 
 export const DEFAULT_VIEW: ViewState = { panX: 0, panY: 0, zoom: 1 };
 

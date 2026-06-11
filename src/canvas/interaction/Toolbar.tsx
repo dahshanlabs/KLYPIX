@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Type, MousePointer2, Square, Minus as LineIcon, Pencil, ArrowRight, Undo2, Redo2, Circle, Triangle, Diamond, Eraser, Scaling, Camera, Scissors, Loader2, Search as SearchIcon, List } from 'lucide-react';
+import { Type, MousePointer2, Hand, Square, Minus as LineIcon, Pencil, ArrowRight, Undo2, Redo2, Circle, Triangle, Diamond, Eraser, Scaling, Camera, Scissors, Loader2, Search as SearchIcon, List } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useCanvasStore } from '../state/canvasStore';
@@ -975,6 +975,7 @@ export function Toolbar({ onOpenSearch, onToggleOutline }: ToolbarProps = {}) {
                 </div>
             </div>
             <ToolButton label={t('toolbar.select')} active={state.tool === 'select'} onClick={() => setTool('select')}><MousePointer2 size={14} /></ToolButton>
+            <ToolButton label={t('toolbar.pan')} active={state.tool === 'pan'} onClick={() => setTool('pan')}><Hand size={14} /></ToolButton>
             <div className="relative">
                 <ToolButton
                     label={t('toolbar.shapes')}

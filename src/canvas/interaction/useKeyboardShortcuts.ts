@@ -728,6 +728,7 @@ export function useCanvasKeyboardShortcuts(active: boolean, cbs: ShortcutCallbac
             const noMod = !(e.ctrlKey || e.metaKey || e.altKey);
             if (noMod && k === 't') dispatch({ type: 'SET_TOOL', tool: 'type' });
             else if (noMod && k === 'v') dispatch({ type: 'SET_TOOL', tool: 'select' });
+            else if (noMod && k === 'h') dispatch({ type: 'SET_TOOL', tool: 'pan' });
             else if (noMod && k === 'b') dispatch({ type: 'SET_TOOL', tool: 'box' });
             else if (noMod && k === 'l') dispatch({ type: 'SET_TOOL', tool: 'line' });
             else if (noMod && k === 'p') dispatch({ type: 'SET_TOOL', tool: 'pen' });

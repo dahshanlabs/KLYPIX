@@ -196,8 +196,9 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
         const world = screenToWorld(screen, s.view);
         movedRef.current = false;
 
-        // Middle-mouse OR Alt-drag OR Space-held → pan (works in any tool).
-        if (e.button === 1 || (e.button === 0 && (e.altKey || spaceDownRef.current))) {
+        // Middle-mouse OR Alt-drag OR Space-held OR the dedicated Pan tool
+        // → pan. The hand tool never hit-tests items: drag always pans.
+        if (e.button === 1 || (e.button === 0 && (e.altKey || spaceDownRef.current || s.tool === 'pan'))) {
             dragRef.current = { kind: 'pan', lastX: e.clientX, lastY: e.clientY };
             surfaceRef.current.setPointerCapture(e.pointerId);
             e.preventDefault();
