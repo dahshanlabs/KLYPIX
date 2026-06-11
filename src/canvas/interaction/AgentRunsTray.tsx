@@ -3,21 +3,24 @@ import { AgentRobot } from '../../components/AgentRobot';
 import { t, useLocale } from '../../i18n/strings';
 import type { AgentRun } from '../agent/useAgentRuns';
 
-// AI Activity tray — one pill per concurrent canvas-agent run (Stage 1 of
-// parallel agents). Each pill: the purple mascot, the command label, a live
-// step/tool line, and a per-run Stop (■) while running / dismiss (✕) on error.
-// Stacks upward from the bottom-left, clear of the left toolbar + status bar.
+// AI Activity tray — one pill per concurrent canvas-agent run (parallel agents).
+// Each pill: the purple mascot, the command label, a live step/tool line, and a
+// per-run Stop (■) while running / dismiss (✕) on error. Clicking the pill BODY
+// re-opens the command bar (so you can see/continue) — only the ■ stops the run.
+// Docked top-right, stacking downward, clear of the top + left toolbars.
 interface Props {
     runs: AgentRun[];
     onStop: (id: string) => void;
     onDismiss: (id: string) => void;
+    /** Re-open the command bar — fired when the pill body is clicked. */
+    onOpen: () => void;
 }
 
-export function AgentRunsTray({ runs, onStop, onDismiss }: Props) {
+export function AgentRunsTray({ runs, onStop, onDismiss, onOpen }: Props) {
     useLocale();
     if (runs.length === 0) return null;
     return (
-        <div data-canvas-ui="1" className="absolute bottom-4 left-16 z-40 no-drag flex flex-col-reverse gap-2 items-start">
+        <div data-canvas-ui="1" className="absolute top-3 right-4 z-40 no-drag flex flex-col gap-2 items-end">
             {runs.map(run => {
                 const isError = run.status === 'error';
                 const stepText = isError
@@ -28,13 +31,20 @@ export function AgentRunsTray({ runs, onStop, onDismiss }: Props) {
                 return (
                     <div
                         key={run.id}
-                        className={`flex items-center gap-2 pl-1.5 pr-1.5 py-1.5 rounded-2xl bg-[#12121a]/95 backdrop-blur-xl border shadow-[0_8px_32px_rgba(0,0,0,0.5)] animate-in fade-in slide-in-from-left-1 duration-200 max-w-[300px] ${isError ? 'border-red-500/40' : 'border-purple-500/30'}`}
+                        className={`flex items-center gap-2 pl-1.5 pr-1.5 py-1.5 rounded-2xl bg-[#12121a]/95 backdrop-blur-xl border shadow-[0_8px_32px_rgba(0,0,0,0.5)] animate-in fade-in slide-in-from-right-1 duration-200 max-w-[300px] ${isError ? 'border-red-500/40' : 'border-purple-500/30'}`}
                     >
-                        <AgentRobot isWorking={!isError} />
-                        <div className="flex flex-col leading-tight text-left min-w-0 pr-1">
-                            <span className={`text-[11px] font-bold truncate ${isError ? 'text-red-300' : 'text-purple-300'}`}>{run.label}</span>
-                            <span className={`text-[10px] truncate ${isError ? 'text-red-400/80' : 'text-white/50'}`}>{stepText}</span>
-                        </div>
+                        {/* Body → re-open the command bar (NOT stop). */}
+                        <button
+                            onClick={onOpen}
+                            title={t('canvas.command_bar.restore')}
+                            className="flex items-center gap-2 min-w-0 cursor-pointer text-left"
+                        >
+                            <AgentRobot isWorking={!isError} />
+                            <div className="flex flex-col leading-tight min-w-0 pr-1">
+                                <span className={`text-[11px] font-bold truncate ${isError ? 'text-red-300' : 'text-purple-300'}`}>{run.label}</span>
+                                <span className={`text-[10px] truncate ${isError ? 'text-red-400/80' : 'text-white/50'}`}>{stepText}</span>
+                            </div>
+                        </button>
                         {isError ? (
                             <button
                                 onClick={() => onDismiss(run.id)}

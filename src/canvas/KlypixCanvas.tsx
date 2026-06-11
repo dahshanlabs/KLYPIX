@@ -3298,7 +3298,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 onClose={() => setCommandOpen(false)}
                 onStartRun={agentRuns.start}
             />
-            <AgentRunsTray runs={agentRuns.runs} onStop={agentRuns.stop} onDismiss={agentRuns.dismiss} />
+            <AgentRunsTray runs={agentRuns.runs} onStop={agentRuns.stop} onDismiss={agentRuns.dismiss} onOpen={() => setCommandOpen(true)} />
 
             {/* Agent toast — short answers float and auto-dismiss; pin converts to permanent card */}
             {toast && (
