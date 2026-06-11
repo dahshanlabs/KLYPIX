@@ -567,8 +567,19 @@ function FolderCardBody({ item }: { item: FileItemType }) {
         previewLeaveTimerRef.current = window.setTimeout(() => setPreview(null), 80);
     };
 
+    // Uniform zoom: render the folder body at a NATURAL size and scale the whole
+    // card (name + rows + icons) by one factor, so resizing enlarges everything
+    // together — like a picture / the container model — instead of leaving the
+    // text pinned at a fixed size. min(w-fit, h-fit) keeps it undistorted and the
+    // whole folder visible. natH tracks the visible row count so there's no gap.
+    const FOLDER_NAT_W = 340;
+    const FOLDER_ROW_H = 21;
+    const FOLDER_HEADER_H = 50;
+    const folderNaturalH = FOLDER_HEADER_H + Math.max(1, rows.length) * FOLDER_ROW_H;
+    const folderZoom = Math.max(0.3, Math.min(item.w / FOLDER_NAT_W, item.h / folderNaturalH));
     return (
         <>
+            <div style={{ width: FOLDER_NAT_W, height: folderNaturalH, transform: `scale(${folderZoom})`, transformOrigin: 'top left', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
             <div style={{
                 padding: '10px 12px 8px',
                 display: 'flex',
@@ -773,6 +784,7 @@ function FolderCardBody({ item }: { item: FileItemType }) {
                         {skipped.length > 6 && <div style={{ opacity: 0.5 }}>{t('canvas.folder_skipped_more').replace('{n}', String(skipped.length - 6))}</div>}
                     </div>
                 )}
+            </div>
             </div>
             {previewEnabled && preview && item.assetId && (
                 <FolderLeafPreview
