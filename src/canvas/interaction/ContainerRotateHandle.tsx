@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { RotateCw } from 'lucide-react';
 import { useCanvasStore } from '../state/canvasStore';
+import { refitContainers } from '../items/containerFit';
 import type { ContainerItem, CanvasItem, DrawnLine, FreehandStroke } from '../items/types';
 
 // Group rotation handle for a SINGLE selected container. Rotates the
@@ -297,6 +298,20 @@ export function ContainerRotateHandle({ item }: Props) {
         // would otherwise miss the gesture. Emit one no-op commit to land
         // the whole gesture as a single step.
         commit({ type: 'UPDATE_ITEM', id: item.id, patch: { x: item.x } });
+        // Gesture-end auto-grow: a rotated sub-group's visible envelope can
+        // poke past its PARENT container's frame even though stored x/y/w/h
+        // never moved. Grow-only refit wraps the rotated AABB (skipped when
+        // the parent is user-shaped, autoSized===false) — same as the
+        // per-item RotateHandle + multi-select paths.
+        if (item.parentId) {
+            refitContainers([item.parentId], {
+                items: state.items,
+                lines: state.lines,
+                strokes: state.strokes,
+                dispatch,
+                mode: 'grow-only',
+            });
+        }
     }
 
     return (

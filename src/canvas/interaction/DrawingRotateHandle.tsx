@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { RotateCw } from 'lucide-react';
 import { useCanvasStore } from '../state/canvasStore';
+import { refitContainers } from '../items/containerFit';
 import type { DrawnLine, FreehandStroke } from '../items/types';
 
 // Rotation handle for a SINGLE selected drawing (line or pen stroke).
@@ -160,6 +161,19 @@ export function DrawingRotateHandle({ kind, id, bounds, view }: Props) {
         } else {
             const st = state.strokes[id];
             if (st) commit({ type: 'UPDATE_STROKE', id, patch: { width: st.width } });
+        }
+        // Gesture-end auto-grow: rotation bakes new point geometry, which can
+        // swing the drawing past its parent container's frame. Grow-only refit
+        // wraps it — same as the item/sub-group rotate paths.
+        const parentId = kind === 'line' ? state.lines[id]?.parentId : state.strokes[id]?.parentId;
+        if (parentId) {
+            refitContainers([parentId], {
+                items: state.items,
+                lines: state.lines,
+                strokes: state.strokes,
+                dispatch,
+                mode: 'grow-only',
+            });
         }
     }
 
