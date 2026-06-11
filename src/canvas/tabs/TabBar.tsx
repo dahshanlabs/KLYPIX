@@ -27,24 +27,34 @@ interface Props {
     onSwitch: (id: string) => void;
     onClose: (id: string) => void;
     onNew: () => void;
+    // 'strip'  = standalone 32px bar (legacy, its own dark background + border).
+    // 'inline' = pills sized to sit inline in the app title bar (no background
+    //            bar, no bottom border) — the merged-into-header layout.
+    variant?: 'strip' | 'inline';
 }
 
 export const TAB_BAR_HEIGHT = 32;
 
-export function TabBar({ tabs, activeId, onSwitch, onClose, onNew }: Props) {
+export function TabBar({ tabs, activeId, onSwitch, onClose, onNew, variant = 'strip' }: Props) {
+    const inline = variant === 'inline';
     return (
         <div
-            className="flex items-end gap-0.5 px-2 border-b border-white/5 bg-[#08080c] no-drag"
-            style={{ height: TAB_BAR_HEIGHT, minHeight: TAB_BAR_HEIGHT }}
+            className={inline
+                ? "flex items-center gap-1 h-full min-w-0 no-drag"
+                : "flex items-end gap-0.5 px-2 border-b border-white/5 bg-[#08080c] no-drag"}
+            style={inline ? undefined : { height: TAB_BAR_HEIGHT, minHeight: TAB_BAR_HEIGHT }}
             onPointerDown={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
         >
-            <div className="flex-1 flex items-end gap-0.5 overflow-x-auto overflow-y-hidden">
+            <div className={inline
+                ? "flex-1 flex items-center gap-1 overflow-x-auto overflow-y-hidden min-w-0"
+                : "flex-1 flex items-end gap-0.5 overflow-x-auto overflow-y-hidden"}>
                 {tabs.map((t) => (
                     <TabPill
                         key={t.id}
                         tab={t}
                         active={t.id === activeId}
+                        inline={inline}
                         onSwitch={() => onSwitch(t.id)}
                         onClose={() => onClose(t.id)}
                     />
@@ -52,7 +62,9 @@ export function TabBar({ tabs, activeId, onSwitch, onClose, onNew }: Props) {
                 <button
                     onClick={onNew}
                     title="New canvas tab"
-                    className="flex items-center justify-center w-6 h-6 mb-1 ml-1 rounded text-white/40 hover:text-emerald-300 hover:bg-white/5 transition-colors shrink-0"
+                    className={inline
+                        ? "flex items-center justify-center w-6 h-6 rounded text-white/40 hover:text-emerald-300 hover:bg-white/10 transition-colors shrink-0"
+                        : "flex items-center justify-center w-6 h-6 mb-1 ml-1 rounded text-white/40 hover:text-emerald-300 hover:bg-white/5 transition-colors shrink-0"}
                 >
                     <Plus size={13} />
                 </button>
@@ -64,14 +76,17 @@ export function TabBar({ tabs, activeId, onSwitch, onClose, onNew }: Props) {
 interface TabPillProps {
     tab: TabMeta;
     active: boolean;
+    inline?: boolean;
     onSwitch: () => void;
     onClose: () => void;
 }
 
-function TabPill({ tab, active, onSwitch, onClose }: TabPillProps) {
-    const bg = active ? '#12121a' : 'transparent';
+function TabPill({ tab, active, inline = false, onSwitch, onClose }: TabPillProps) {
+    // Inline (header) active uses a translucent white wash so it reads on the
+    // emerald title-bar gradient; the strip variant keeps its solid dark fill.
+    const bg = active ? (inline ? 'rgba(255,255,255,0.12)' : '#12121a') : 'transparent';
     const border = active ? 'border-white/10' : 'border-transparent';
-    const text = active ? 'text-white/85' : 'text-white/55';
+    const text = active ? 'text-white/90' : 'text-white/55';
     return (
         <div
             role="tab"
@@ -81,11 +96,14 @@ function TabPill({ tab, active, onSwitch, onClose }: TabPillProps) {
                 // Middle-click closes (common browser convention)
                 if (e.button === 1) { e.preventDefault(); onClose(); }
             }}
-            className={`flex items-center gap-1.5 pl-2.5 pr-1 h-7 rounded-t-md border ${border} ${text} cursor-pointer transition-colors hover:text-white`}
-            style={{ background: bg, minWidth: 110, maxWidth: 180 }}
+            className={`flex items-center gap-1.5 pl-2.5 pr-1 border ${inline ? 'h-6 rounded-md' : 'h-7 rounded-t-md'} ${border} ${text} cursor-pointer transition-colors hover:text-white`}
+            style={{ background: bg, minWidth: inline ? 88 : 110, maxWidth: 180 }}
             title={tab.title}
         >
-            <span className="flex-1 truncate text-[11.5px] font-medium">{tab.title}</span>
+            {/* div, NOT span: `.title-bar span` force-styles every span white+bold,
+                which would erase the active/inactive contrast once portaled into
+                the header. A div is immune to that global rule. */}
+            <div className="flex-1 truncate text-[11.5px] font-medium">{tab.title}</div>
             {tab.dirty && <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" title="Unsaved changes" />}
             <button
                 onClick={(e) => { e.stopPropagation(); onClose(); }}
