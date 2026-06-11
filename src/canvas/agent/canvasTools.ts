@@ -152,7 +152,7 @@ export const CANVAS_TOOLS: FunctionDeclaration[] = [
     },
     {
         name: 'canvas_get_connections',
-        description: 'List all connections (arrows) on the canvas with their source and target ids and any label.',
+        description: 'List all connections (arrows). Each has from/to ids PLUS fromLabel/toLabel (the cards’ actual text). When answering the user, refer to cards by their fromLabel/toLabel — never the raw ids.',
         parameters: { type: SchemaType.OBJECT, properties: {}, required: [] },
     },
     {

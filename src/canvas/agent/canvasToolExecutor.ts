@@ -636,8 +636,14 @@ export async function executeToolCall(call: ToolCall, ctx: ToolExecContext): Pro
         }
 
         case 'canvas_get_connections': {
+            // Include human-readable labels (the card's text/title) so the agent
+            // answers "ddd → SSSS…" instead of echoing raw item ids.
             const list = Object.values(s.connections).map(c => ({
-                id: c.id, from: c.fromId, to: c.toId, label: c.label, by: c.createdBy,
+                id: c.id,
+                from: c.fromId, to: c.toId,
+                fromLabel: s.items[c.fromId] ? labelFor(s.items[c.fromId]) : c.fromId,
+                toLabel: s.items[c.toId] ? labelFor(s.items[c.toId]) : c.toId,
+                label: c.label, by: c.createdBy,
             }));
             return { name: call.name, result: JSON.stringify(list) };
         }
