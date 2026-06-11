@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI, type Content, type Part } from '@google/generative-ai';
 import { getApiKeySync } from '../../api/gemini';
 import { renderItemsForPrompt, type CommandScope } from './canvasScopeResolver';
-import type { CanvasItem } from '../items/types';
+import { newId, type CanvasItem, type Connection } from '../items/types';
 import { CANVAS_TOOLS } from './canvasTools';
 import { executeToolCall, type ToolExecContext, type ToolResult } from './canvasToolExecutor';
 
@@ -77,6 +77,11 @@ function withToolLock<T>(fn: () => Promise<T>): Promise<T> {
     return run;
 }
 
+// Tools that CREATE a canvas item — their result JSON carries the new id(s),
+// which we collect to deterministically connect the agent's output back to its
+// source (Gemini Flash forgets to call canvas_connect_items inconsistently).
+const CREATE_TOOLS = new Set(['canvas_create_card', 'canvas_write_batch', 'canvas_pin_chart', 'canvas_pin_file', 'canvas_pin_image']);
+
 export async function runCanvasAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     const { command, scope, scopeItems, getState, dispatch, onToast, onProgress, signal } = opts;
 
@@ -108,6 +113,7 @@ ${command}`;
     let turns = 0;
     let toolCalls = 0;
     let finalMessage = '';
+    const createdIds: string[] = [];
 
     while (turns < MAX_TURNS) {
         if (signal?.aborted) return { finalMessage, toolCalls, error: 'aborted' };
@@ -190,6 +196,17 @@ ${command}`;
                 }
             }
 
+            // Collect ids of items this run created, to wire them to the source.
+            if (CREATE_TOOLS.has(call.name)) {
+                try {
+                    const parsed = JSON.parse(result.result);
+                    if (typeof parsed.id === 'string') createdIds.push(parsed.id);
+                    if (Array.isArray(parsed.created)) {
+                        for (const cid of parsed.created) if (typeof cid === 'string') createdIds.push(cid);
+                    }
+                } catch { /* non-JSON result — nothing to collect */ }
+            }
+
             if (result.done) {
                 shouldStop = true;
                 if (result.doneMessage) finalMessage = result.doneMessage;
@@ -199,6 +216,33 @@ ${command}`;
         contents.push({ role: 'user', parts: responseParts });
 
         if (shouldStop) break;
+    }
+
+    // Deterministically tie the agent's output to its source — Gemini Flash
+    // forgets to call canvas_connect_items inconsistently. Connect each scope
+    // source to each created card (skip pairs already linked). Scoped to a
+    // focused selection (1-3 sources) + a few outputs so /organize and
+    // whole-canvas runs don't fan out a mess of arrows.
+    const sources = scope.anchorId ? [scope.anchorId] : scope.itemIds;
+    const created = Array.from(new Set(createdIds));
+    if (sources.length >= 1 && sources.length <= 3 && created.length >= 1 && created.length <= 3) {
+        await withToolLock(async () => {
+            const st = getState();
+            const conns = Object.values(st.connections) as Connection[];
+            for (const src of sources) {
+                if (!st.items[src]) continue;
+                for (const cardId of created) {
+                    if (cardId === src || !st.items[cardId]) continue;
+                    const linked = conns.some(c => (c.fromId === src && c.toId === cardId) || (c.fromId === cardId && c.toId === src));
+                    if (linked) continue;
+                    dispatch({
+                        type: 'ADD_CONNECTION',
+                        connection: { id: newId('conn'), fromId: src, toId: cardId, label: '', color: '#10b981', width: 2, arrowHead: true, style: 'solid', createdBy: 'agent' },
+                    });
+                }
+            }
+            return null;
+        });
     }
 
     if (turns >= MAX_TURNS) {
