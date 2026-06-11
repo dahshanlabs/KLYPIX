@@ -7,7 +7,7 @@ import fs from 'fs';
 import * as os from 'os';
 import * as offlineManager from './offline/offlineManager';
 import { resolveClaudeConfigPath, resolveClientConfigPath, safeReadJsonConfig, connectMcpServer } from './configMerger';
-import { projectBrainStatus, installProjectBrainHook, uninstallProjectBrainHook } from './projectBrainInstaller';
+import { projectBrainStatus, installProjectBrainHook, uninstallProjectBrainHook, ensureProjectBrainFiles, localMcpReady, localMcpServerPath } from './projectBrainInstaller';
 // Prevent EPIPE and other uncaught errors from showing error dialogs
 process.on('uncaughtException', (err: any) => {
     if (err.message.includes('EPIPE') || err.message.includes('broken pipe')) {
@@ -2096,21 +2096,35 @@ ipcMain.handle('mcp:connect-claude-desktop', (_e: any, vaultArg?: string) => {
     // it rather than create a duplicate; otherwise create "klypix-canvas".
     const name = Object.keys(servers).find(k => /klypix/i.test(k)) || 'klypix-canvas';
     const vault = resolveAgentVault(vaultArg);
-    warmKlypixMcpCache();
+    prepareLocalMcp(); // before npxMcpEntry so the bundled server gets picked
     return connectMcpServer({ configPath: res.path, name, entry: npxMcpEntry(vault) });
 });
 
-// Windows-safe MCP launcher. `npx` is a .cmd shim, and Node's spawn refuses to
-// execute .cmd files without a shell (EINVAL, since the CVE-2024-27980
-// hardening) — so every MCP client (Claude Code/Desktop, Cursor, Cline) that
-// spawns `command: "npx"` directly on Windows SILENTLY fails to start the
-// server ("server doesn't seem to have come up"). Wrap via `cmd /c` on
-// Windows; plain npx elsewhere.
+// MCP server entry for written configs. PREFERRED: the BUNDLED server at
+// ~/.claude/project-brain/klypix-mcp-server.mjs (installed by
+// ensureProjectBrainFiles on every connect) launched with plain `node` —
+// instant boot, zero network, works offline + on fresh machines, and always
+// matches the app's shipped version (no npm-publish lag). FALLBACK: npx.
+// `npx` is a .cmd shim, and Node's spawn refuses .cmd files without a shell
+// (EINVAL, since the CVE-2024-27980 hardening) — so MCP clients spawning
+// `command: "npx"` directly on Windows can SILENTLY fail to start the server
+// ("server doesn't seem to have come up"). Wrap via `cmd /c` on Windows.
 function npxMcpEntry(vault: string): { command: string; args: string[] } {
     const v = vault.replace(/\\/g, '/');
+    if (localMcpReady()) {
+        return { command: 'node', args: [localMcpServerPath().replace(/\\/g, '/'), '--vault', v] };
+    }
     return process.platform === 'win32'
         ? { command: 'cmd', args: ['/c', 'npx', '-y', 'klypix-mcp', '--vault', v] }
         : { command: 'npx', args: ['-y', 'klypix-mcp', '--vault', v] };
+}
+
+// Best-effort: make sure the bundled server + deps exist locally before a
+// config is written; if it can't (missing assets), the npx fallback still
+// works — then pre-warm the npx cache so its first boot isn't a cold download.
+function prepareLocalMcp(): void {
+    try { ensureProjectBrainFiles(); } catch { /* fall back to npx */ }
+    if (!localMcpReady()) warmKlypixMcpCache();
 }
 
 // Pre-warm the npx cache for klypix-mcp the moment a config is written: the
@@ -2163,9 +2177,9 @@ ipcMain.handle('mcp:connect-client', (_e: any, args?: { client?: string; vault?:
     const servers = (parsed.data?.mcpServers && typeof parsed.data.mcpServers === 'object') ? parsed.data.mcpServers : {};
     const name = Object.keys(servers).find(k => /klypix/i.test(k)) || 'klypix-canvas';
     const vault = resolveAgentVault(args?.vault);
+    prepareLocalMcp(); // before npxMcpEntry so the bundled server gets picked
     const entry: any = npxMcpEntry(vault);
     if (c === 'claudecode') entry.type = 'stdio'; // Claude Code's JSON needs an explicit stdio type
-    warmKlypixMcpCache();
     return connectMcpServer({ configPath: res.path, name, entry });
 });
 
@@ -2215,8 +2229,8 @@ function writeBrainRules(folder: string): string[] {
 ipcMain.handle('mcp:write-project-config', (_e: any, folder?: string) => {
     if (typeof folder !== 'string' || !folder) return { ok: false, error: 'No project folder given.' };
     const cfgPath = path.join(folder, '.mcp.json');
+    prepareLocalMcp(); // before npxMcpEntry so the bundled server gets picked
     const entry = { type: 'stdio', ...npxMcpEntry(folder) };
-    warmKlypixMcpCache();
     const cfg = connectMcpServer({ configPath: cfgPath, name: 'klypix-canvas', entry });
     const rulesWritten = writeBrainRules(folder); // ② auto-read instruction (agent-neutral)
     return { ...cfg, rulesWritten };

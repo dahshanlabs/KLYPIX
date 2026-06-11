@@ -11,8 +11,12 @@ const CLAUDE_DIR = path.join(os.homedir(), '.claude');
 const BRAIN_DIR = path.join(CLAUDE_DIR, 'project-brain');
 const SETTINGS = path.join(CLAUDE_DIR, 'settings.json');
 const HOOK_MARK = 'global-brain-hook'; // identifies OUR hook entries (never touch others)
-const SCRIPTS = ['global-brain-hook.mjs', 'klypix-format.mjs', 'klypix-brain.mjs'];
+const SCRIPTS = ['global-brain-hook.mjs', 'klypix-format.mjs', 'klypix-brain.mjs', 'klypix-mcp-server.mjs'];
 const DEP_PKGS = ['jszip', 'fractional-indexing', 'lie', 'pako', 'immediate', 'setimmediate', 'readable-stream', 'safe-buffer', 'core-util-is', 'inherits', 'isarray', 'process-nextick-args', 'string_decoder', 'util-deprecate'];
+// MCP server deps — copied via DEPENDENCY CLOSURE (each package.json's deps
+// walked recursively) because @modelcontextprotocol/sdk has its own dep tree;
+// a hand-maintained list would silently break on an SDK update.
+const MCP_DEP_ROOTS = ['zod', '@modelcontextprotocol/sdk'];
 
 function fwd(p: string): string { return p.replace(/\\/g, '/'); }
 function exists(p: string): boolean { try { fs.statSync(p); return true; } catch { return false; } }
@@ -108,11 +112,21 @@ export function projectBrainStatus(): BrainHookStatus {
     return { installed: hooksPresent && scriptsPresent, scriptsPresent, hooksPresent, settingsPath: SETTINGS, brainDir: BRAIN_DIR, parseError: parsed.ok ? null : (parsed.error || null) };
 }
 
-export function installProjectBrainHook(): { ok: boolean; error?: string; backup?: string } {
-    // 1) refuse if settings.json is broken (don't risk it)
-    const parsed = readSettings();
-    if (!parsed.ok) return { ok: false, error: parsed.error };
-    // 2) copy scripts + deps into ~/.claude/project-brain
+// Local MCP server: shipped alongside the hook scripts so configs can point at
+// `node ~/.claude/project-brain/klypix-mcp-server.mjs` — instant boot, zero
+// network, works offline and on fresh machines (no npx cold-download race).
+export function localMcpServerPath(): string { return path.join(BRAIN_DIR, 'klypix-mcp-server.mjs'); }
+export function localMcpReady(): boolean {
+    return exists(localMcpServerPath())
+        && exists(path.join(BRAIN_DIR, 'node_modules', '@modelcontextprotocol', 'sdk'))
+        && exists(path.join(BRAIN_DIR, 'node_modules', 'zod'));
+}
+
+// Copy the scripts + dependency payload into ~/.claude/project-brain — FILES
+// ONLY, no settings.json hook registration (that's the separate auto-load
+// opt-in). Called by the hook installer AND by every MCP connect/write so the
+// local server exists before a config points at it. Idempotent.
+export function ensureProjectBrainFiles(): { ok: boolean; error?: string } {
     const assets = resolveAssetsDir();
     if (!assets) return { ok: false, error: 'Could not locate the brain hook scripts to install.' };
     try {
@@ -120,8 +134,50 @@ export function installProjectBrainHook(): { ok: boolean; error?: string; backup
         for (const s of SCRIPTS) { const src = path.join(assets.scriptsDir, s); if (exists(src)) fs.copyFileSync(src, path.join(BRAIN_DIR, s)); }
         const destMods = path.join(BRAIN_DIR, 'node_modules');
         for (const pkg of DEP_PKGS) { const src = path.join(assets.modulesDir, pkg); if (exists(src) && !exists(path.join(destMods, pkg))) copyDir(src, path.join(destMods, pkg)); }
+        // MCP deps: walk each package.json's dependencies (BFS) so the SDK's
+        // transitive tree comes along — INCLUDING the deps of NESTED
+        // node_modules packages (e.g. sdk/node_modules/ajv needs fast-uri
+        // from the hoisted top level). The bundled modulesDir is already a
+        // closed set; in dev the repo's hoisted node_modules satisfies it.
+        const queue = [...MCP_DEP_ROOTS];
+        const seen = new Set<string>();
+        const enqueueDepsOf = (pkgDir: string): void => {
+            try {
+                const pj = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
+                for (const d of Object.keys(pj?.dependencies || {})) queue.push(d);
+            } catch { /* dep without readable package.json — copy was enough */ }
+            const nested = path.join(pkgDir, 'node_modules');
+            if (!exists(nested)) return;
+            for (const e of fs.readdirSync(nested, { withFileTypes: true })) {
+                if (!e.isDirectory()) continue;
+                if (e.name.startsWith('@')) {
+                    for (const s of fs.readdirSync(path.join(nested, e.name), { withFileTypes: true })) {
+                        if (s.isDirectory()) enqueueDepsOf(path.join(nested, e.name, s.name));
+                    }
+                } else enqueueDepsOf(path.join(nested, e.name));
+            }
+        };
+        while (queue.length) {
+            const pkg = queue.shift()!;
+            if (seen.has(pkg)) continue;
+            seen.add(pkg);
+            const src = path.join(assets.modulesDir, pkg);
+            if (!exists(src)) continue;
+            if (!exists(path.join(destMods, pkg))) copyDir(src, path.join(destMods, pkg));
+            enqueueDepsOf(src);
+        }
         fs.writeFileSync(path.join(BRAIN_DIR, 'package.json'), JSON.stringify({ name: 'klypix-project-brain', private: true, type: 'module' }, null, 2), 'utf8');
+        return { ok: true };
     } catch (e: any) { return { ok: false, error: `Failed to install hook scripts: ${e?.message || e}` }; }
+}
+
+export function installProjectBrainHook(): { ok: boolean; error?: string; backup?: string } {
+    // 1) refuse if settings.json is broken (don't risk it)
+    const parsed = readSettings();
+    if (!parsed.ok) return { ok: false, error: parsed.error };
+    // 2) copy scripts + deps into ~/.claude/project-brain
+    const files = ensureProjectBrainFiles();
+    if (!files.ok) return files;
     // 3) merge our SessionStart + Stop entries (idempotent; preserves others)
     const data = mergeBrainHooks(parsed.data, true);
     try { writeSettingsAtomic(data, parsed.raw); return { ok: true, backup: parsed.raw ? SETTINGS + '.klypix-bak' : undefined }; }
