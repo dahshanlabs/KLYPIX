@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, Lock, LogOut, LogIn, FolderTree, ZoomIn } fr
 import { t, useLocale } from '../../i18n/strings';
 import { getReadabilityReference, hasTextDescendant } from './containerMinTextSize';
 import type { ContainerItem as ContainerItemType, CanvasItem, DrawnLine, FreehandStroke } from './types';
-import { useCanvasStore } from '../state/canvasStore';
+import { useCanvasApi, useCanvasSelector, shallowEqual } from '../state/canvasStore';
 import { ResizeHandle } from '../interaction/ResizeHandle';
 import { ContainerRotateHandle } from '../interaction/ContainerRotateHandle';
 import { useGridSettings, isDarkBackground } from '../gridSettings';
@@ -24,6 +24,12 @@ export const ContainerHeaderView = React.memo(ContainerHeaderViewImpl, (prev, ne
 });
 
 export const TITLE_BAR_HEIGHT = 28;
+// Header readability floor: the title bar never scales below 75% of natural,
+// even when the group body is shrunk to its 0.3× floor — a readable header at
+// every group size (user decision 2026-06-12: "bigger header is nicer").
+// Shared by titleScale (visual chrome) AND the child-clamp headerWorldH so
+// children can never slip under the now-taller bar.
+export const TITLE_SCALE_FLOOR = 0.75;
 
 // Authoring uses canonical world-px sizes. Items have a fixed world size
 // regardless of the view zoom they're created at; zoom is just
@@ -519,16 +525,16 @@ export function computeContainerScales(item: ContainerItemType, _viewZoom: numbe
     // 10× enlarged group would draw 10× thicker borders / 30-px-radius
     // corners, which reads as broken proportions.
     const chromeScale = Math.max(0.5, Math.min(3, rawScale || 1));
-    // titleScale is UNCAPPED — header dimensions (height, font, icons,
-    // padding) scale with the group's actual body size, exactly like
-    // the body content does. The chromeScale 3× cap was making the
+    // titleScale is UNCAPPED upward — header dimensions (height, font,
+    // icons, padding) scale with the group's actual body size, exactly
+    // like the body content does. The chromeScale 3× cap was making the
     // header look comparatively tiny on enlarged groups (body grows
     // unbounded, header locked at 3× authored = invisible at low view
-    // zoom). Floor at 0.3 prevents the header from collapsing to a
-    // sub-pixel strip on heavily-shrunk groups; ceiling on the rawScale
-    // itself isn't needed because the body it scales with is naturally
-    // its own visual ceiling.
-    const titleScale = Math.max(0.3, rawScale || 1);
+    // zoom). Downward it floors at TITLE_SCALE_FLOOR (0.75): a shrunken
+    // group keeps a READABLE title bar instead of a sub-pixel strip —
+    // readability beats strict proportionality for chrome (the body
+    // still scales fully).
+    const titleScale = Math.max(TITLE_SCALE_FLOOR, rawScale || 1);
     return { chromeScale, titleScale };
 }
 
@@ -568,7 +574,21 @@ function containerDepth(item: ContainerItemType, items: Record<string, CanvasIte
 }
 
 function ContainerItemViewImpl({ item, selected }: Props) {
-    const { state, dispatch } = useCanvasStore();
+    const { dispatch } = useCanvasApi();
+    // Narrow subscription: exactly the slices this component reads, compared
+    // shallowly — so selection/editing/tool/connection dispatches no longer
+    // re-render every container. Item/view changes still do (children +
+    // scale math depend on them), matching the old behavior where it matters.
+    const state = useCanvasSelector(s => ({
+        items: s.items,
+        lines: s.lines,
+        strokes: s.strokes,
+        view: s.view,
+        zoomCollapsedIds: s.zoomCollapsedIds,
+        userOverrideExpandedIds: s.userOverrideExpandedIds,
+        focusedContainerId: s.focusedContainerId,
+        renamingContainerId: s.renamingContainerId,
+    }), shallowEqual);
     const isFocused = state.focusedContainerId === item.id;
     const depth = containerDepth(item, state.items);
 
@@ -693,13 +713,12 @@ function ContainerItemViewImpl({ item, selected }: Props) {
             const nextX = item.x + anchor.relX * scale;
             // Reserve the header's world-px zone at the top of the
             // container so children never visually slip under the title
-            // bar. Now that titleScale === chromeScale (uniform group
-            // scaling), the header height is just TITLE_BAR_HEIGHT × scale
-            // at every zoom — no screen-px floor needed, no risk of the
-            // rendered header covering its children. Previous floor
-            // (MIN_HEADER_SCREEN_PX / zoom) was a workaround for the
-            // header-stays-readable behavior, which is gone.
-            const headerWorldH = TITLE_BAR_HEIGHT * scale;
+            // bar. MUST mirror titleScale's TITLE_SCALE_FLOOR: the bar
+            // renders at max(scale, 0.75) of natural, so the reserved
+            // zone uses the same floored scale — purely group-scale
+            // derived (no view-zoom term), so it can't reintroduce the
+            // old zoom-dependent parent-bloat bug.
+            const headerWorldH = TITLE_BAR_HEIGHT * Math.max(scale, TITLE_SCALE_FLOOR);
             const rawNextY = item.y + anchor.relY * scale;
             const nextY = Math.max(rawNextY, item.y + headerWorldH);
             const nextW = anchor.w * scale;
@@ -1023,7 +1042,18 @@ function ContainerItemViewImpl({ item, selected }: Props) {
 // stacking order.
 function ContainerHeaderViewImpl({ item, childCount, selected }: Props) {
     useLocale();  // re-render header chrome (tooltips, "items" label) on locale flip
-    const { state, dispatch } = useCanvasStore();
+    const { dispatch } = useCanvasApi();
+    // Same narrow-slice subscription as the body view — see the note there.
+    const state = useCanvasSelector(s => ({
+        items: s.items,
+        lines: s.lines,
+        strokes: s.strokes,
+        view: s.view,
+        zoomCollapsedIds: s.zoomCollapsedIds,
+        userOverrideExpandedIds: s.userOverrideExpandedIds,
+        focusedContainerId: s.focusedContainerId,
+        renamingContainerId: s.renamingContainerId,
+    }), shallowEqual);
     const inputRef = useRef<HTMLInputElement>(null);
     // Mirror the body's theme-aware tint logic so the title-bar strip
     // reads correctly on both light and dark canvases. Prior hardcoded
@@ -1591,7 +1621,12 @@ export function countChildren(
  *  exiting back up; this menu is just "jump straight into a nested
  *  group I can see". */
 function SubGroupMenu({ container, iconSize, inkColor }: { container: ContainerItemType; iconSize: number; inkColor: string }) {
-    const { state, dispatch } = useCanvasStore();
+    const { dispatch } = useCanvasApi();
+    const state = useCanvasSelector(s => ({
+        items: s.items,
+        lines: s.lines,
+        strokes: s.strokes,
+    }), shallowEqual);
     const [open, setOpen] = useState(false);
     const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
     const wrapperRef = useRef<HTMLDivElement>(null);
