@@ -75,6 +75,11 @@ export interface PaletteResult {
     /** When truthy, the result is rendered with a "loading" state — used
      *  by streaming providers (AI, web fetch) to show in-flight rows. */
     pending?: boolean;
+    /** Optional capture/creation timestamp (ms since epoch). When present,
+     *  a chronologically-browsable provider (e.g. clipboard) can order rows
+     *  by this instead of by frecency rank — so a time-ordered history reads
+     *  in actual time order rather than "recently reused floats to top". */
+    sortTs?: number;
     /** When set, this entry renders as a section HEADER instead of a
      *  normal row. Headers are not selectable, not keyboard-navigable,
      *  and don't trigger primaryAction. Providers use them to group

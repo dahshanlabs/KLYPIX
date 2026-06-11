@@ -15,6 +15,7 @@ import type { PaletteProvider, PaletteResult, PaletteProviderContext } from './t
 import { LayoutGrid, Search } from 'lucide-react';
 import React from 'react';
 import { listRecentCanvases, type RecentCanvas } from '../../canvas/dashboard/recentCanvasesStore';
+import { shortenPath } from '../../canvas/dashboard/pathDisplay';
 import { getOrIndexCanvas } from './vaultIndexCache';
 
 const MAX_SWITCHER = 8;
@@ -46,7 +47,9 @@ function switcherResult(c: RecentCanvas): PaletteResult {
     return {
         id: `canvas:file:${c.filePath}`,
         title: c.title || fileName(c.filePath),
-        subtitle: `${fileName(c.filePath)} · ${ageLabel(c.lastOpened)}`,
+        // Folder path, not basename — every project has a brain.klypix, so
+        // the path is what tells same-named canvases apart in the switcher.
+        subtitle: `${shortenPath(c.filePath, 44)} · ${ageLabel(c.lastOpened)}`,
         accent: '#10b981',
         icon: React.createElement(LayoutGrid, { size: 14 }),
         primaryAction: { label: 'Open canvas', handler: () => openCanvas(c.filePath) },

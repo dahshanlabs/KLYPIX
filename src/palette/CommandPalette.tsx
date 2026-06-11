@@ -11,6 +11,7 @@ import {
     jumpSelection,
     cycleSecondary,
     setClipFilter,
+    toggleClipSort,
     showToast,
     toggleDetailPane,
     openWithPrefix,
@@ -561,6 +562,35 @@ export function CommandPalette({ compact = false }: { compact?: boolean } = {}) 
                             );
                         })}
                         <div style={{ flex: 1 }} />
+                        {/* Sort-order toggle. Clipboard history reads as a
+                            time-ordered list; this flips newest↔oldest.
+                            Default is newest-first. The arrow points the way
+                            time flows down the list (down = newest on top). */}
+                        <button
+                            type="button"
+                            onClick={() => toggleClipSort()}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                fontSize: 10,
+                                padding: '3px 8px',
+                                borderRadius: 999,
+                                border: '1px solid rgba(255,255,255,0.1)',
+                                background: 'rgba(255,255,255,0.04)',
+                                color: 'rgba(255,255,255,0.6)',
+                                cursor: 'pointer',
+                                fontWeight: 500,
+                            }}
+                            title={t('palette.clip_sort.hint')}
+                        >
+                            {snap.clipSort === 'oldest'
+                                ? <ArrowUp size={11} />
+                                : <ArrowDown size={11} />}
+                            {snap.clipSort === 'oldest'
+                                ? t('palette.clip_sort.oldest')
+                                : t('palette.clip_sort.newest')}
+                        </button>
                         {/* Bulk clear unpinned. Pinned items survive — the
                             main-process handler explicitly preserves them.
                             Native confirm gates the destructive action. */}

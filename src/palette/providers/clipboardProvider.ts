@@ -19,7 +19,7 @@
 // enough to absorb a typing burst.
 
 import type { PaletteProvider, PaletteResult, PaletteProviderContext } from './types';
-import { Clipboard, Image as ImageIcon, FileText, Pin, PinOff, Code, Trash2, Link as LinkIcon, Palette as PaletteIcon, ExternalLink } from 'lucide-react';
+import { Clipboard, Image as ImageIcon, FileText, Pin, PinOff, Trash2, Link as LinkIcon, Palette as PaletteIcon, ExternalLink } from 'lucide-react';
 import React from 'react';
 import { fuzzyFilter } from '../search';
 import { getSnapshot } from '../paletteStore';
@@ -160,6 +160,36 @@ function ageLabel(capturedAt: number): string {
     return `${day}d ago`;
 }
 
+/** A small monospace "TxT" chip used as the icon for text/html rows. */
+function txtBadge(): React.ReactNode {
+    return React.createElement('div', {
+        style: {
+            fontFamily: 'JetBrains Mono, ui-monospace, monospace',
+            fontSize: 9,
+            fontWeight: 700,
+            letterSpacing: '0.5px',
+            lineHeight: 1,
+            color: 'rgba(255,255,255,0.72)',
+            border: '1px solid rgba(255,255,255,0.18)',
+            borderRadius: 4,
+            padding: '2px 3px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+        },
+    }, 'TxT');
+}
+
+/** Order rows by capture time honoring the user's browse-sort preference
+ *  (newest-first by default). Applied BEFORE slicing the top 20 so the
+ *  correct time-window survives the cap. */
+function orderRows(rows: ClipboardRow[]): ClipboardRow[] {
+    const dir = getSnapshot().clipSort;
+    return rows.slice().sort((a, b) =>
+        dir === 'oldest' ? a.capturedAt - b.capturedAt : b.capturedAt - a.capturedAt,
+    );
+}
+
 function iconFor(row: ClipboardRow): React.ReactNode {
     // Best-in-class: for image rows we show the actual thumbnail inline
     // so the user can recognize what they copied at a glance instead of
@@ -181,7 +211,10 @@ function iconFor(row: ClipboardRow): React.ReactNode {
     }
     if (row.kind === 'image') return React.createElement(ImageIcon, { size: 14 });
     if (row.kind === 'files') return React.createElement(FileText, { size: 14 });
-    if (row.kind === 'html') return React.createElement(Code, { size: 14 });
+    // Text-like rows (plain text + browser-copied HTML) get a literal "TxT"
+    // badge — more self-evidently "this is text you copied" than the old
+    // <> code glyph, which read as "this is code".
+    if (row.kind === 'html' || row.kind === 'text') return txtBadge();
     if (row.kind === 'link') return React.createElement(LinkIcon, { size: 14 });
     if (row.kind === 'color' && row.text) {
         // Render an actual color swatch instead of a generic palette icon.
@@ -342,6 +375,9 @@ function toResult(row: ClipboardRow): PaletteResult {
         accent: row.fromSync ? '#a855f7' : (row.pinned ? '#f59e0b' : '#06b6d4'),
         icon: iconFor(row),
         detail: detailFor(row),
+        // Lets the palette order the browse list by real capture time
+        // instead of frecency rank (see paletteStore.sortClipChronologically).
+        sortTs: row.capturedAt,
         primaryAction: (() => {
             // Best-in-class: read the smart-paste target from the palette
             // store at row-build time. When known, primary action becomes
@@ -497,13 +533,13 @@ export const clipboardProvider: PaletteProvider = {
             })();
             return [];
         }
-        return withSectionHeaders(listCache.rows.slice(0, 20));
+        return withSectionHeaders(orderRows(listCache.rows).slice(0, 20));
     },
 
     async query(input: string, _ctx: PaletteProviderContext): Promise<PaletteResult[]> {
         const rows = await fetchList();
         const q = input.trim();
-        if (q.length === 0) return withSectionHeaders(rows.slice(0, 20));
+        if (q.length === 0) return withSectionHeaders(orderRows(rows).slice(0, 20));
         // When the user is searching, section dividers add noise — show a
         // flat fuzzy-ranked list instead. Pinned rows still get their
         // 📌 prefix so they're recognizable.

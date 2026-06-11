@@ -45,6 +45,11 @@ interface PaletteState {
      *  null = no filter (default). 'pinned' / 'text' / 'image' / 'files'.
      *  Only meaningful when exclusiveProvider === 'clip'. */
     clipFilter: 'pinned' | 'text' | 'image' | 'files' | null;
+    /** Browse-order for the clipboard history. 'newest' = most-recently
+     *  copied first (default), 'oldest' = chronological. Overrides the
+     *  frecency rank for clip rows so the list reads in real time-order
+     *  instead of "recently reused floats to the top". Persisted. */
+    clipSort: 'newest' | 'oldest';
     /** Brief confirmation banner shown inside the modal after an action
      *  resolves successfully. Auto-clears after ~1.6s. id forces React
      *  reconciliation so back-to-back identical texts still re-animate. */
@@ -85,6 +90,15 @@ const SOURCE_WEIGHT: Record<string, number> = {
     web: 1.4,
 };
 
+const CLIP_SORT_KEY = 'klypix:palette:clipSort:v1';
+function readPersistedClipSort(): 'newest' | 'oldest' {
+    try {
+        return localStorage.getItem(CLIP_SORT_KEY) === 'oldest' ? 'oldest' : 'newest';
+    } catch {
+        return 'newest';
+    }
+}
+
 let state: PaletteState = {
     open: false,
     query: '',
@@ -94,6 +108,7 @@ let state: PaletteState = {
     selectedIndex: 0,
     secondaryCursor: 0,
     clipFilter: null,
+    clipSort: readPersistedClipSort(),
     toast: null,
     detailPaneSticky: false,
     detailPaneUserDismissed: false,
@@ -192,6 +207,17 @@ function rebuildRanked() {
             return true;
         });
     }
+    // Clipboard browse view: order chronologically by capture time, NOT by
+    // frecency rank. Frecency makes "recently reused" float to the top,
+    // which reads as random when the user is scanning a time-ordered
+    // history. Direction is user-toggleable (newest-first by default).
+    // Only applies while browsing (no search text) — when the user is
+    // fuzzy-searching, relevance order wins. Section headers stay anchored;
+    // each pinned/recent segment is sorted internally.
+    if (state.exclusiveProvider === 'clip' &&
+        state.query.replace(/^clip:/, '').trim().length === 0) {
+        ranked = sortClipChronologically(ranked, state.clipSort);
+    }
     // Clamp selection to new list size — but try to keep the same RESULT
     // highlighted if it's still present (by id), so users mid-Tab don't
     // get yanked to the top on every keystroke.
@@ -208,6 +234,29 @@ function rebuildRanked() {
         }
     }
     set({ ranked, selectedIndex: nextIdx, secondaryCursor: 0 });
+}
+
+/** Sort clip rows by their capture timestamp, preserving section grouping.
+ *  Each run of rows between section headers is sorted independently so the
+ *  Pinned / Recent split survives. Rows without a sortTs sink to the end. */
+function sortClipChronologically(
+    ranked: RankedResult[],
+    dir: 'newest' | 'oldest',
+): RankedResult[] {
+    const cmp = (a: RankedResult, b: RankedResult) => {
+        const ta = a.sortTs ?? 0;
+        const tb = b.sortTs ?? 0;
+        return dir === 'oldest' ? ta - tb : tb - ta;
+    };
+    const out: RankedResult[] = [];
+    let seg: RankedResult[] = [];
+    const flush = () => { if (seg.length) { seg.sort(cmp); out.push(...seg); seg = []; } };
+    for (const r of ranked) {
+        if (r.sectionHeader) { flush(); out.push(r); }
+        else seg.push(r);
+    }
+    flush();
+    return out;
 }
 
 // ── public API ────────────────────────────────────────────────────────
@@ -353,6 +402,20 @@ export function setClipFilter(filter: PaletteState['clipFilter']) {
     if (state.clipFilter === filter) return;
     set({ clipFilter: filter });
     rebuildRanked();
+}
+
+export function setClipSort(sort: PaletteState['clipSort']) {
+    if (state.clipSort === sort) return;
+    set({ clipSort: sort });
+    try { localStorage.setItem(CLIP_SORT_KEY, sort); } catch { /* private mode */ }
+    // Re-run the query so the provider re-slices the correct time-window
+    // (newest vs oldest 20) before rebuildRanked re-orders for display.
+    if (state.open) runQuery(state.query); else rebuildRanked();
+}
+
+/** Flip the clipboard browse order (newest ↔ oldest). */
+export function toggleClipSort() {
+    setClipSort(state.clipSort === 'newest' ? 'oldest' : 'newest');
 }
 
 /** Toggle compact-mode behavior. Currently affects the empty-state policy:
