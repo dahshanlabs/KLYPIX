@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { RotateCw, ArrowRight } from 'lucide-react';
+import { RotateCw, ArrowRight, Unlink } from 'lucide-react';
 import { useCanvasStore } from '../state/canvasStore';
 import { getSelectionBBox } from './scaleSelection';
 import { refitContainers, collectAffectedParents } from '../items/containerFit';
@@ -659,8 +659,13 @@ export function MultiSelectionBox() {
                 rotate handle above. Screen-constant via /surfaceZoom. */}
             {state.selectedIds.length === 2 && state.selectedLineIds.length === 0 && state.selectedStrokeIds.length === 0 && (() => {
                 const [fromId, toId] = state.selectedIds;
-                const alreadyLinked = Object.values(state.connections).some(
-                    c => (c.fromId === fromId && c.toId === toId) || (c.fromId === toId && c.toId === fromId));
+                // Arrow(s) between the two selected items, either direction. If any
+                // exist the pill toggles to DISCONNECT (removes them); otherwise it
+                // connects. One click either way.
+                const linkedIds = Object.values(state.connections)
+                    .filter(c => (c.fromId === fromId && c.toId === toId) || (c.fromId === toId && c.toId === fromId))
+                    .map(c => c.id);
+                const alreadyLinked = linkedIds.length > 0;
                 const pillH = 22 / surfaceZoom;
                 const gap = 12 / surfaceZoom;
                 return (
@@ -669,14 +674,17 @@ export function MultiSelectionBox() {
                         onClick={(e) => {
                             e.stopPropagation();
                             if (!fromId || !toId || fromId === toId) return;
-                            if (Object.values(state.connections).some(c => c.fromId === fromId && c.toId === toId)) return;
-                            const conn: Connection = {
-                                id: newId('conn'), fromId, toId, label: '',
-                                color: state.color, width: 2, arrowHead: true, style: 'solid', createdBy: 'user',
-                            };
-                            commit({ type: 'ADD_CONNECTION', connection: conn });
+                            if (alreadyLinked) {
+                                commit({ type: 'DELETE_CONNECTIONS', ids: linkedIds });
+                            } else {
+                                const conn: Connection = {
+                                    id: newId('conn'), fromId, toId, label: '',
+                                    color: state.color, width: 2, arrowHead: true, style: 'solid', createdBy: 'user',
+                                };
+                                commit({ type: 'ADD_CONNECTION', connection: conn });
+                            }
                         }}
-                        title={alreadyLinked ? '' : t('canvas.link.label')}
+                        title={alreadyLinked ? t('canvas.link.unlink') : t('canvas.link.label')}
                         style={{
                             position: 'absolute',
                             left: boxX + boxW / 2,
@@ -687,21 +695,23 @@ export function MultiSelectionBox() {
                             display: 'flex',
                             alignItems: 'center',
                             gap: 5 / surfaceZoom,
-                            background: alreadyLinked ? 'rgba(16,185,129,0.25)' : '#10b981',
-                            color: alreadyLinked ? 'rgba(255,255,255,0.6)' : 'white',
+                            background: alreadyLinked ? 'rgba(239,68,68,0.9)' : '#10b981',
+                            color: 'white',
                             border: `${stroke}px solid rgba(10,10,15,0.85)`,
                             borderRadius: pillH / 2,
                             fontSize: 12 / surfaceZoom,
                             fontWeight: 600,
                             whiteSpace: 'nowrap',
-                            cursor: alreadyLinked ? 'default' : 'pointer',
+                            cursor: 'pointer',
                             pointerEvents: 'auto',
                             zIndex: 13,
-                            boxShadow: `0 0 0 ${shadowWorld}px rgba(16,185,129,0.22)`,
+                            boxShadow: alreadyLinked
+                                ? `0 0 0 ${shadowWorld}px rgba(239,68,68,0.22)`
+                                : `0 0 0 ${shadowWorld}px rgba(16,185,129,0.22)`,
                         }}
                     >
-                        <ArrowRight size={11 / surfaceZoom} />
-                        {alreadyLinked ? '✓' : t('canvas.link.label')}
+                        {alreadyLinked ? <Unlink size={11 / surfaceZoom} /> : <ArrowRight size={11 / surfaceZoom} />}
+                        {alreadyLinked ? t('canvas.link.unlink') : t('canvas.link.label')}
                     </div>
                 );
             })()}

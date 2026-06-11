@@ -209,6 +209,7 @@ const strings: Strings = {
     'canvas.connect.minimize': { en: 'Minimize', ar: 'تصغير' },
     'canvas.connect.expand': { en: 'Connect to a card by name', ar: 'الربط ببطاقة بالاسم' },
     'canvas.link.label': { en: 'Link', ar: 'ربط' },
+    'canvas.link.unlink': { en: 'Unlink', ar: 'فصل' },
     'canvas.link.swap': { en: 'Swap direction', ar: 'عكس الاتجاه' },
     'chat.copy_response': { en: 'Copy Response', ar: 'نسخ الرد' },
     'chat.drop_files': { en: 'Drop files here', ar: 'أفلِت الملفات هنا' },
