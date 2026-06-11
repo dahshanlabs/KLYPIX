@@ -150,11 +150,28 @@ export function ContextMenu({
     onPositioned,
 }: Props) {
     const ref = useRef<HTMLDivElement>(null);
-    const [statusOpen, setStatusOpen] = useState(false);
-    const [alignOpen, setAlignOpen] = useState(false);
-    const [scaleOpen, setScaleOpen] = useState(false);
-    const [itemAlignOpen, setItemAlignOpen] = useState(false);
-    const [arrangeOpen, setArrangeOpen] = useState(false);
+    // Only ONE flyout submenu open at a time. A single `openSub` key replaces
+    // five independent booleans, so opening Scale auto-closes Arrange, etc. The
+    // derived booleans + setters below keep every existing call site working —
+    // both setX(v => !v) toggles and setX(false) closes.
+    const [openSub, setOpenSub] = useState<'status' | 'align' | 'scale' | 'itemAlign' | 'arrange' | null>(null);
+    const makeSubSetter = (key: 'status' | 'align' | 'scale' | 'itemAlign' | 'arrange') => (v: boolean | ((prev: boolean) => boolean)) => {
+        setOpenSub(prev => {
+            const wasOpen = prev === key;
+            const next = typeof v === 'function' ? v(wasOpen) : v;
+            return next ? key : (wasOpen ? null : prev);
+        });
+    };
+    const statusOpen = openSub === 'status';
+    const setStatusOpen = makeSubSetter('status');
+    const alignOpen = openSub === 'align';
+    const setAlignOpen = makeSubSetter('align');
+    const scaleOpen = openSub === 'scale';
+    const setScaleOpen = makeSubSetter('scale');
+    const itemAlignOpen = openSub === 'itemAlign';
+    const setItemAlignOpen = makeSubSetter('itemAlign');
+    const arrangeOpen = openSub === 'arrange';
+    const setArrangeOpen = makeSubSetter('arrange');
     const [scaleCustom, setScaleCustom] = useState('');
     // Render at an off-screen position on first paint, then reposition in
     // useLayoutEffect once we can measure the real menu size. Without this
