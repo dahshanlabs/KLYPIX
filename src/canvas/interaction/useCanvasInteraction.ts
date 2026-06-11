@@ -834,6 +834,21 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
         // (No zoom-to-author interception — at extreme zoom the user
         // gets a shape sized to their drag's world coords. That's a
         // conscious choice; the user chose the zoom level.)
+        //
+        // Auto-parent a new box/line/stroke to the container it's STARTED over
+        // (not only the focused group), so the drawing collapses into that
+        // container's capsule. Mirrors the drop-reparent hit-test: topmost
+        // non-collapsed container under the point. Fixes "drawings don't
+        // collapse into capsules" for shapes drawn over an un-entered group.
+        let drawParent: string | null = focusedId ?? null;
+        if (!drawParent) {
+            for (let i = s.order.length - 1; i >= 0; i--) {
+                const cand = s.items[s.order[i]];
+                if (!cand || cand.type !== 'container') continue;
+                if ((cand as any).userCollapsed || (cand as any).collapsed) continue;
+                if (world.x >= cand.x && world.x <= cand.x + cand.w && world.y >= cand.y && world.y <= cand.y + cand.h) { drawParent = s.order[i]; break; }
+            }
+        }
         if (s.tool === 'box') {
             const box: BoxItem = {
                 id: newId('box'),
@@ -844,9 +859,9 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
                 h: 1,
                 zIndex: s.order.length,
                 locked: false,
-                // Parent to the focused group (if any) so boxes drawn in
-                // focus mode become children of the group.
-                parentId: focusedId ?? null,
+                // Parent to the container the box is drawn over (or the focused
+                // group), so it collapses into that container's capsule.
+                parentId: drawParent,
                 createdAt: Date.now(),
                 createdBy: 'user',
                 borderColor: s.strokeEnabled === false ? 'transparent' : s.color,
@@ -874,7 +889,7 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
                 color: s.color,
                 width: s.strokeWidth,
                 arrowHead: false,
-                parentId: focusedId ?? null,
+                parentId: drawParent,
             };
             pushSnapshot();
             dispatch({ type: 'ADD_LINE', line });
@@ -890,7 +905,7 @@ export function useCanvasInteraction(opts?: UseCanvasInteractionOptions) {
                 points: [{ x: world.x, y: world.y, pressure: e.pressure || 0.5 }],
                 color: s.color,
                 width: s.strokeWidth,
-                parentId: focusedId ?? null,
+                parentId: drawParent,
             };
             pushSnapshot();
             dispatch({ type: 'ADD_STROKE', stroke });
