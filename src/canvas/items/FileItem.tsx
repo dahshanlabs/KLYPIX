@@ -527,10 +527,17 @@ function FolderCardBody({ item }: { item: FileItemType }) {
     const FOLDER_NAT_W = 360;
     const FOLDER_HEADER_H = 50;
     const FOLDER_ROW_H = 22;
-    const folderZoom = Math.max(0.5, Math.min(2.5, item.w / FOLDER_NAT_W));
+    // PROPORTIONAL zoom — no mid-range clamp. A container group-resize scales the
+    // card's w and h by the same factor, so desiredH below must scale identically
+    // or the auto-fit FIGHTS the group scale (grows the card back → a tall narrow
+    // strip overflowing the frame — the reported bug). The wide [0.12, 4] bounds
+    // only guard degenerate values; dot mode takes over below ~50 rendered px.
+    const folderZoom = Math.max(0.12, Math.min(4, item.w / FOLDER_NAT_W));
     const innerH = item.h / folderZoom;
     const naturalContentH = FOLDER_HEADER_H + Math.max(1, rows.length) * FOLDER_ROW_H + (skipped.length ? 60 : 0);
-    const desiredH = Math.min(440, Math.round(naturalContentH * folderZoom));
+    // Cap in NATURAL units (440 at zoom 1) so the cap scales with the card — a
+    // world-unit cap would likewise break proportionality for big folders.
+    const desiredH = Math.round(Math.min(440, naturalContentH) * folderZoom);
     useLayoutEffect(() => {
         // Snap the card height to its content only when there's a REAL gap (>8px):
         // a freshly-pasted or uniformly-resized card already matches (so this stays
