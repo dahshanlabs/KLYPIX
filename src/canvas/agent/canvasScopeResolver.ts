@@ -132,8 +132,17 @@ export function renderItemsForPrompt(items: CanvasItem[]): string {
                     return `${tag} code [id=${it.id}]: ${it.fileName || `(${it.language})`} — ${it.code.slice(0, 120).replace(/\s+/g, ' ')}…`;
                 case 'container':
                     return `${tag} container [id=${it.id}]: "${it.title}" (${it.collapsed ? 'collapsed' : 'expanded'}${it.scopeLocked ? ', locked' : ''})`;
+                case 'link': {
+                    const isYt = /(?:youtube\.com\/(?:watch\?|shorts\/|live\/|embed\/)|youtu\.be\/)/i.test(it.url || '');
+                    return `${tag} link [id=${it.id}]: ${it.title || it.url}${isYt
+                        ? ' — YouTube video. Call canvas_read_item with this id to WATCH the actual video (frames + audio).'
+                        : ` — ${it.url}`}`;
+                }
+                case 'canvas-link':
+                    return `${tag} canvas-link [id=${it.id}]: "${it.title}"`;
                 default:
-                    return `${tag} unknown`;
+                    // Always expose the real id so the agent never guesses an index.
+                    return `${tag} ${(it as { type: string }).type} [id=${it.id}]`;
             }
         })
         .join('\n');
