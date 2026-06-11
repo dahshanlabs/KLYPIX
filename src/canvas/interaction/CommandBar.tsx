@@ -3,6 +3,7 @@ import { CornerDownLeft, Loader2, X } from 'lucide-react';
 import { useCanvasStore } from '../state/canvasStore';
 import { resolveScope } from '../agent/canvasScopeResolver';
 import { runCanvasAgent, type AgentProgress } from '../agent/canvasAgent';
+import { AgentRobot } from '../../components/AgentRobot';
 import type { CanvasItem } from '../items/types';
 import { t, useLocale } from '../../i18n/strings';
 
@@ -96,6 +97,17 @@ export function CommandBar({ open, onClose, onToast, onProgress, onError }: Prop
 
     return (
         <div data-canvas-ui="1" className="absolute bottom-16 left-1/2 -translate-x-1/2 z-40 w-[min(640px,90vw)] no-drag animate-in slide-in-from-bottom-2 fade-in duration-150">
+            {/* Working mascot — same purple AgentRobot the chat agent uses, floating
+                above the bar while a canvas-agent run is in flight. */}
+            {busy && (
+                <div className="absolute -top-[68px] left-1/2 -translate-x-1/2 flex items-center gap-2.5 pl-2.5 pr-4 py-2 rounded-2xl bg-[#12121a]/95 backdrop-blur-xl border border-purple-500/30 shadow-[0_-8px_32px_rgba(0,0,0,0.5)] animate-in fade-in slide-in-from-bottom-1 duration-200">
+                    <AgentRobot isWorking />
+                    <div className="flex flex-col leading-tight">
+                        <span className="text-purple-300 text-[12px] font-bold">KLYPIX Agent</span>
+                        <span className="text-white/50 text-[11px]">{t('canvas.command_bar.thinking')}</span>
+                    </div>
+                </div>
+            )}
             <div className="bg-[#12121a]/95 backdrop-blur-xl border border-emerald-500/30 rounded-2xl shadow-[0_-8px_32px_rgba(0,0,0,0.5)] overflow-hidden">
                 <div className="flex items-center gap-2 px-4 py-3">
                     <span className="text-emerald-400 text-lg font-bold leading-none">/</span>
