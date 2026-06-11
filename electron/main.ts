@@ -2096,9 +2096,43 @@ ipcMain.handle('mcp:connect-claude-desktop', (_e: any, vaultArg?: string) => {
     // it rather than create a duplicate; otherwise create "klypix-canvas".
     const name = Object.keys(servers).find(k => /klypix/i.test(k)) || 'klypix-canvas';
     const vault = resolveAgentVault(vaultArg);
-    const entry = { command: 'npx', args: ['-y', 'klypix-mcp', '--vault', vault.replace(/\\/g, '/')] };
-    return connectMcpServer({ configPath: res.path, name, entry });
+    warmKlypixMcpCache();
+    return connectMcpServer({ configPath: res.path, name, entry: npxMcpEntry(vault) });
 });
+
+// Windows-safe MCP launcher. `npx` is a .cmd shim, and Node's spawn refuses to
+// execute .cmd files without a shell (EINVAL, since the CVE-2024-27980
+// hardening) — so every MCP client (Claude Code/Desktop, Cursor, Cline) that
+// spawns `command: "npx"` directly on Windows SILENTLY fails to start the
+// server ("server doesn't seem to have come up"). Wrap via `cmd /c` on
+// Windows; plain npx elsewhere.
+function npxMcpEntry(vault: string): { command: string; args: string[] } {
+    const v = vault.replace(/\\/g, '/');
+    return process.platform === 'win32'
+        ? { command: 'cmd', args: ['/c', 'npx', '-y', 'klypix-mcp', '--vault', v] }
+        : { command: 'npx', args: ['-y', 'klypix-mcp', '--vault', v] };
+}
+
+// Pre-warm the npx cache for klypix-mcp the moment a config is written: the
+// FIRST `npx -y klypix-mcp` ever pays a cold npm download that can outlast an
+// MCP client's connect timeout ("server doesn't seem to have come up" on the
+// project's first agent session). Warming at click-time means the package is
+// already cached before any coding agent tries to boot it. Fire-and-forget:
+// stdio ignored, so the spawned server sees EOF on stdin and exits cleanly
+// right after the download caches; a backstop kill covers a hung install.
+let npxWarmKicked = false;
+function warmKlypixMcpCache(): void {
+    if (npxWarmKicked) return;
+    npxWarmKicked = true;
+    try {
+        const cmd = process.platform === 'win32' ? 'cmd' : 'npx';
+        const args = process.platform === 'win32' ? ['/c', 'npx', '-y', 'klypix-mcp', '--vault', '.'] : ['-y', 'klypix-mcp', '--vault', '.'];
+        const child = spawn(cmd, args, { stdio: 'ignore', windowsHide: true });
+        const killTimer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } }, 120_000);
+        child.on('exit', () => clearTimeout(killTimer));
+        child.on('error', () => clearTimeout(killTimer));
+    } catch { /* warm-up is best-effort */ }
+}
 
 // Generic version for any MCP client (cursor | cline | claude) — same atomic
 // merger, different config file. Powers the "also connect Cursor/Cline" buttons.
@@ -2129,8 +2163,9 @@ ipcMain.handle('mcp:connect-client', (_e: any, args?: { client?: string; vault?:
     const servers = (parsed.data?.mcpServers && typeof parsed.data.mcpServers === 'object') ? parsed.data.mcpServers : {};
     const name = Object.keys(servers).find(k => /klypix/i.test(k)) || 'klypix-canvas';
     const vault = resolveAgentVault(args?.vault);
-    const entry: any = { command: 'npx', args: ['-y', 'klypix-mcp', '--vault', vault.replace(/\\/g, '/')] };
+    const entry: any = npxMcpEntry(vault);
     if (c === 'claudecode') entry.type = 'stdio'; // Claude Code's JSON needs an explicit stdio type
+    warmKlypixMcpCache();
     return connectMcpServer({ configPath: res.path, name, entry });
 });
 
@@ -2180,8 +2215,8 @@ function writeBrainRules(folder: string): string[] {
 ipcMain.handle('mcp:write-project-config', (_e: any, folder?: string) => {
     if (typeof folder !== 'string' || !folder) return { ok: false, error: 'No project folder given.' };
     const cfgPath = path.join(folder, '.mcp.json');
-    const vault = folder.replace(/\\/g, '/');
-    const entry = { type: 'stdio', command: 'npx', args: ['-y', 'klypix-mcp', '--vault', vault] };
+    const entry = { type: 'stdio', ...npxMcpEntry(folder) };
+    warmKlypixMcpCache();
     const cfg = connectMcpServer({ configPath: cfgPath, name: 'klypix-canvas', entry });
     const rulesWritten = writeBrainRules(folder); // ② auto-read instruction (agent-neutral)
     return { ...cfg, rulesWritten };
