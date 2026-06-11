@@ -154,6 +154,21 @@ function normalizeV3(doc: CanvasDocumentV3): CanvasDocumentV3 {
 
 /** Filename stem → title (strips .klypix or legacy .any, replaces _- with spaces). */
 export function titleFromPath(filePath: string): string {
-    const name = filePath.split(/[\\/]/).pop() || 'untitled.klypix';
-    return name.replace(/\.(klypix|any)$/i, '').replace(/[_-]+/g, ' ').trim() || 'Untitled';
+    const segs = filePath.split(/[\\/]/).filter(Boolean);
+    const name = segs.pop() || 'untitled.klypix';
+    const stem = name.replace(/\.(klypix|any)$/i, '').replace(/[_-]+/g, ' ').trim();
+    // Every project brain is literally "brain.klypix" (the global convention),
+    // so the bare stem is useless in any list — qualify with the project
+    // folder: E:\…\AgentLit\brain.klypix → "AgentLit brain".
+    if (/^brain$/i.test(stem) && segs.length) return `${segs[segs.length - 1]} brain`;
+    return stem || 'Untitled';
+}
+
+/** A stored title wins only when it's MEANINGFUL — empty or the literal
+ *  "Untitled" falls back to a name derived from the file path. Keeps a
+ *  brain.klypix saved from an untitled canvas from listing as "Untitled"
+ *  everywhere (tabs, recents, recently-closed). */
+export function preferTitle(title: string | undefined | null, filePath: string): string {
+    const t = (title || '').trim();
+    return t && !/^untitled$/i.test(t) ? t : titleFromPath(filePath);
 }

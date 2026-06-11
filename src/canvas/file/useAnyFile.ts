@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useCanvasStore, type CanvasState } from '../state/canvasStore';
 import { t } from '../../i18n/strings';
-import { serialize, deserialize, titleFromPath, type CanvasDocumentV3 } from './anyFormat';
+import { serialize, deserialize, titleFromPath, preferTitle, type CanvasDocumentV3 } from './anyFormat';
 import {
     serializeV4,
     finalizePayload,
@@ -199,7 +199,7 @@ function applyLoadResult(
                 strokes: strokeMap,
                 view: result.view,
                 filePath: res.filePath,
-                title: result.title || titleFromPath(res.filePath),
+                title: preferTitle(result.title, res.filePath),
                 nextGroupNumber: result.nextGroupNumber,
             });
             return { ok: true };
@@ -226,7 +226,7 @@ function applyLoadResult(
             strokes: strokeMap,
             view: doc.view,
             filePath: res.filePath,
-            title: doc.title || titleFromPath(res.filePath),
+            title: preferTitle(doc.title, res.filePath),
             nextGroupNumber: doc.nextGroupNumber,
         });
         return { ok: true };
@@ -396,7 +396,9 @@ export function useAnyFile(tabActive = true, skipAutosaveCheck = false) {
         const api = getApi();
         if (!api?.saveKlypix) return { ok: false, error: 'canvas save IPC unavailable' };
         const s = stateRef.current;
-        const v4 = buildV4Payload(s, s.title);
+        // Bake a meaningful title into the copy: a brain saved from an
+        // untitled canvas gets "<project> brain" instead of "Untitled".
+        const v4 = buildV4Payload(s, preferTitle(s.title, filePath));
         const res = await api.saveKlypix({ filePath, ...v4 });
         return res.ok ? { ok: true } : { ok: false, error: res.error };
     }, []);

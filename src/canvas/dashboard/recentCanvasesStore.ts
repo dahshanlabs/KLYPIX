@@ -10,6 +10,8 @@
 // surface predictable and avoids the "where did this canvas come from?"
 // confusion that file-finder approaches create.
 
+import { preferTitle } from '../file/anyFormat';
+
 const STORAGE_KEY = 'klypix:recentCanvases';
 const MAX_ENTRIES = 50; // soft cap; older entries fall off the list
 
@@ -73,19 +75,23 @@ export function recordCanvasAccess(args: {
     const all = readAll();
     const idx = all.findIndex(e => e.filePath === args.filePath);
     const now = Date.now();
+    // A literal "Untitled" never wins over a path-derived name — otherwise a
+    // brain.klypix saved from an untitled tab lists as "Untitled" forever.
+    // preferTitle also self-heals stale "Untitled" entries on the next open.
+    const title = preferTitle(args.title, args.filePath);
 
     if (idx >= 0) {
         const existing = all[idx];
         all[idx] = {
             ...existing,
-            title: args.title || existing.title,
+            title,
             sizeBytes: args.sizeBytes ?? existing.sizeBytes,
             lastOpened: now,
         };
     } else {
         all.push({
             filePath: args.filePath,
-            title: args.title || args.filePath.split(/[\\/]/).pop() || 'Untitled',
+            title,
             sizeBytes: args.sizeBytes,
             lastOpened: now,
         });

@@ -49,6 +49,15 @@ function broadcast(): void {
 
 /** Push a newly-closed canvas to the head of the list. Cap to MAX_ENTRIES. */
 export function pushClosedCanvas(entry: ClosedCanvas): void {
+    // Same FILE closed again (reopen → close, or two tabs of one path): the
+    // new snapshot supersedes — drop stale entries so the list never shows
+    // duplicate rows for one canvas. Unsaved (null-path) entries are
+    // genuinely distinct canvases and are all kept.
+    if (entry.filePath) {
+        for (let i = queue.length - 1; i >= 0; i--) {
+            if (queue[i].filePath === entry.filePath) queue.splice(i, 1);
+        }
+    }
     queue.unshift(entry);
     if (queue.length > MAX_ENTRIES) queue.length = MAX_ENTRIES;
     broadcast();
