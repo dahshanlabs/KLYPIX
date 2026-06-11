@@ -107,6 +107,12 @@ export interface ToolResult {
      * each as a Gemini inlineData part in the function-response turn.
      */
     images?: Array<{ mimeType: string; data: string }>;
+    /**
+     * Video URLs (e.g. a YouTube link) attached as Gemini fileData parts so the
+     * model WATCHES the actual video (frames + audio), not just the title. The
+     * agent loop appends each as a fileData part in the function-response turn.
+     */
+    videoUrls?: string[];
 }
 
 // Simple SVG chart renderer — no external deps. Bar / line / pie only.
@@ -447,6 +453,22 @@ export async function executeToolCall(call: ToolCall, ctx: ToolExecContext): Pro
             }
             if (item.type === 'file') {
                 return await readFileItem(call.name, item);
+            }
+            if (item.type === 'link') {
+                // A YouTube link → hand the URL to Gemini as a video so it WATCHES
+                // the real frames + audio (Gemini ingests YouTube URLs natively),
+                // instead of guessing from the title. Public videos only; if the
+                // model can't access it, it'll say so and we fall back to the title.
+                const url = item.url || '';
+                const isYouTube = /(?:youtube\.com\/(?:watch\?|shorts\/|live\/|embed\/)|youtu\.be\/)/i.test(url);
+                if (isYouTube) {
+                    return {
+                        name: call.name,
+                        result: JSON.stringify({ id: item.id, type: 'link', url, title: item.title, site: item.siteName, note: 'The video at this URL is attached below — watch its actual frames + audio and answer from the real content (cite timestamps where useful), not just the title.' }),
+                        videoUrls: [url],
+                    };
+                }
+                return { name: call.name, result: JSON.stringify({ id: item.id, type: 'link', url, title: item.title, site: item.siteName }) };
             }
             if (item.type === 'video' || item.type === 'audio') {
                 return await readMediaItem(call.name, item);

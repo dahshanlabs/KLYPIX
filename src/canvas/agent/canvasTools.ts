@@ -18,7 +18,7 @@ export const CANVAS_TOOLS: FunctionDeclaration[] = [
     },
     {
         name: 'canvas_read_item',
-        description: 'Return the full content of one item (text content, file metadata, image caption).',
+        description: 'Return the full content of one item: text/code in full; PDF/DOCX/XLSX extracted to text; images attached so you can SEE them; video/audio TRANSCRIBED; and a YouTube link attached as a watchable video so you analyze its real frames + audio (not just the title). Always read a media/link item before answering about it.',
         parameters: {
             type: SchemaType.OBJECT,
             properties: {
