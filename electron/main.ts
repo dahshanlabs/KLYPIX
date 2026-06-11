@@ -2664,24 +2664,13 @@ async function readClipboardFilePathsAsync(): Promise<string[]> {
             { timeout: 3000, windowsHide: true, encoding: 'utf8' },
         );
         if (!stdout) return [];
-        const raw = stdout.split(/\r?\n/).map((s) => s.trim()).filter((s) => s.length > 0);
-        // Expand a copied FOLDER into its immediate files (Ctrl+C a "PDF Files"
-        // folder → paste the PDFs inside). One level, files only, capped at 50.
-        const out: string[] = [];
-        for (const p of raw) {
-            if (out.length >= 50) break;
-            try {
-                const st = fs.statSync(p);
-                if (st.isDirectory()) {
-                    for (const name of fs.readdirSync(p)) {
-                        if (out.length >= 50) break;
-                        const fp = path.join(p, name);
-                        try { if (fs.statSync(fp).isFile()) out.push(fp); } catch { /* skip */ }
-                    }
-                } else if (st.isFile()) out.push(p);
-            } catch { /* skip unreadable */ }
-        }
-        return out;
+        // Return raw paths — folders included AS folders. The renderer's paste
+        // handler turns a folder path into a single folder CARD (via
+        // read-folder-tree), matching drag-drop, instead of loose file cards.
+        return stdout
+            .split(/\r?\n/)
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0);
     } catch { return []; }
 }
 
@@ -2731,6 +2720,9 @@ ipcMain.handle('read-clipboard', async () => {
 ipcMain.handle('read-file-bytes', async (_event: any, opts: { filePath: string }) => {
     try {
         const stat = fs.statSync(opts.filePath);
+        // Directory → tell the renderer so it fetches the folder tree and builds
+        // a single folder CARD instead of trying to read a dir as a file.
+        if (stat.isDirectory()) return { success: false, isDirectory: true };
         if (!stat.isFile()) return { success: false, error: 'Not a file' };
         const MAX = 500 * 1024 * 1024;
         if (stat.size > MAX) return { success: false, error: 'File too large (>500MB)' };
@@ -2742,6 +2734,43 @@ ipcMain.handle('read-file-bytes', async (_event: any, opts: { filePath: string }
             base64: bytes.toString('base64'),
             path: opts.filePath,
         };
+    } catch (err: any) { return { success: false, error: err.message }; }
+});
+
+// Read a FOLDER recursively into a flat file list (relPath + base64 bytes), so
+// the renderer's paste handler can build a single folder CARD — the same result
+// as dragging the folder in. Capped at 500 files / 1GB total to keep the
+// .klypix sane (matches folderToZip's MAX_FILES/MAX_TOTAL_BYTES guards).
+ipcMain.handle('read-folder-tree', async (_event: any, opts: { folderPath: string }) => {
+    const root = opts?.folderPath;
+    const MAX_FILES = 500;
+    const MAX_TOTAL = 1024 * 1024 * 1024;
+    try {
+        if (!root || !fs.statSync(root).isDirectory()) return { success: false, error: 'Not a folder' };
+        const files: Array<{ relPath: string; base64: string; size: number }> = [];
+        let total = 0;
+        const walk = (dir: string, prefix: string) => {
+            if (files.length >= MAX_FILES) return;
+            let entries: fs.Dirent[];
+            try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+            for (const e of entries) {
+                if (files.length >= MAX_FILES) break;
+                const full = path.join(dir, e.name);
+                const rel = prefix ? prefix + '/' + e.name : e.name;
+                if (e.isDirectory()) walk(full, rel);
+                else if (e.isFile()) {
+                    try {
+                        const s = fs.statSync(full);
+                        if (total + s.size > MAX_TOTAL) continue;
+                        const bytes = fs.readFileSync(full);
+                        total += s.size;
+                        files.push({ relPath: rel, base64: bytes.toString('base64'), size: s.size });
+                    } catch { /* skip unreadable leaf */ }
+                }
+            }
+        };
+        walk(root, '');
+        return { success: true, name: path.basename(root), files };
     } catch (err: any) { return { success: false, error: err.message }; }
 });
 ipcMain.handle('get-clipboard-formats', () => {

@@ -245,6 +245,7 @@ contextBridge.exposeInMainWorld('electron', {
         reveal: (filePath: string) => ipcRenderer.invoke('file-search:reveal', filePath),
     },
     readFileBytes: (filePath: string) => ipcRenderer.invoke('read-file-bytes', { filePath }),
+    readFolderTree: (folderPath: string) => ipcRenderer.invoke('read-folder-tree', { folderPath }),
     // ── Encrypted API Key Storage ────────────────────────────────────────
     apiKey: {
         store: (key: string) => ipcRenderer.invoke('api-key:store', key),

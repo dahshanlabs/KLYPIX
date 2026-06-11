@@ -419,7 +419,8 @@ declare global {
             executeAction: (intent: any) => Promise<any>;
             readClipboard: () => Promise<{ text: string; html: string; imageBase64?: string | null; filePaths?: string[]; lastFormat?: 'text' | 'image' | 'files' | 'none'; canvasOwnsClipboard?: boolean }>;
             getClipboardFormats: () => Promise<string[]>;
-            readFileBytes: (filePath: string) => Promise<{ success: boolean; name?: string; size?: number; base64?: string; path?: string; error?: string }>;
+            readFileBytes: (filePath: string) => Promise<{ success: boolean; name?: string; size?: number; base64?: string; path?: string; error?: string; isDirectory?: boolean }>;
+            readFolderTree: (folderPath: string) => Promise<{ success: boolean; name?: string; files?: Array<{ relPath: string; base64: string; size: number }>; error?: string }>;
             auth: {
                 restoreSession: () => Promise<any>;
                 signIn: (email: string, password: string) => Promise<any>;
@@ -1433,6 +1434,25 @@ Rules:
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const titleBarRef = useRef<HTMLDivElement>(null);
     const headerRef = useRef<HTMLDivElement>(null);
+    // Title-bar slot that KlypixCanvas portals its file-tabs into, so the canvas
+    // tabs live inside the header instead of a separate strip below it. State (not
+    // a ref) so KlypixCanvas re-renders and portals once the slot element mounts.
+    const [canvasTabSlot, setCanvasTabSlot] = useState<HTMLDivElement | null>(null);
+    // Measured title-bar height. The canvas is `absolute inset-0` and sits BEHIND
+    // the z-100 title bar; the old file-tab strip used to act as a top spacer that
+    // pushed the canvas surface clear of the header. With the tabs moved INTO the
+    // header that spacer is gone, so we offset the canvas by the header's real
+    // height instead (re-measured on resize / chat↔canvas, which changes it).
+    const [titleBarH, setTitleBarH] = useState(0);
+    useEffect(() => {
+        const el = titleBarRef.current;
+        if (!el || typeof ResizeObserver === 'undefined') return;
+        const measure = () => setTitleBarH(el.getBoundingClientRect().height);
+        measure();
+        const ro = new ResizeObserver(measure);
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
     const quickActionsRef = useRef<HTMLDivElement>(null);
     const footerRef = useRef<HTMLDivElement>(null);
 
@@ -2418,7 +2438,7 @@ Rules:
                     shown. Mounting unconditionally preserves multi-canvas tab
                     state across chat↔canvas switches and prevents the autosave
                     restore dialog from re-firing on every trip. */}
-                <KlypixCanvas appVisible={activeTab === 'canvas'} />
+                <KlypixCanvas appVisible={activeTab === 'canvas'} tabSlot={canvasTabSlot} headerOffset={titleBarH} />
 
                 {/* Phase 23: global command palette. Portals to body when open
                     so it floats above EVERYTHING. The hotkey hook installed
@@ -2551,6 +2571,14 @@ Rules:
                             </button>
                         )}
                     </div>
+                    {/* Canvas file-tabs portaled here by KlypixCanvas — tabs live
+                        in the header instead of a strip below it. Canvas mode only,
+                        so chat keeps its centered ModeTabs (3 children →
+                        justify-between). flex-1 fills the gap and pushes ModeTabs
+                        to the right, browser-style. */}
+                    {activeTab === 'canvas' && (
+                        <div ref={setCanvasTabSlot} className="no-drag flex-1 min-w-0 flex items-center overflow-hidden mx-2 self-stretch" />
+                    )}
                     {/* Chat / Canvas mode tabs — centered in title bar */}
                     <ModeTabs active={activeTab} onChange={setActiveTab} canvasBadge={pendingInviteCount} />
                     <div className="flex items-center gap-2">

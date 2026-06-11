@@ -78,7 +78,22 @@ export async function folderToItem(
         console.warn('[folder drop] walk failed:', err);
         return null;
     }
+    return flatEntriesToItem(flat, entry.name, target, indexOffset);
+}
 
+/**
+ * Build a folder-flavored FileItem from an ALREADY-flattened file list. Shared
+ * by drag-drop (after a FileSystemEntry walk) and clipboard paste (after the
+ * main process reads the folder's files off disk into File objects). So
+ * copy-pasting a folder lands the SAME single folder card as dragging it in —
+ * never loose per-file cards. `folderName` is the card title + zip asset name.
+ */
+export async function flatEntriesToItem(
+    flat: FlatEntry[],
+    folderName: string,
+    target: FolderToItemTarget,
+    indexOffset = 0,
+): Promise<FolderToItemResult | null> {
     const zip = new JSZip();
     const manifest: Array<{ path: string; size: number; mime: string }> = [];
     const skipped: Array<{ path: string; reason: string }> = [];
@@ -121,7 +136,7 @@ export async function folderToItem(
         mime: 'application/x-klypix-folder',
         extension: 'zip',
         bytes: zipBytes,
-        fileName: `${entry.name}.zip`,
+        fileName: `${folderName}.zip`,
     });
 
     // Zoom-independent world size: the folder card bakes the same world size on
@@ -150,7 +165,7 @@ export async function folderToItem(
         parentId: null,
         createdAt: Date.now(),
         createdBy: 'user',
-        fileName: entry.name,
+        fileName: folderName,
         // fileSize on a folder card means the ZIP size — the asset weight
         // the .klypix actually pays. folderTotalSize holds the raw total.
         fileSize: zipBytes.byteLength,

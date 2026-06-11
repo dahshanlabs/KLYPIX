@@ -5,6 +5,7 @@ import type { CanvasItem, Connection, DrawnLine, FreehandStroke, ImageItem, Text
 import { newId } from '../items/types';
 import { base64ToBytes, registerAsset } from '../file/assetRegistry';
 import { fileToItem } from '../file/dropHandler';
+import { flatEntriesToItem } from '../file/folderToZip';
 import { defaultTextColorFor, getCurrentGridSettings } from '../gridSettings';
 
 // Paste sizing + placement policy (spec'd by product):
@@ -384,6 +385,34 @@ async function pasteFromClipboard({ state, commit, dispatch }: PasteCtx): Promis
         const newIds: string[] = [];
         for (let i = 0; i < filePaths.length; i++) {
             const res = await api.readFileBytes(filePaths[i]).catch(() => null);
+            // A FOLDER on the clipboard → build a single folder CARD (same as
+            // dragging the folder in), never loose per-file cards. The main
+            // process flags directories; read its tree, rebuild File objects
+            // from the bytes, and run the shared folder-card builder.
+            if (res && res.isDirectory && api?.readFolderTree) {
+                try {
+                    const tree = await api.readFolderTree(filePaths[i]).catch(() => null);
+                    if (tree?.success && Array.isArray(tree.files) && tree.files.length > 0) {
+                        const flat = tree.files.map((f: { relPath: string; base64: string }) => {
+                            const bytes = base64ToBytes(f.base64);
+                            const leaf = f.relPath.includes('/') ? f.relPath.slice(f.relPath.lastIndexOf('/') + 1) : f.relPath;
+                            return { relPath: f.relPath, file: new File([new Blob([bytes as any])], leaf, { type: '' }) };
+                        });
+                        const built = await flatEntriesToItem(
+                            flat,
+                            tree.name || 'folder',
+                            { x: center.x, y: center.y, zIndexStart: zStart, viewZoom: state.view.zoom },
+                            i,
+                        );
+                        if (built?.item) {
+                            commit({ type: 'ADD_ITEM', item: built.item });
+                            newIds.push(built.item.id);
+                            added++;
+                        }
+                    }
+                } catch { /* skip this folder, try next path */ }
+                continue;
+            }
             if (!res?.success || !res.base64 || !res.name) continue;
             try {
                 const bytes = base64ToBytes(res.base64);
