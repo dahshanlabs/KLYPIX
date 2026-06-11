@@ -40,6 +40,8 @@ import { suggestTags } from './file/autoTag';
 import { screenToWorld, worldToScreen, fitToViewport, itemsBounds } from './CanvasEngine';
 import { buildTitleIndex, resolveWikilink, findCardsWithTag, computeBacklinks } from './items/wikilinks';
 import { CommandBar } from './interaction/CommandBar';
+import { AgentRunsTray } from './interaction/AgentRunsTray';
+import { useAgentRuns } from './agent/useAgentRuns';
 import { Breadcrumbs } from './interaction/Breadcrumbs';
 import { ContextMenu } from './interaction/ContextMenu';
 import { TextFormatCapsule } from './interaction/TextFormatCapsule';
@@ -910,6 +912,32 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     >(null);
     const [eyesState, setEyesState] = useState<EyesState>('idle');
     const [eyesBubble, setEyesBubble] = useState<string | null>(null);
+    // Concurrent agent runs — each becomes a pill in the AI Activity tray. The
+    // CommandBar launches into this; the eyes follow the latest run's progress.
+    const agentRuns = useAgentRuns({
+        getState: () => stateRef.current,
+        dispatch,
+        pushSnapshot,
+        onToast: (text) => setToast({ text, id: Date.now() }),
+        onProgress: (p) => {
+            if (!p) { setEyesState('idle'); return; }
+            if (p.tool === 'canvas_get_items' || p.tool === 'canvas_read_item' || p.tool === 'canvas_search' || p.tool === 'canvas_read_file') {
+                setEyesState('reading');
+            } else if (p.tool === 'canvas_done') {
+                setEyesState('success');
+                setEyesBubble('done');
+            } else if (p.tool) {
+                setEyesState('working');
+            } else {
+                setEyesState('thinking');
+            }
+        },
+        onError: (msg) => {
+            setEyesState('error');
+            setEyesBubble(msg || 'hmm…');
+            setTimeout(() => setEyesState('idle'), 3000);
+        },
+    });
     const [searchOpen, setSearchOpen] = useState(false);
     const [outlineOpen, setOutlineOpen] = useState(false);
     const [layersOpen, setLayersOpen] = useState(false);
@@ -3268,26 +3296,9 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             <CommandBar
                 open={commandOpen}
                 onClose={() => setCommandOpen(false)}
-                onToast={(text) => setToast({ text, id: Date.now() })}
-                onProgress={(p) => {
-                    if (!p) { setEyesState('idle'); return; }
-                    if (p.tool === 'canvas_get_items' || p.tool === 'canvas_read_item' || p.tool === 'canvas_search' || p.tool === 'canvas_read_file') {
-                        setEyesState('reading');
-                    } else if (p.tool === 'canvas_done') {
-                        setEyesState('success');
-                        setEyesBubble('done');
-                    } else if (p.tool) {
-                        setEyesState('working');
-                    } else {
-                        setEyesState('thinking');
-                    }
-                }}
-                onError={(msg) => {
-                    setEyesState('error');
-                    setEyesBubble(msg || 'hmm…');
-                    setTimeout(() => setEyesState('idle'), 3000);
-                }}
+                onStartRun={agentRuns.start}
             />
+            <AgentRunsTray runs={agentRuns.runs} onStop={agentRuns.stop} onDismiss={agentRuns.dismiss} />
 
             {/* Agent toast — short answers float and auto-dismiss; pin converts to permanent card */}
             {toast && (
