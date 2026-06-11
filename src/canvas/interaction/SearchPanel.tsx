@@ -110,10 +110,12 @@ export function SearchPanel({ open, onClose }: Props) {
     if (!open) return null;
 
     return (
-        /* top-[76px] clears the full-width top toolbar, which shares the
-           top-3 anchor — opening below it (vs. z-40 over it) keeps the
-           toolbar's right-side buttons reachable while search is open. */
-        <div ref={panelRef} data-canvas-ui="1" className="absolute top-[76px] right-3 z-40 no-drag w-[min(420px,calc(100vw-24px))] rounded-xl bg-[#12121a] border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.5)] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+        /* top-3 right-3 — sits in the top row, flush with the file-ops bar
+           (which is LEFT-anchored at left-[68px], so the top-right corner is
+           free in normal windows). In narrow windows the panel's z-40 paints
+           over the bar's right end while open; acceptable since search is
+           transient (Esc / outside click closes it). */
+        <div ref={panelRef} data-canvas-ui="1" className="absolute top-3 right-3 z-40 no-drag w-[min(420px,calc(100vw-24px))] rounded-xl bg-[#12121a] border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.5)] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
             <div className="flex items-center gap-2 px-3 py-2 border-b border-white/5">
                 <Search size={13} className="text-emerald-400" />
                 <input

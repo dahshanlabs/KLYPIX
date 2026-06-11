@@ -131,13 +131,14 @@ export function OutlineSidebar({ open, onClose }: Props) {
     if (!open) return null;
 
     return (
-        /* top-[76px] clears the file-ops toolbar that also anchors at
-           top-3 left-3 — without it the panel's OUTLINE header renders
-           behind the toolbar (they share z-30, and the later-painted
-           toolbar wins). 76px is the same clearance the old nav cluster
-           used: top-14/56px was too tight and DPR rounding at 125% tipped
-           it into the toolbar's bottom edge. */
-        <div ref={panelRef} data-canvas-ui="1" className="absolute top-[76px] left-3 bottom-16 z-30 no-drag w-[260px] rounded-xl bg-[#12121a]/95 border border-white/10 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden animate-in slide-in-from-left-2 fade-in duration-150">
+        /* left-[68px], not left-3: the vertical tool rail hugs x=12-58 and
+           this panel is z-30 over its z-20 — anchoring at left-3 paints the
+           panel ON TOP of the rail instead of beside it. 68px matches the
+           file-ops bar's rail clearance, so the panel opens to the right of
+           the rail. top-[76px] still clears the file-ops toolbar row: top-14
+           (56px) was too tight and DPR rounding at 125% tipped it into the
+           toolbar's bottom edge. */
+        <div ref={panelRef} data-canvas-ui="1" className="absolute top-[76px] left-[68px] bottom-16 z-30 no-drag w-[260px] rounded-xl bg-[#12121a]/95 border border-white/10 backdrop-blur-xl shadow-[0_8px_32px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden animate-in slide-in-from-left-2 fade-in duration-150">
             <div className="px-3 py-2 border-b border-white/5 flex items-center gap-2">
                 <span className="text-[10px] font-bold uppercase tracking-widest text-white/60 flex-1">{t('canvas_top.outline')}</span>
                 <button onClick={onClose} className="p-1 rounded hover:bg-white/5 text-white/40"><X size={12} /></button>

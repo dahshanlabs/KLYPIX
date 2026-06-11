@@ -11,6 +11,7 @@ import { usePendingInvitations, type PendingInvitation } from '../../hooks/usePe
 import { listCloudShares } from '../cloud/cloudShareStore';
 import { removeRecentCanvas } from './recentCanvasesStore';
 import type { RecentCanvas } from './recentCanvasesStore';
+import { shortenPath } from './pathDisplay';
 import { openSharedCanvas } from '../sync/openSharedCanvas';
 import { useRecentlyClosed } from '../../hooks/useRecentlyClosed';
 import { consumeClosedCanvas, type ClosedCanvas } from './recentlyClosedStore';
@@ -699,7 +700,12 @@ function SharedByYouRow({ entry, opening, onOpen }: SharedByYouRowProps) {
                 }}>
                     <bdi>{t('canvas.last_shared').replace('{t}', pushedAgo)}</bdi>
                     <span style={{ opacity: 0.4 }}>·</span>
-                    <span style={{ color: 'rgba(16, 185, 129, 0.7)' }}>{t('canvas.role_owner')}</span>
+                    {/* dir="ltr" pins the path in Arabic mode — paths are LTR data */}
+                    <span dir="ltr" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }} title={entry.filePath}>
+                        {shortenPath(entry.filePath, 40)}
+                    </span>
+                    <span style={{ opacity: 0.4 }}>·</span>
+                    <span style={{ color: 'rgba(16, 185, 129, 0.7)', flexShrink: 0 }}>{t('canvas.role_owner')}</span>
                 </div>
             </div>
         </div>
@@ -825,7 +831,10 @@ interface RecentRowProps {
 }
 
 function RecentRow({ entry, opening, onOpen, onRemove, isStarred, onToggleStar }: RecentRowProps) {
-    const fileName = entry.filePath.split(/[\\/]/).pop() || entry.filePath;
+    // Folder path, not just basename — every project carries a brain.klypix,
+    // so two same-named canvases are only distinguishable by where they live.
+    const displayPath = shortenPath(entry.filePath);
+    const [hovered, setHovered] = useState(false);
     // "Untitled" / "Untitled canvas" is the SENTINEL value canvases get
     // when the user hasn't named them. We don't want to mutate the saved
     // title in the .klypix file (that would change the file's identity
@@ -848,8 +857,8 @@ function RecentRow({ entry, opening, onOpen, onRemove, isStarred, onToggleStar }
                 transition: 'background 0.1s',
                 opacity: opening ? 0.5 : 1,
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.05)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; setHovered(true); }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; setHovered(false); }}
         >
             <div style={{
                 width: 36, height: 36, borderRadius: 8,
@@ -869,11 +878,32 @@ function RecentRow({ entry, opening, onOpen, onRemove, isStarred, onToggleStar }
                     <Clock size={9} />
                     {formatRelativeTime(entry.lastOpened)}
                     <span style={{ opacity: 0.4 }}>·</span>
-                    <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 280 }} title={entry.filePath}>
-                        {fileName}
+                    {/* dir="ltr" pins the path in Arabic mode — paths are LTR data */}
+                    <span dir="ltr" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 280 }} title={entry.filePath}>
+                        {displayPath}
                     </span>
                 </div>
             </div>
+            <button
+                onPointerDown={(e) => { e.stopPropagation(); (window as any).electron?.fileSearch?.reveal?.(entry.filePath); }}
+                title={t('canvas.reveal_explorer')}
+                tabIndex={hovered ? 0 : -1}
+                style={{
+                    padding: 4, borderRadius: 5,
+                    background: 'transparent',
+                    color: 'rgba(255,255,255,0.3)',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                    display: 'flex',
+                    opacity: hovered ? 1 : 0,
+                    pointerEvents: hovered ? 'auto' : 'none',
+                    transition: 'opacity 0.1s',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = '#10b981'; e.currentTarget.style.background = 'rgba(16,185,129,0.1)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.3)'; e.currentTarget.style.background = 'transparent'; }}
+            >
+                <FolderOpen size={12} />
+            </button>
             {onToggleStar && (
                 <button
                     // onPointerDown (not onClick) so the canvas pen tool can't
@@ -952,6 +982,15 @@ function RecentlyClosedRow({ entry, onRestore }: { entry: ClosedCanvas; onRestor
                     <span>{formatRelativeTime(entry.closedAt)}</span>
                     <span>·</span>
                     <span>{entry.itemCount === 1 ? t('canvas.group_item_one') : `${entry.itemCount} ${t('canvas.group_items')}`}</span>
+                    {entry.filePath && (
+                        <>
+                            <span style={{ opacity: 0.4 }}>·</span>
+                            {/* dir="ltr" pins the path in Arabic mode — paths are LTR data */}
+                            <span dir="ltr" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }} title={entry.filePath}>
+                                {shortenPath(entry.filePath, 40)}
+                            </span>
+                        </>
+                    )}
                 </div>
             </div>
         </div>
