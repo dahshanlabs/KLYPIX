@@ -51,6 +51,10 @@ export interface AgentRunOptions {
     dispatch: ToolExecContext['dispatch'];
     onToast: ToolExecContext['onToast'];
     onProgress?: (p: AgentProgress) => void;
+    /** Abort the run cooperatively — checked before each turn + each tool call.
+     *  When aborted, the loop returns early with error: 'aborted' (the caller
+     *  treats that as a user stop, not a failure). */
+    signal?: AbortSignal;
 }
 
 export interface AgentRunResult {
@@ -60,7 +64,7 @@ export interface AgentRunResult {
 }
 
 export async function runCanvasAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
-    const { command, scope, scopeItems, getState, dispatch, onToast, onProgress } = opts;
+    const { command, scope, scopeItems, getState, dispatch, onToast, onProgress, signal } = opts;
 
     const genAI = new GoogleGenerativeAI(getApiKeySync());
     const model = genAI.getGenerativeModel({
@@ -92,6 +96,7 @@ ${command}`;
     let finalMessage = '';
 
     while (turns < MAX_TURNS) {
+        if (signal?.aborted) return { finalMessage, toolCalls, error: 'aborted' };
         turns++;
         onProgress?.({ turn: turns, activity: 'thinking' });
 
@@ -132,6 +137,7 @@ ${command}`;
         const responseParts: Part[] = [];
         let shouldStop = false;
         for (const call of calls) {
+            if (signal?.aborted) return { finalMessage, toolCalls, error: 'aborted' };
             toolCalls++;
             onProgress?.({ turn: turns, activity: `running ${call.name}`, tool: call.name });
 
