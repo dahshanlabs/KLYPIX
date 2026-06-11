@@ -1811,6 +1811,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             try {
                 const payload = JSON.parse(leafPayloadRaw) as {
                     folderAssetId: string;
+                    folderItemId?: string;
                     relPath: string;
                     fileName: string;
                     size: number;
@@ -1835,8 +1836,43 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                             viewZoom: stateRef.current.view.zoom,
                         });
                         if (item) {
-                            commit({ type: 'ADD_ITEM', item });
-                            kickAutoTag(item, file, dispatch);
+                            const s = stateRef.current;
+                            // Dropped inside a container → make the extracted card a
+                            // real CHILD (moves/collapses with the group), not a loose
+                            // overlay. Topmost non-collapsed container under the point.
+                            let leafParentId: string | null = null;
+                            for (let i = s.order.length - 1; i >= 0; i--) {
+                                const cand = s.items[s.order[i]];
+                                if (!cand || cand.type !== 'container') continue;
+                                if ((cand as any).userCollapsed || (cand as any).collapsed) continue;
+                                if (world.x >= cand.x && world.x <= cand.x + cand.w && world.y >= cand.y && world.y <= cand.y + cand.h) { leafParentId = s.order[i]; break; }
+                            }
+                            const placed = leafParentId ? { ...item, parentId: leafParentId } : item;
+                            // One undo step: card + provenance arrow together.
+                            pushSnapshot();
+                            dispatch({ type: 'ADD_ITEM', item: placed });
+                            // Provenance arrow: source folder card → extracted file.
+                            const srcId = payload.folderItemId && s.items[payload.folderItemId]
+                                ? payload.folderItemId
+                                : Object.values(s.items).find(it => it.type === 'file' && (it as any).isFolder && (it as any).assetId === payload.folderAssetId)?.id;
+                            if (srcId && srcId !== placed.id) {
+                                dispatch({
+                                    type: 'ADD_CONNECTION',
+                                    connection: { id: newId('conn'), fromId: srcId, toId: placed.id, label: '', color: '#10b981', width: 2, arrowHead: true, style: 'solid', createdBy: 'user' },
+                                });
+                            }
+                            // Grow (never shrink) the container so the new card sits
+                            // fully inside its frame.
+                            if (leafParentId) {
+                                refitContainers([leafParentId], {
+                                    items: { ...s.items, [placed.id]: placed as any },
+                                    lines: s.lines,
+                                    strokes: s.strokes,
+                                    dispatch,
+                                    mode: 'grow-only',
+                                });
+                            }
+                            kickAutoTag(placed, file, dispatch);
                         }
                     }
                 }

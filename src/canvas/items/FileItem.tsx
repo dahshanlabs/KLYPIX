@@ -122,7 +122,7 @@ function CardFooter({ item, Icon, subtitle, canvasFilePath }: CardFooterProps) {
                 <Icon size={14} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.fileName}</div>
+                <FileNameEllipsis name={item.fileName} style={{ fontSize: 11, fontWeight: 500 }} />
                 <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>{subtitle}</div>
             </div>
             <SyncBadge sync={sync} />
@@ -374,9 +374,7 @@ function FileCardBody({ item, selected }: Props) {
                 <Icon size={20} />
             </div>
             <div style={{ flex: 1, minWidth: 0, color: '#e8e8ed', fontFamily: 'Thmanyah Sans, system-ui, sans-serif' }}>
-                <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {item.fileName}
-                </div>
+                <FileNameEllipsis name={item.fileName} style={{ fontSize: 13, fontWeight: 500 }} />
                 <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.05em', textTransform: 'uppercase', marginTop: 3 }}>
                     {item.extension} · {formatBytes(item.fileSize)}
                 </div>
@@ -481,6 +479,22 @@ async function openFolderLeaf(item: FileItemType, relPath: string, canvasFilePat
     } catch (err) {
         console.warn('[folder card] extract failed:', err);
     }
+}
+
+// Filename with the EXTENSION always visible: the stem truncates with an
+// ellipsis while ".pdf" stays pinned — a narrow card shows "appoi….pdf"
+// instead of "ap…" (file-manager-style middle truncation, pure CSS so it
+// adapts to any width).
+function FileNameEllipsis({ name, style }: { name: string; style?: React.CSSProperties }) {
+    const dot = name.lastIndexOf('.');
+    const stem = dot > 0 ? name.slice(0, dot) : name;
+    const ext = dot > 0 ? name.slice(dot) : '';
+    return (
+        <div style={{ display: 'flex', minWidth: 0, ...style }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{stem}</span>
+            {ext && <span style={{ flexShrink: 0 }}>{ext}</span>}
+        </div>
+    );
 }
 
 function formatFolderBytes(n: number): string {
@@ -910,6 +924,9 @@ function FolderLeafRow({ itemId, folderAssetId, entry, depth, isBusy, previewEna
         e.stopPropagation();
         const payload = {
             folderAssetId,
+            // Source folder ITEM id — lets the drop handler draw a provenance
+            // arrow from the folder card to the extracted file.
+            folderItemId: itemId,
             relPath: entry.path,
             fileName: leaf,
             size: entry.size,
