@@ -538,6 +538,7 @@ function FolderCardBody({ item }: { item: FileItemType }) {
     // Cap in NATURAL units (440 at zoom 1) so the cap scales with the card — a
     // world-unit cap would likewise break proportionality for big folders.
     const desiredH = Math.round(Math.min(440, naturalContentH) * folderZoom);
+    const authoredInParent = (item as { authoredInParent?: { relX: number; relY: number; w: number; h: number } }).authoredInParent;
     useLayoutEffect(() => {
         // Snap the card height to its content only when there's a REAL gap (>8px):
         // a freshly-pasted or uniformly-resized card already matches (so this stays
@@ -545,9 +546,18 @@ function FolderCardBody({ item }: { item: FileItemType }) {
         // that opened a "black bar" gets corrected. Raw dispatch → not undoable;
         // desiredH depends on width + rows (not item.h) so it converges in one step.
         if (Math.abs(item.h - desiredH) > 8) {
-            dispatch({ type: 'UPDATE_ITEM', id: item.id, patch: { h: desiredH } });
+            const patch: Record<string, unknown> = { h: desiredH };
+            // Inside a container, child geometry is re-derived from the frozen
+            // authoredInParent baseline on every group resize. Scale the
+            // baseline's h with this content-driven change (e.g. a collapsed
+            // subfolder shrinking the card), or the NEXT group resize would
+            // re-derive the stale taller height and fight the auto-fit again.
+            if (authoredInParent && item.h > 0) {
+                patch.authoredInParent = { ...authoredInParent, h: authoredInParent.h * (desiredH / item.h) };
+            }
+            dispatch({ type: 'UPDATE_ITEM', id: item.id, patch });
         }
-    }, [desiredH, item.h, item.id, dispatch]);
+    }, [desiredH, item.h, item.id, dispatch, authoredInParent]);
 
     const toggleDir = (path: string) => {
         setCollapsed(prev => {
