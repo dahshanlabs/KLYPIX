@@ -3,7 +3,7 @@ import { getApiKeySync } from '../../api/gemini';
 import { renderItemsForPrompt, type CommandScope } from './canvasScopeResolver';
 import { newId, type CanvasItem, type Connection } from '../items/types';
 import { CANVAS_TOOLS } from './canvasTools';
-import { executeToolCall, type ToolExecContext, type ToolResult } from './canvasToolExecutor';
+import { createAgentReportCard, executeToolCall, type ToolExecContext, type ToolResult } from './canvasToolExecutor';
 
 // Multi-turn tool-calling loop for the canvas agent. Replaces the Slice 6
 // prompt→text path. The agent can call any canvas_* tool, get a result, and
@@ -82,6 +82,46 @@ function withToolLock<T>(fn: () => Promise<T>): Promise<T> {
 // source (Gemini Flash forgets to call canvas_connect_items inconsistently).
 const CREATE_TOOLS = new Set(['canvas_create_card', 'canvas_write_batch', 'canvas_pin_chart', 'canvas_pin_file', 'canvas_pin_image']);
 
+// Human-readable failure text — shown on the tray pill AND pinned to the
+// canvas as a red report card so a failed run never vanishes silently.
+function describeRunError(code: string): string {
+    switch (code) {
+        case 'empty_response': return 'The model returned an empty response.';
+        case 'max_turns': return `Stopped after ${MAX_TURNS} turns without finishing.`;
+        case 'no_output': return 'The run finished without leaving anything on the canvas.';
+        default: return code;
+    }
+}
+
+// Draw source→target arrows for pairs not already linked. Targets are ids this
+// run just created — deliberately NOT checked against state, because getState()
+// reads a ref that only refreshes on re-render, so a card dispatched moments
+// ago isn't visible yet (the old per-card existence check silently dropped
+// arrows to final-turn cards). ADD_CONNECTION tolerates not-yet-rendered ids;
+// the connections layer skips endpoints that never materialize.
+function addMissingConnections(
+    getState: ToolExecContext['getState'],
+    dispatch: ToolExecContext['dispatch'],
+    sources: string[],
+    targets: string[],
+    color: string,
+) {
+    const st = getState();
+    const conns = Object.values(st.connections) as Connection[];
+    for (const src of sources) {
+        if (!st.items[src]) continue;
+        for (const cardId of targets) {
+            if (cardId === src) continue;
+            const linked = conns.some(c => (c.fromId === src && c.toId === cardId) || (c.fromId === cardId && c.toId === src));
+            if (linked) continue;
+            dispatch({
+                type: 'ADD_CONNECTION',
+                connection: { id: newId('conn'), fromId: src, toId: cardId, label: '', color, width: 2, arrowHead: true, style: 'solid', createdBy: 'agent' },
+            });
+        }
+    }
+}
+
 export async function runCanvasAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     const { command, scope, scopeItems, getState, dispatch, onToast, onProgress, signal } = opts;
 
@@ -113,6 +153,8 @@ ${command}`;
     let turns = 0;
     let toolCalls = 0;
     let finalMessage = '';
+    let runError: string | null = null;
+    let completed = false;
     const createdIds: string[] = [];
 
     while (turns < MAX_TURNS) {
@@ -124,12 +166,14 @@ ${command}`;
         try {
             response = await model.generateContent({ contents });
         } catch (err: any) {
-            return { finalMessage: '', toolCalls, error: err?.message || 'Gemini call failed' };
+            runError = err?.message || 'Gemini call failed';
+            break;
         }
 
         const candidate = response.response.candidates?.[0];
         if (!candidate) {
-            return { finalMessage, toolCalls, error: 'empty_response' };
+            runError = 'empty_response';
+            break;
         }
 
         const parts: Part[] = candidate.content?.parts || [];
@@ -150,6 +194,7 @@ ${command}`;
         if (calls.length === 0) {
             // No tool call → model produced plain text. Treat as final message.
             finalMessage = textChunk || finalMessage;
+            completed = true;
             break;
         }
 
@@ -215,38 +260,60 @@ ${command}`;
 
         contents.push({ role: 'user', parts: responseParts });
 
-        if (shouldStop) break;
+        if (shouldStop) { completed = true; break; }
+    }
+
+    if (!runError && !completed) runError = 'max_turns';
+
+    const sources = scope.anchorId ? [scope.anchorId] : scope.itemIds;
+    const created = Array.from(new Set(createdIds));
+
+    // Guarantee: every non-aborted run leaves something on the canvas. Gemini
+    // Flash sometimes answers in plain text without ever calling
+    // canvas_create_card (common after watching a video) — that answer used to
+    // be dropped silently and the run looked like it did nothing. Pin it as a
+    // card; if there's no text either, escalate to a run error so the failure
+    // report below covers it.
+    if (!runError && created.length === 0) {
+        if (finalMessage.trim()) {
+            const id = await withToolLock(async () => createAgentReportCard(ctx, { content: finalMessage.trim() }));
+            created.push(id);
+        } else {
+            runError = 'no_output';
+        }
     }
 
     // Deterministically tie the agent's output to its source — Gemini Flash
     // forgets to call canvas_connect_items inconsistently. Connect each scope
     // source to each created card (skip pairs already linked). Scoped to a
     // focused selection (1-3 sources) + a few outputs so /organize and
-    // whole-canvas runs don't fan out a mess of arrows.
-    const sources = scope.anchorId ? [scope.anchorId] : scope.itemIds;
-    const created = Array.from(new Set(createdIds));
+    // whole-canvas runs don't fan out a mess of arrows. Runs even when the run
+    // errored late (e.g. turn limit) — work that landed stays wired.
     if (sources.length >= 1 && sources.length <= 3 && created.length >= 1 && created.length <= 3) {
         await withToolLock(async () => {
-            const st = getState();
-            const conns = Object.values(st.connections) as Connection[];
-            for (const src of sources) {
-                if (!st.items[src]) continue;
-                for (const cardId of created) {
-                    if (cardId === src || !st.items[cardId]) continue;
-                    const linked = conns.some(c => (c.fromId === src && c.toId === cardId) || (c.fromId === cardId && c.toId === src));
-                    if (linked) continue;
-                    dispatch({
-                        type: 'ADD_CONNECTION',
-                        connection: { id: newId('conn'), fromId: src, toId: cardId, label: '', color: '#10b981', width: 2, arrowHead: true, style: 'solid', createdBy: 'agent' },
-                    });
-                }
-            }
+            addMissingConnections(getState, dispatch, sources, created, '#10b981');
             return null;
         });
     }
 
-    if (turns >= MAX_TURNS) {
-        return { finalMessage: finalMessage || '(turn limit reached)', toolCalls, error: 'max_turns' };
+    // Failed run → pin a red report card wired to the source item(s). The tray
+    // pill alone is dismissible/missable; the canvas report keeps the failure
+    // attached to what the user asked about. User aborts returned earlier and
+    // are exempt — stopping a run shouldn't litter the canvas.
+    if (runError) {
+        const message = describeRunError(runError);
+        const shortCmd = command.length > 90 ? `${command.slice(0, 90)}…` : command;
+        await withToolLock(async () => {
+            const errorId = createAgentReportCard(ctx, {
+                content: `⚠️ AGENT RUN FAILED\n\n"${shortCmd}"\n\n${message}`,
+                isError: true,
+            });
+            if (sources.length >= 1 && sources.length <= 3) {
+                addMissingConnections(getState, dispatch, sources, [errorId], '#ef4444');
+            }
+            return null;
+        });
+        return { finalMessage, toolCalls, error: message };
     }
 
     return { finalMessage, toolCalls };

@@ -115,6 +115,40 @@ export interface ToolResult {
     videoUrls?: string[];
 }
 
+/** Deterministic report card pinned by the agent run loop itself (not by a
+ *  model tool call): the fallback for an answer the model left as plain text,
+ *  and the red failure report when a run errors out. Mirrors the
+ *  canvas_create_card / canvas_run_code-failure styling. Returns the new id. */
+export function createAgentReportCard(
+    ctx: ToolExecContext,
+    opts: { content: string; isError?: boolean },
+): string {
+    const s = ctx.getState();
+    const cardW = 420, cardH = 140;
+    const pos = resolveAgentCardPosition(s, 0, 0, cardW, cardH);
+    const item: TextItem = {
+        id: newId('agent'),
+        type: 'text',
+        x: pos.x,
+        y: pos.y,
+        w: cardW,
+        h: cardH,
+        zIndex: s.order.length,
+        locked: false,
+        parentId: null,
+        createdAt: Date.now(),
+        createdBy: 'agent',
+        content: opts.content,
+        fontSize: 13,
+        color: opts.isError ? '#fca5a5' : defaultTextColorFor(getCurrentGridSettings().background),
+        border: true,
+        borderColor: opts.isError ? 'rgba(239,68,68,0.4)' : 'rgba(16,185,129,0.5)',
+        heading: false,
+    };
+    ctx.dispatch({ type: 'ADD_ITEM', item });
+    return item.id;
+}
+
 // Simple SVG chart renderer — no external deps. Bar / line / pie only.
 function renderChartSvg(type: 'bar' | 'line' | 'pie', title: string, labels: string[], values: number[]): string {
     const W = 480, H = 300, PAD = 36;

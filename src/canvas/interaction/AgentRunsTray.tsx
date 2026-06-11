@@ -7,7 +7,8 @@ import type { AgentRun } from '../agent/useAgentRuns';
 // Each pill: the purple mascot, the command label, a live step/tool line, and a
 // per-run Stop (■) while running / dismiss (✕) on error. Clicking the pill BODY
 // re-opens the command bar (so you can see/continue) — only the ■ stops the run.
-// Docked top-right, stacking downward, clear of the top + left toolbars.
+// Docked right, BELOW the top file-ops bar (top-3 + ~34px tall → top-14 clears
+// it), stacking downward so pills never overlap the toolbar row.
 interface Props {
     runs: AgentRun[];
     onStop: (id: string) => void;
@@ -20,7 +21,7 @@ export function AgentRunsTray({ runs, onStop, onDismiss, onOpen }: Props) {
     useLocale();
     if (runs.length === 0) return null;
     return (
-        <div data-canvas-ui="1" className="absolute top-3 right-4 z-40 no-drag flex flex-col gap-2 items-end">
+        <div data-canvas-ui="1" className="absolute top-14 right-4 z-40 no-drag flex flex-col gap-2 items-end">
             {runs.map(run => {
                 const isError = run.status === 'error';
                 const stepText = isError
