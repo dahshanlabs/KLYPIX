@@ -2664,10 +2664,24 @@ async function readClipboardFilePathsAsync(): Promise<string[]> {
             { timeout: 3000, windowsHide: true, encoding: 'utf8' },
         );
         if (!stdout) return [];
-        return stdout
-            .split(/\r?\n/)
-            .map((s) => s.trim())
-            .filter((s) => s.length > 0);
+        const raw = stdout.split(/\r?\n/).map((s) => s.trim()).filter((s) => s.length > 0);
+        // Expand a copied FOLDER into its immediate files (Ctrl+C a "PDF Files"
+        // folder → paste the PDFs inside). One level, files only, capped at 50.
+        const out: string[] = [];
+        for (const p of raw) {
+            if (out.length >= 50) break;
+            try {
+                const st = fs.statSync(p);
+                if (st.isDirectory()) {
+                    for (const name of fs.readdirSync(p)) {
+                        if (out.length >= 50) break;
+                        const fp = path.join(p, name);
+                        try { if (fs.statSync(fp).isFile()) out.push(fp); } catch { /* skip */ }
+                    }
+                } else if (st.isFile()) out.push(p);
+            } catch { /* skip unreadable */ }
+        }
+        return out;
     } catch { return []; }
 }
 
@@ -2693,10 +2707,14 @@ ipcMain.handle('read-clipboard', async () => {
     // was claiming ownership, that's an external file copy — release
     // ownership so the renderer's paste handler sees the fresh file list
     // instead of short-circuiting to stale canvas items.
-    if (filesChanged && filesFp) {
+    if (filesFp) {
+        // Files on the clipboard are ALWAYS an external copy — the canvas never
+        // writes files — so release canvas ownership UNCONDITIONALLY. The absorb
+        // flag exists only for the canvas's own text/image write; if KLYPIX was
+        // unfocused when the user copied a folder, that flag is still set and
+        // would otherwise eat this change, leaving stale canvas text to paste.
         lastClipboardFormat = 'files';
-        if (canvasClaimAbsorbNextChange) canvasClaimAbsorbNextChange = false;
-        else if (canvasOwnsClipboard) canvasOwnsClipboard = false;
+        canvasOwnsClipboard = false;
     } else if (filesChanged && !filesFp && lastClipboardFormat === 'files') {
         // Files were cleared without text/image taking their place.
         lastClipboardFormat = text ? 'text' : (imageBase64 ? 'image' : 'none');
