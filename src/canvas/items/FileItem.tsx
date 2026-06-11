@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { File as FileIcon, FileText, FileSpreadsheet, FileImage, FileCode, FileVideo, FileAudio, FileArchive, ExternalLink, FolderOpen as FolderOpenIcon, Folder as FolderIcon, Eye as EyeIcon, EyeOff as EyeOffIcon, Loader2, ChevronDown, ArrowDownAZ, ArrowUpAZ, Hash } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import JSZip from 'jszip';
@@ -6,7 +6,7 @@ import { previewPdfFromBytes, previewDocxFromBytes, previewSpreadsheetFromBytes 
 import type { FileItem as FileItemType } from './types';
 import { getAsset, bytesToBase64 } from '../file/assetRegistry';
 import { ResizeHandle } from '../interaction/ResizeHandle';
-import { useCanvasStore } from '../state/canvasStore';
+import { useCanvasSelector } from '../state/canvasStore';
 import { setEmbedSync } from '../file/embedSyncStore';
 import { useEmbedSync } from '../../hooks/useEmbedSync';
 import { t, useLocale } from '../../i18n/strings';
@@ -201,8 +201,7 @@ function FileCardViewImpl(props: Props) {
 
 function FileCardBody({ item, selected }: Props) {
     useLocale();
-    const { state } = useCanvasStore();
-    const canvasFilePath = state.filePath || null;
+    const canvasFilePath = useCanvasSelector(s => s.filePath || null);
     const Icon = pickIcon(item.extension);
     const hasRichPreview = !!(item.previewDataUrl || item.previewSheet || item.previewHtml);
     // Render the sync badge in the no-preview body path too — useful for compact mode.
@@ -214,10 +213,12 @@ function FileCardBody({ item, selected }: Props) {
     // few pixels — confusing "dark rectangle with a bit of text"
     // instead of a recognizable file card. Switch to a compact dot
     // with the extension badge so the card is at least identifiable.
-    const renderedW = item.w * state.view.zoom;
-    const renderedH = item.h * state.view.zoom;
+    // Selector returns the DECISION boolean, so this re-renders only on
+    // threshold crossings — not on every zoom frame.
     const DOT_THRESHOLD_PX = 50;
-    const useDotMode = renderedW < DOT_THRESHOLD_PX || renderedH < DOT_THRESHOLD_PX;
+    const useDotMode = useCanvasSelector(
+        s => item.w * s.view.zoom < DOT_THRESHOLD_PX || item.h * s.view.zoom < DOT_THRESHOLD_PX,
+    );
 
     const style: React.CSSProperties = {
         position: 'absolute',
@@ -491,8 +492,8 @@ function formatFolderBytes(n: number): string {
 
 function FolderCardBody({ item }: { item: FileItemType }) {
     useLocale();
-    const { state } = useCanvasStore();
-    const canvasFilePath = state.filePath || null;
+    const canvasFilePath = useCanvasSelector(s => s.filePath || null);
+    const { dispatch } = useCanvasStore();
     const manifest = item.folderManifest || [];
     const skipped = item.folderSkipped || [];
     const [busyPath, setBusyPath] = useState<string | null>(null);
@@ -518,6 +519,28 @@ function FolderCardBody({ item }: { item: FileItemType }) {
     const tree = buildFolderTree(manifest);
     const sortedTree = sortNodes(tree, sortKey, sortDir);
     const rows = flattenTree(sortedTree, collapsed);
+
+    // Width-driven zoom + auto-fit height: the card scales with its WIDTH (so
+    // resizing enlarges name + rows + icons together), and its HEIGHT always
+    // follows the row count at that scale — so the card is exactly as tall as its
+    // content and there's never a "black bar" of empty card below the last row.
+    const FOLDER_NAT_W = 360;
+    const FOLDER_HEADER_H = 50;
+    const FOLDER_ROW_H = 22;
+    const folderZoom = Math.max(0.5, Math.min(2.5, item.w / FOLDER_NAT_W));
+    const innerH = item.h / folderZoom;
+    const naturalContentH = FOLDER_HEADER_H + Math.max(1, rows.length) * FOLDER_ROW_H + (skipped.length ? 60 : 0);
+    const desiredH = Math.min(440, Math.round(naturalContentH * folderZoom));
+    useLayoutEffect(() => {
+        // Snap the card height to its content only when there's a REAL gap (>8px):
+        // a freshly-pasted or uniformly-resized card already matches (so this stays
+        // dormant and never fights a drag), but an old card or an edge-height drag
+        // that opened a "black bar" gets corrected. Raw dispatch → not undoable;
+        // desiredH depends on width + rows (not item.h) so it converges in one step.
+        if (Math.abs(item.h - desiredH) > 8) {
+            dispatch({ type: 'UPDATE_ITEM', id: item.id, patch: { h: desiredH } });
+        }
+    }, [desiredH, item.h, item.id, dispatch]);
 
     const toggleDir = (path: string) => {
         setCollapsed(prev => {
@@ -567,19 +590,9 @@ function FolderCardBody({ item }: { item: FileItemType }) {
         previewLeaveTimerRef.current = window.setTimeout(() => setPreview(null), 80);
     };
 
-    // Uniform zoom: render the folder body at a NATURAL size and scale the whole
-    // card (name + rows + icons) by one factor, so resizing enlarges everything
-    // together — like a picture / the container model — instead of leaving the
-    // text pinned at a fixed size. min(w-fit, h-fit) keeps it undistorted and the
-    // whole folder visible. natH tracks the visible row count so there's no gap.
-    const FOLDER_NAT_W = 340;
-    const FOLDER_ROW_H = 21;
-    const FOLDER_HEADER_H = 50;
-    const folderNaturalH = FOLDER_HEADER_H + Math.max(1, rows.length) * FOLDER_ROW_H;
-    const folderZoom = Math.max(0.3, Math.min(item.w / FOLDER_NAT_W, item.h / folderNaturalH));
     return (
         <>
-            <div style={{ width: FOLDER_NAT_W, height: folderNaturalH, transform: `scale(${folderZoom})`, transformOrigin: 'top left', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+            <div style={{ width: FOLDER_NAT_W, height: innerH, transform: `scale(${folderZoom})`, transformOrigin: 'top left', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
             <div style={{
                 padding: '10px 12px 8px',
                 display: 'flex',
@@ -1408,7 +1421,9 @@ function FolderLeafPreview({ assetId, entry, anchorRect }: {
 // pixel width — and swap it in. Debounced 220ms; cached per zoom bucket so
 // a resize drag doesn't spam work.
 function PdfPreviewImage({ item }: { item: FileItemType }) {
-    const { state } = useCanvasStore();
+    // Effective pixel width rounded to 80px bins — subscribing to the BIN
+    // (not raw zoom) means this re-renders only when the bucket changes.
+    const effectivePx = useCanvasSelector(s => Math.round((item.w * s.view.zoom) / 80) * 80);
     const [hiResSrc, setHiResSrc] = useState<string | null>(null);
     // Track if the CURRENT src failed to decode. Fall back to the
     // baseline previewDataUrl so the card never shows an empty black
@@ -1422,7 +1437,6 @@ function PdfPreviewImage({ item }: { item: FileItemType }) {
     const latestKeyRef = useRef<number>(0);
 
     useEffect(() => {
-        const effectivePx = Math.round((item.w * state.view.zoom) / 80) * 80;
         // Below this threshold the captured 1.2x bitmap is already crisp.
         const LOW_RES_PX = 480;
         if (effectivePx <= LOW_RES_PX) {
@@ -1468,7 +1482,7 @@ function PdfPreviewImage({ item }: { item: FileItemType }) {
         return () => {
             if (debounceRef.current) window.clearTimeout(debounceRef.current);
         };
-    }, [item.w, item.h, state.view.zoom, item.assetId]);
+    }, [effectivePx, item.assetId]);
 
     // If hi-res failed to decode (rare — usually browser memory pressure
     // at extreme sizes), drop back to the baseline preview data URL so

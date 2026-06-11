@@ -157,9 +157,11 @@ export async function flatEntriesToItem(
         x,
         y,
         w: 360,
-        // Tree view height grows with entry count, capped so a 5000-file
-        // folder doesn't produce a card taller than the viewport.
-        h: Math.min(440, 96 + manifest.length * 18),
+        // Start content-fit: ~50px header + ~22px/row (matches FolderCardBody's
+        // FOLDER_HEADER_H/FOLDER_ROW_H), capped at 440 so a huge folder scrolls
+        // instead of becoming taller than the viewport. The card then auto-fits
+        // its height to the row count on render, so there's no empty "black bar".
+        h: Math.min(440, 50 + manifest.length * 22),
         zIndex: z,
         locked: false,
         parentId: null,
