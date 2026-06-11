@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { RotateCw } from 'lucide-react';
-import { useCanvasStore } from '../state/canvasStore';
+import { useCanvasApi, useCanvasSelector, shallowEqual } from '../state/canvasStore';
 import { refitContainers } from '../items/containerFit';
 
 // Rotation handle for items that support visual rotation (box / image / text
@@ -43,7 +43,18 @@ function snap15(deg: number): number {
 }
 
 export function RotateHandle({ itemId, x, y, w, h, rotation = 0 }: Props) {
-    const { state, dispatch, pushSnapshot } = useCanvasStore();
+    const { dispatch, pushSnapshot } = useCanvasApi();
+    // Narrow-slice subscription (see ContainerItem note): skips dispatches
+    // that don't touch geometry, view, or selection.
+    const state = useCanvasSelector(s => ({
+        items: s.items,
+        lines: s.lines,
+        strokes: s.strokes,
+        view: s.view,
+        selectedIds: s.selectedIds,
+        selectedLineIds: s.selectedLineIds,
+        selectedStrokeIds: s.selectedStrokeIds,
+    }), shallowEqual);
     // Phase 22.5: hide per-item rotation when 2+ entities are selected —
     // MultiSelectionBox now provides a group rotation handle that rotates
     // the whole selection around the bbox centroid. Mirrors the same gate
@@ -52,7 +63,6 @@ export function RotateHandle({ itemId, x, y, w, h, rotation = 0 }: Props) {
         state.selectedIds.length
         + state.selectedLineIds.length
         + state.selectedStrokeIds.length;
-    if (totalSel >= 2) return null;
     const surfaceZoom = Math.max(0.01, state.view.zoom);
 
     // Visual constants — all in screen-px, divided by zoom so they render
@@ -108,6 +118,12 @@ export function RotateHandle({ itemId, x, y, w, h, rotation = 0 }: Props) {
         startAngle: number;
         startRotation: number;
     } | null>(null);
+
+    // Per-item rotate handle hides for multi-select (the group handle takes
+    // over). Guard placed AFTER all hooks so the hook count stays stable — it
+    // used to be an early return BEFORE useRef, which crashed with "rendered
+    // fewer hooks than expected" on the 1→2-selection transition.
+    if (totalSel >= 2) return null;
 
     const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
         e.stopPropagation();
