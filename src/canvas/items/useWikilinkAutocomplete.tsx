@@ -39,13 +39,16 @@ export interface WikilinkAutocomplete {
 const MAX_RESULTS = 8;
 
 export function useWikilinkAutocomplete(opts: {
-    items: Record<string, CanvasItem>;
+    /** Lazy getter (NOT the items map itself) so the host component doesn't
+     *  need to subscribe to all-items changes just to feed this dropdown —
+     *  candidates() reads fresh items only when the menu is actually open. */
+    getItems: () => Record<string, CanvasItem>;
     selfId: string;
     textareaRef: React.RefObject<HTMLTextAreaElement | null>;
     /** Ref the editing block points at its applyContentChange. */
     commitRef: React.RefObject<((newContent: string) => void) | null>;
 }): WikilinkAutocomplete {
-    const { items, selfId, textareaRef, commitRef } = opts;
+    const { getItems, selfId, textareaRef, commitRef } = opts;
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState('');
     const [index, setIndex] = useState(0);
@@ -79,6 +82,7 @@ export function useWikilinkAutocomplete(opts: {
         const q = query.trim().toLowerCase();
         const out: Candidate[] = [];
         const seen = new Set<string>();
+        const items = getItems();
         for (const id in items) {
             if (id === selfId) continue;
             const t = cardTitle(items[id]);

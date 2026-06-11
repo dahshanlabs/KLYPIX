@@ -3,14 +3,14 @@ import { Play, Pause, Volume2, VolumeX, ExternalLink, Video as VideoIcon } from 
 import type { VideoItem as VideoItemType } from './types';
 import { ResizeHandle } from '../interaction/ResizeHandle';
 import { getAsset } from '../file/assetRegistry';
-import { useCanvasStore } from '../state/canvasStore';
+import { useCanvasApi } from '../state/canvasStore';
 
 interface Props {
     item: VideoItemType;
     selected: boolean;
 }
 
-// Periodic currentTime persist while playing — dispatched into the store so
+// Periodic currentTime persist while playing â€” dispatched into the store so
 // reloading the canvas resumes at roughly the same spot. Debounced so we
 // don't push a patch every timeupdate tick.
 const PERSIST_INTERVAL_MS = 1500;
@@ -27,7 +27,7 @@ function formatTime(s: number): string {
 }
 
 function VideoItemViewImpl({ item, selected }: Props) {
-    const { dispatch } = useCanvasStore();
+    const { dispatch } = useCanvasApi();
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const [playing, setPlaying] = useState(false);
     const [muted, setMuted] = useState(false);
@@ -96,7 +96,7 @@ function VideoItemViewImpl({ item, selected }: Props) {
             const res = await api.openPath(item.originalPath);
             if (res?.ok) return;
         }
-        // No bytes-fallback here (videos are potentially huge) — the main
+        // No bytes-fallback here (videos are potentially huge) â€” the main
         // process can extract from the ZIP via the same openAssetBytes bridge
         // FileItem uses, but only if the caller has the base64. Defer that
         // round-trip unless users actually hit it.

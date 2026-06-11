@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { Play, Copy, Check, Pencil, ExternalLink } from 'lucide-react';
 import type { CodeItem as CodeItemType, CodeLanguage } from './types';
 import { ResizeHandle } from '../interaction/ResizeHandle';
-import { useCanvasStore } from '../state/canvasStore';
+import { useCanvasApi } from '../state/canvasStore';
 import { t, useLocale } from '../../i18n/strings';
 
 interface Props {
@@ -17,7 +17,7 @@ const RUNNABLE: Record<CodeLanguage, 'python' | 'bash' | 'node' | null> = {
     python: 'python',
     bash: 'bash',
     javascript: 'node',
-    typescript: null,  // sandbox runs node raw; TS would need transpile — defer
+    typescript: null,  // sandbox runs node raw; TS would need transpile â€” defer
     json: null, html: null, css: null, sql: null, go: null, rust: null,
     java: null, c: null, cpp: null, markdown: null, yaml: null, text: null,
 };
@@ -28,7 +28,7 @@ export const CodeItemView = React.memo(CodeItemViewImpl, (prev, next) => {
 
 function CodeItemViewImpl({ item, selected, editing }: Props) {
     useLocale();
-    const { dispatch } = useCanvasStore();
+    const { dispatch } = useCanvasApi();
     const [copied, setCopied] = React.useState(false);
     const [running, setRunning] = React.useState(false);
 
@@ -220,7 +220,7 @@ function CodeItemViewImpl({ item, selected, editing }: Props) {
                         }}
                     >
                         <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.08em', marginBottom: 3, fontFamily: 'Thmanyah Sans, system-ui, sans-serif' }}>
-                            {item.lastRun.exitCode === 0 ? 'STDOUT' : `EXIT ${item.lastRun.exitCode} · STDERR`}
+                            {item.lastRun.exitCode === 0 ? 'STDOUT' : `EXIT ${item.lastRun.exitCode} Â· STDERR`}
                         </div>
                         {(item.lastRun.exitCode === 0 ? item.lastRun.stdout : (item.lastRun.stderr || item.lastRun.stdout)).trim() || '(no output)'}
                     </div>
@@ -234,7 +234,7 @@ function CodeItemViewImpl({ item, selected, editing }: Props) {
                         borderTop: '1px solid rgba(16,185,129,0.2)',
                         background: 'rgba(16,185,129,0.05)',
                     }}>
-                        Running…
+                        Runningâ€¦
                     </div>
                 )}
             </div>
@@ -305,7 +305,7 @@ function highlight(code: string, lang: CodeLanguage): string {
 }
 
 function highlightGeneric(safe: string, keywords: string[], lineComment: RegExp, blockComment: RegExp): string {
-    // Strategy: do cheap passes in order — strings, numbers, comments, keywords.
+    // Strategy: do cheap passes in order â€” strings, numbers, comments, keywords.
     // Wrap each in a sentinel so later passes don't reprocess already-colored
     // segments. Sentinels use a private-use character unlikely to appear in code.
     const SENT = '\uE000';
@@ -320,9 +320,9 @@ function highlightGeneric(safe: string, keywords: string[], lineComment: RegExp,
     out = out.replace(/("(?:[^"\\\n]|\\.)*")|('(?:[^'\\\n]|\\.)*')|(`(?:[^`\\]|\\.)*`)/g,
         (m) => save(`<span style="color:#a78bfa">${m}</span>`));
     // Numbers. Lookarounds prevent re-matching the digit-encoded stash
-    // index inside sentinels saved by earlier passes (e.g. `<idx>`),
-    // which otherwise leaks bare `` glyphs into the rendered output.
-    out = out.replace(/(?<!)\b(\d+(?:\.\d+)?|0x[0-9a-fA-F]+)\b(?!)/g,
+    // index inside sentinels saved by earlier passes (e.g. `î€€<idx>î€€`),
+    // which otherwise leaks bare `î€€` glyphs into the rendered output.
+    out = out.replace(/(?<!î€€)\b(\d+(?:\.\d+)?|0x[0-9a-fA-F]+)\b(?!î€€)/g,
         (m) => save(`<span style="color:#fbbf24">${m}</span>`));
     // Keywords.
     if (keywords.length > 0) {

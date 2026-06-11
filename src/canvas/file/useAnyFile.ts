@@ -85,12 +85,28 @@ function collectReferencedAssetIds(state: CanvasState): string[] {
     return Array.from(ids);
 }
 
+// Base64 encodings cached by the asset's bytes IDENTITY. registerAsset
+// allocates a fresh Uint8Array whenever an asset's content changes, so a
+// cache hit is always content-correct — and a replaced/cleared asset's
+// encoding is GC'd together with its bytes (WeakMap). This turns the 30s
+// autosave from O(total asset size) re-encoding on the renderer main thread
+// into O(new bytes only) — the main hitching source on canvases with large
+// embedded files.
+const assetBase64Cache = new WeakMap<Uint8Array, string>();
+function cachedBytesToBase64(bytes: Uint8Array): string {
+    const hit = assetBase64Cache.get(bytes);
+    if (hit !== undefined) return hit;
+    const b64 = bytesToBase64(bytes);
+    assetBase64Cache.set(bytes, b64);
+    return b64;
+}
+
 function buildAssetPayload(state: CanvasState): AssetPayload[] {
     const ids = collectReferencedAssetIds(state);
     const entries = listAssetsForIds(ids);
     return entries.map(e => ({
         path: `assets/${e.id}`,
-        base64: bytesToBase64(e.bytes),
+        base64: cachedBytesToBase64(e.bytes),
     }));
 }
 

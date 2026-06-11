@@ -33,6 +33,10 @@ import type { CanvasItem } from './items/types';
 
 const VIEWPORT_PADDING = 200; // pixels in screen space, pre-mount margin for smooth scroll
 const CULL_DEBOUNCE_MS = 50;  // re-compute visible set at most every 50ms during pan
+// Below this on-screen max dimension, eligible items render as LOD skeleton
+// rects instead of full DOM bodies. Must stay above the dot-tier thresholds
+// in isLooseItemDottedAtZoom so the tiers hand off cleanly: dot < skeleton < full.
+const SKELETON_MAX_SCREEN_PX = 24;
 
 function useViewport(): { w: number; h: number } {
     const [vp, setVp] = useState({ w: window.innerWidth, h: window.innerHeight });
@@ -488,7 +492,40 @@ export function CanvasRenderer({ connectPendingId, connectHoverWorld, collabPeer
                 const isSelected = selected.has(id);
                 const isEditing = editingId === id;
                 let body: React.ReactNode;
-                switch (item.type) {
+                // LOD skeleton tier: between the dot tier and readable size,
+                // swap text-layout-heavy bodies for a tinted rect. Below
+                // SKELETON_MAX_SCREEN_PX the real body is an unreadable
+                // rectangle anyway — this one is just cheaper (no text
+                // layout, no syntax highlight, no preview decode). Same
+                // data-canvas-item attribute and bounds, so hit-testing,
+                // selection and drag behave identically. Containers, images
+                // and media keep their own tiers; selected/editing items
+                // always render real DOM.
+                const skeletonEligible = item.type === 'text' || item.type === 'code'
+                    || item.type === 'file' || item.type === 'link' || item.type === 'canvas-link';
+                if (skeletonEligible && !isSelected && !isEditing
+                    && Math.max(item.w, item.h) * view.zoom < SKELETON_MAX_SCREEN_PX) {
+                    const anyItem = item as any;
+                    body = (
+                        <div
+                            data-canvas-item={id}
+                            className="no-drag"
+                            style={{
+                                position: 'absolute',
+                                left: item.x,
+                                top: item.y,
+                                width: item.w,
+                                height: item.h,
+                                borderRadius: 6,
+                                background: anyItem.bg || anyItem.fill || 'rgba(148,163,184,0.18)',
+                                border: '1px solid rgba(148,163,184,0.25)',
+                                transform: anyItem.rotation ? `rotate(${anyItem.rotation}deg)` : undefined,
+                                transformOrigin: 'center',
+                                pointerEvents: 'auto',
+                            }}
+                        />
+                    );
+                } else switch (item.type) {
                     case 'text':
                         body = <TextItemView item={item} selected={isSelected} editing={isEditing} />; break;
                     case 'box':

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef, useCallback, useSyncExternalStore } from 'react';
 import { generateKeyBetween, generateNKeysBetween } from 'fractional-indexing';
 import {
     type CanvasItem,
@@ -1420,10 +1420,93 @@ interface CanvasStoreValue {
 
 const CanvasStoreContext = createContext<CanvasStoreValue | null>(null);
 
+// --- External store (selector subscriptions) ---
+//
+// The reducer state lives here, OUTSIDE React, so components can subscribe to
+// narrow slices via useCanvasSelector and re-render only when their slice
+// changes. The legacy context path is preserved verbatim: the provider itself
+// subscribes with useSyncExternalStore, so every dispatch still rebuilds the
+// context value exactly as before and unconverted useCanvasStore() consumers
+// keep their current behavior. Converted consumers read the stable
+// useCanvasApi() handle + useCanvasSelector() and skip the per-dispatch
+// context fan-out (a Context update bypasses React.memo; a selector
+// subscription doesn't).
+
+interface ExternalStore {
+    getState: () => CanvasState;
+    apply: (action: CanvasAction) => void;
+    subscribe: (cb: () => void) => () => void;
+}
+
+function createExternalStore(initial: CanvasState): ExternalStore {
+    // zoomCollapsedIds is derived (auto-capsule is retired so it's currently
+    // always {}), merged here once per action so context AND selector
+    // consumers read the same state object. Memoized on its inputs so the
+    // derived map keeps a stable identity across unrelated actions.
+    let lastDerived = computeZoomCollapsedIds(initial.items, initial.lines, initial.strokes, initial.view.zoom);
+    let lastInputs = { items: initial.items, lines: initial.lines, strokes: initial.strokes, zoom: initial.view.zoom };
+    const derive = (s: CanvasState): Record<string, boolean> => {
+        if (s.items !== lastInputs.items || s.lines !== lastInputs.lines
+            || s.strokes !== lastInputs.strokes || s.view.zoom !== lastInputs.zoom) {
+            lastDerived = computeZoomCollapsedIds(s.items, s.lines, s.strokes, s.view.zoom);
+            lastInputs = { items: s.items, lines: s.lines, strokes: s.strokes, zoom: s.view.zoom };
+        }
+        return lastDerived;
+    };
+
+    let state: CanvasState = { ...initial, zoomCollapsedIds: lastDerived };
+    const listeners = new Set<() => void>();
+    return {
+        getState: () => state,
+        apply(action: CanvasAction) {
+            const next = reducer(state, action);
+            const derived = derive(next);
+            // Match useReducer's bailout: a no-op action doesn't notify.
+            if (next === state && derived === state.zoomCollapsedIds) return;
+            // `next` is freshly allocated by the reducer (or identical to
+            // state with only the derived map changing) — safe to overlay the
+            // derived field without another spread when possible.
+            state = next === state
+                ? { ...next, zoomCollapsedIds: derived }
+                : (next.zoomCollapsedIds === derived ? next : { ...next, zoomCollapsedIds: derived });
+            for (const l of listeners) l();
+        },
+        subscribe(cb: () => void) {
+            listeners.add(cb);
+            return () => { listeners.delete(cb); };
+        },
+    };
+}
+
+// Stable write/read API for converted components. Identity NEVER changes, so
+// consuming this context never causes a re-render. State reads go through
+// useCanvasSelector (subscription) or api.getState() (imperative, e.g. inside
+// event handlers).
+export interface CanvasApi {
+    getState: () => CanvasState;
+    subscribe: (cb: () => void) => () => void;
+    dispatch: React.Dispatch<CanvasAction>;
+    commit: (action: CanvasAction, label?: string) => void;
+    pushSnapshot: () => void;
+    popLastSnapshot: () => void;
+    undo: () => void;
+    redo: () => void;
+    subscribeActions: (listener: (action: CanvasAction) => void) => () => void;
+}
+
+const CanvasApiContext = createContext<CanvasApi | null>(null);
+
 const MAX_UNDO = 100;
 
 export function CanvasStoreProvider({ children }: { children: React.ReactNode }) {
-    const [state, rawDispatch] = useReducer(reducer, INITIAL_STATE);
+    // Reducer state lives in the external store; the provider subscribes so
+    // the legacy context value still updates once per dispatch (batched by
+    // React inside event handlers, exactly like the previous useReducer).
+    const storeRef = useRef<ExternalStore | null>(null);
+    if (!storeRef.current) storeRef.current = createExternalStore(INITIAL_STATE);
+    const store = storeRef.current;
+    const state = useSyncExternalStore(store.subscribe, store.getState);
+    const rawDispatch = store.apply;
 
     // Refs so commit/undo/redo don't re-create on every render and capture
     // latest state without stale closures.
@@ -1644,17 +1727,10 @@ export function CanvasStoreProvider({ children }: { children: React.ReactNode })
         bumpStack();
     }, [applyEntry, counterpartEntry, dispatch]);
 
-    // Pure derivation of which containers are zoom-collapsed. Replaces the
-    // previous per-container useEffect that dispatched SET_ZOOM_COLLAPSED on
-    // every item.w/h/zoom change — that effect fought with resize because
-    // every drag frame both shrank the group AND re-evaluated the threshold,
-    // toggling the capsule mode mid-drag. Computing here once per render
-    // guarantees the derived set is internally consistent with current
-    // (items, lines, strokes, zoom) and never feeds back into a dispatch.
-    const derivedZoomCollapsedIds = useMemo(
-        () => computeZoomCollapsedIds(state.items, state.lines, state.strokes, state.view.zoom),
-        [state.items, state.lines, state.strokes, state.view.zoom],
-    );
+    // zoomCollapsedIds derivation now happens inside the external store
+    // (createExternalStore.derive), once per action, so context consumers and
+    // selector consumers read the SAME state object. The provider no longer
+    // re-merges it.
 
     // Drop user-overrides for groups that are no longer zoom-collapsed.
     // Preserves the prior behavior where overriding-while-zoomed-out is
@@ -1664,7 +1740,7 @@ export function CanvasStoreProvider({ children }: { children: React.ReactNode })
     useEffect(() => {
         const stale: string[] = [];
         for (const id of Object.keys(state.userOverrideExpandedIds)) {
-            if (!derivedZoomCollapsedIds[id]) stale.push(id);
+            if (!state.zoomCollapsedIds[id]) stale.push(id);
         }
         for (const id of stale) {
             dispatch({ type: 'SET_OVERRIDE_EXPANDED', id, overridden: false });
@@ -1675,16 +1751,8 @@ export function CanvasStoreProvider({ children }: { children: React.ReactNode })
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [state.view.zoom]);
 
-    // Merge derived value into the state object exposed to consumers, so
-    // every existing read of `state.zoomCollapsedIds` transparently gets
-    // the derived map. No call site needs to change.
-    const stateWithDerived = useMemo(
-        () => ({ ...state, zoomCollapsedIds: derivedZoomCollapsedIds }),
-        [state, derivedZoomCollapsedIds],
-    );
-
     const value = useMemo<CanvasStoreValue>(() => ({
-        state: stateWithDerived,
+        state,
         dispatch,
         commit,
         pushSnapshot,
@@ -1694,13 +1762,91 @@ export function CanvasStoreProvider({ children }: { children: React.ReactNode })
         canUndo: undoStackRef.current.length > 0,
         canRedo: redoStackRef.current.length > 0,
         subscribeActions,
-    }), [stateWithDerived, dispatch, commit, pushSnapshot, popLastSnapshot, undo, redo, stackTick, subscribeActions]);
+    }), [state, dispatch, commit, pushSnapshot, popLastSnapshot, undo, redo, stackTick, subscribeActions]);
 
-    return <CanvasStoreContext.Provider value={value}>{children}</CanvasStoreContext.Provider>;
+    // Stable handle for converted components — identity never changes, so
+    // consuming CanvasApiContext never re-renders anything.
+    const api = useMemo<CanvasApi>(() => ({
+        getState: store.getState,
+        subscribe: store.subscribe,
+        dispatch,
+        commit,
+        pushSnapshot,
+        popLastSnapshot,
+        undo,
+        redo,
+        subscribeActions,
+    }), [store, dispatch, commit, pushSnapshot, popLastSnapshot, undo, redo, subscribeActions]);
+
+    return (
+        <CanvasApiContext.Provider value={api}>
+            <CanvasStoreContext.Provider value={value}>{children}</CanvasStoreContext.Provider>
+        </CanvasApiContext.Provider>
+    );
 }
 
 export function useCanvasStore(): CanvasStoreValue {
     const ctx = useContext(CanvasStoreContext);
     if (!ctx) throw new Error('useCanvasStore must be used inside <CanvasStoreProvider>');
     return ctx;
+}
+
+// --- Fine-grained subscription hooks (performance path) ---
+//
+// useCanvasStore() re-renders its caller on EVERY dispatch (context identity
+// changes per action, and context updates bypass React.memo). Hot components
+// — anything mounted once per item — should use these instead:
+//
+//   const api = useCanvasApi();                       // writes; never re-renders
+//   const item = useCanvasSelector(s => s.items[id]); // re-renders only when the slice changes
+//
+// Selectors run on every store notification, so keep them cheap (property
+// lookups). For selectors that build arrays/objects, pass shallowEqual as the
+// second arg so an equal-by-element result doesn't re-render.
+
+export function useCanvasApi(): CanvasApi {
+    const ctx = useContext(CanvasApiContext);
+    if (!ctx) throw new Error('useCanvasApi must be used inside <CanvasStoreProvider>');
+    return ctx;
+}
+
+export function useCanvasSelector<T>(
+    selector: (s: CanvasState) => T,
+    isEqual: (a: T, b: T) => boolean = Object.is,
+): T {
+    const api = useCanvasApi();
+    const selectorRef = useRef(selector);
+    selectorRef.current = selector;
+    const isEqualRef = useRef(isEqual);
+    isEqualRef.current = isEqual;
+    // getSnapshot must return a REFERENTIALLY stable value while the selected
+    // slice is equal, or useSyncExternalStore re-renders in a loop.
+    const cacheRef = useRef<{ selected: T } | null>(null);
+    const getSnapshot = useCallback(() => {
+        const next = selectorRef.current(api.getState());
+        const cache = cacheRef.current;
+        if (cache && isEqualRef.current(cache.selected, next)) return cache.selected;
+        cacheRef.current = { selected: next };
+        return next;
+    }, [api]);
+    return useSyncExternalStore(api.subscribe, getSnapshot);
+}
+
+/** Shallow equality for selector results that are arrays or flat objects. */
+export function shallowEqual<T>(a: T, b: T): boolean {
+    if (Object.is(a, b)) return true;
+    if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+    if (Array.isArray(a) !== Array.isArray(b)) return false;
+    const ka = Object.keys(a) as Array<keyof T>;
+    const kb = Object.keys(b) as Array<keyof T>;
+    if (ka.length !== kb.length) return false;
+    for (const k of ka) {
+        if (!Object.is(a[k], b[k])) return false;
+    }
+    return true;
+}
+
+/** The item by id, or undefined once deleted. Re-renders only on that item's changes. */
+export function useCanvasItem(id: string): CanvasItem | undefined {
+    return useCanvasSelector(s => s.items[id]);
 }

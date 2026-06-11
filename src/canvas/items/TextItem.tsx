@@ -1,13 +1,16 @@
-import React, { useEffect, useRef } from 'react';
-import { Link2 } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Link2, Link2Off, ArrowUpRight, Trash2 } from 'lucide-react';
 import type { TextItem as TextItemType, StyleRun } from './types';
-import { useCanvasStore } from '../state/canvasStore';
+import { useCanvasApi } from '../state/canvasStore';
 import { ResizeHandle } from '../interaction/ResizeHandle';
 import { RotateHandle } from '../interaction/RotateHandle';
 import { useGridSettings, luminance, isDarkBackground } from '../gridSettings';
 import { getStyleAt, shiftRuns, diffSingleEdit } from './styleRuns';
 import { renumberNumberedLines, stripListPrefixes, LIST_PREFIX_RE } from './listOps';
 import { useWikilinkAutocomplete } from './useWikilinkAutocomplete';
+import { unlinkKeepText, removeLinkToken, resolveWikilink, buildTitleIndex } from './wikilinks';
+import { t } from '../../i18n/strings';
 
 // Contrast-gated legibility halo for plain text sitting directly on the
 // canvas surface (no border, no parent container). When the text color
@@ -42,6 +45,13 @@ function navigateToWikilink(title: string) {
     try { window.dispatchEvent(new CustomEvent('klypix:wikilink-nav', { detail: { title } })); }
     catch { /* no-op */ }
 }
+// Right-click on a rendered [[chip]] opens a per-link menu (open / unlink /
+// remove). The request carries the token's ABSOLUTE [start, end) range in
+// item.content — render functions thread a `base` offset down so the same
+// title linked twice resolves to the exact chip clicked, and the delink
+// surgery in wikilinks.ts validates the range before editing.
+interface WikiChipMenuRequest { title: string; start: number; end: number; x: number; y: number; }
+type WikiChipMenuHandler = (req: WikiChipMenuRequest) => void;
 function clickTag(tag: string) {
     try { window.dispatchEvent(new CustomEvent('klypix:tag-click', { detail: { tag } })); }
     catch { /* no-op */ }
@@ -91,7 +101,12 @@ export function firstUrl(text: string): string | null {
 // browser. This mirrors how editors like VS Code handle inline links —
 // otherwise every click on a pasted link would open the browser and the
 // user could never select the text item to resize it.
-function renderWithLinks(content: string, open: (url: string) => void): React.ReactNode[] {
+function renderWithLinks(
+    content: string,
+    open: (url: string) => void,
+    base = 0, // absolute offset of `content` within the item's full content
+    onWikiMenu?: WikiChipMenuHandler,
+): React.ReactNode[] {
     // Collect URL + wikilink matches, then render segments left-to-right.
     // URLs need Ctrl+click (so plain clicks still select the card); wikilinks
     // navigate on a plain click (they're internal, Obsidian-style) and stop
@@ -143,10 +158,20 @@ function renderWithLinks(content: string, open: (url: string) => void): React.Re
             );
         } else if (s.kind === 'wiki') {
             const title = s.text;
+            const absStart = base + s.start;
+            const absEnd = base + s.end;
             out.push(
                 <span
                     key={key++}
                     onClick={(e) => { e.stopPropagation(); e.preventDefault(); navigateToWikilink(title); }}
+                    // Right-click → per-link menu (open / unlink / remove).
+                    // stopPropagation so the card's big context menu (canvas
+                    // surface onContextMenu) doesn't open on top of it.
+                    onContextMenu={onWikiMenu ? (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onWikiMenu({ title, start: absStart, end: absEnd, x: e.clientX, y: e.clientY });
+                    } : undefined}
                     style={{
                         color: '#8b9cff',
                         background: 'rgba(139,156,255,0.12)',
@@ -155,7 +180,7 @@ function renderWithLinks(content: string, open: (url: string) => void): React.Re
                         cursor: 'pointer',
                         textDecoration: 'none',
                     }}
-                    title={`Go to "${title}"`}
+                    title={t('canvas.wikilink.chip_tip').replace('{title}', title)}
                 >
                     {title}
                 </span>,
@@ -201,9 +226,11 @@ function renderStyledContent(
     content: string,
     runs: StyleRun[] | undefined,
     open: (url: string) => void,
+    base = 0,
+    onWikiMenu?: WikiChipMenuHandler,
 ): React.ReactNode[] {
     if (!runs || runs.length === 0) {
-        return renderWithLinks(content, open);
+        return renderWithLinks(content, open, base, onWikiMenu);
     }
     const breaks = new Set<number>([0, content.length]);
     for (const r of runs) {
@@ -243,11 +270,11 @@ function renderStyledContent(
         if (hasOverride) {
             nodes.push(
                 <span key={`s${s}`} style={spanStyle}>
-                    {renderWithLinks(chunk, open)}
+                    {renderWithLinks(chunk, open, base + s, onWikiMenu)}
                 </span>,
             );
         } else {
-            nodes.push(<React.Fragment key={`s${s}`}>{renderWithLinks(chunk, open)}</React.Fragment>);
+            nodes.push(<React.Fragment key={`s${s}`}>{renderWithLinks(chunk, open, base + s, onWikiMenu)}</React.Fragment>);
         }
     }
     return nodes;
@@ -273,8 +300,9 @@ function renderStyledLines(
     listType: 'bullet' | 'numbered' | undefined,
     bordered: boolean,
     open: (url: string) => void,
+    onWikiMenu?: WikiChipMenuHandler,
 ): React.ReactNode {
-    if (!listType) return renderStyledContent(content, runs, open);
+    if (!listType) return renderStyledContent(content, runs, open, 0, onWikiMenu);
     const lines = content.split('\n');
     // Legacy items (created before content-baking shipped) carry
     // listType but no baked prefixes anywhere. Detect that case so
@@ -337,7 +365,7 @@ function renderStyledLines(
                 {fallbackPrefix && (
                     <span style={{ opacity: 0.85, whiteSpace: 'pre' }}>{fallbackPrefix}</span>
                 )}
-                {renderStyledContent(line, lineRuns, open)}
+                {renderStyledContent(line, lineRuns, open, lineStart, onWikiMenu)}
             </div>
         );
     });
@@ -348,6 +376,10 @@ interface Props {
     selected: boolean;
     editing: boolean;
 }
+
+// How long after the last keystroke the local typing draft is committed to
+// the store (and therefore broadcast to collab peers / folded into undo).
+const TYPING_COMMIT_MS = 120;
 
 export const TextItemView = React.memo(TextItemViewImpl, (prev, next) => {
     // Bail out unless this item or its selection/edit flags actually changed.
@@ -367,25 +399,101 @@ function openExternalFromText(url: string) {
 }
 
 function TextItemViewImpl({ item, selected, editing }: Props) {
-    const { state, dispatch } = useCanvasStore();
+    // Stable API handle — consuming it never re-renders this component.
+    // TextItem now re-renders only when its own props (item / selected /
+    // editing) change, instead of on every canvas dispatch. The former
+    // `state.` reads are imperative getState() lookups that only run while
+    // the wikilink menu / autocomplete are actually open.
+    const { getState, dispatch, pushSnapshot } = useCanvasApi();
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const displayRef = useRef<HTMLDivElement>(null);
+    // Per-chip right-click menu (open / unlink / remove). Display mode only —
+    // the edit overlays are pointer-events:none so chips can't be clicked
+    // there. hoverRow drives row highlight, matching the [[ autocomplete's
+    // controlled-hover pattern.
+    const [wikiMenu, setWikiMenu] = useState<WikiChipMenuRequest | null>(null);
+    const [wikiMenuHover, setWikiMenuHover] = useState(-1);
     // [[ autocomplete (normal-user wikilink picker). Lives at the top
     // (hook rules); the editing block points commitRef at its existing
     // applyContentChange so styleRun shifting stays correct. The dropdown
     // is a portal, so it's safe against the bordered editor's overflow.
     const wikilinkCommitRef = useRef<((newContent: string) => void) | null>(null);
     const wikiAc = useWikilinkAutocomplete({
-        items: state.items,
+        getItems: () => getState().items,
         selfId: item.id,
         textareaRef,
         commitRef: wikilinkCommitRef,
     });
+
+    // --- Local typing buffer (perf) ---
+    // Keystrokes update this draft immediately, re-rendering ONLY this card;
+    // the store commit — and with it the collab op broadcast and undo
+    // accumulation — happens in debounced TYPING_COMMIT_MS chunks. While a
+    // draft exists it wins over item.content, so a concurrent remote edit to
+    // the same card is overwritten on flush (same last-writer-wins as the
+    // old per-keystroke dispatch, minus the mid-keystroke caret stomp).
+    // Flushed + cleared on blur, edit-end, unmount, and before structural
+    // list edits. The draft always carries the effective styleRuns (shifted
+    // or inherited) so overlay and store stay consistent.
+    const [draft, setDraftState] = useState<{ content: string; styleRuns?: StyleRun[] } | null>(null);
+    const draftRef = useRef(draft);
+    const flushTimerRef = useRef<number | null>(null);
+    const setDraft = (d: { content: string; styleRuns?: StyleRun[] } | null) => {
+        draftRef.current = d;
+        setDraftState(d);
+    };
+    const flushDraft = useCallback(() => {
+        if (flushTimerRef.current != null) { window.clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
+        const d = draftRef.current;
+        if (!d) return;
+        const live = getState().items[item.id] as TextItemType | undefined;
+        if (!live) return;
+        if (live.content === d.content && live.styleRuns === d.styleRuns) return;
+        const patch: Partial<TextItemType> = { content: d.content };
+        if (d.styleRuns !== live.styleRuns) patch.styleRuns = d.styleRuns ?? [];
+        dispatch({ type: 'UPDATE_ITEM', id: item.id, patch: patch as any });
+    }, [dispatch, getState, item.id]);
+    const scheduleFlush = () => {
+        if (flushTimerRef.current != null) window.clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = window.setTimeout(() => { flushTimerRef.current = null; flushDraft(); }, TYPING_COMMIT_MS);
+    };
+    // Edit mode ended by any path — commit the last keystrokes, then drop
+    // the buffer so display mode reads the store again.
+    useEffect(() => {
+        if (editing) return;
+        flushDraft();
+        if (draftRef.current) setDraft(null);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [editing, flushDraft]);
+    // Unmount while editing (e.g. culled offscreen): don't lose typed text.
+    useEffect(() => () => { flushDraft(); }, [flushDraft]);
+
+    const effContent = editing ? (draft?.content ?? item.content) : item.content;
+    const effRuns = editing ? (draft ? draft.styleRuns : item.styleRuns) : item.styleRuns;
     // Inner div inside the bordered-edit overlay. Translated up by the
     // textarea's scrollTop so per-range styleRun colors stay aligned with
     // characters when the user scrolls a long card. Only used in bordered
     // edit mode; null elsewhere.
     const overlayInnerRef = useRef<HTMLDivElement | null>(null);
+
+    // The chip menu's portal only renders in the display branch — clear its
+    // state when edit mode takes over so it doesn't reappear stale on blur.
+    useEffect(() => {
+        if (editing && wikiMenu) setWikiMenu(null);
+    }, [editing, wikiMenu]);
+
+    // Escape closes the chip menu. Capture phase so canvas-level Escape
+    // handlers (clear selection / exit tool) don't also fire underneath.
+    useEffect(() => {
+        if (!wikiMenu) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape') return;
+            e.stopPropagation();
+            setWikiMenu(null);
+        };
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
+    }, [wikiMenu]);
 
     useEffect(() => {
         if (!editing) return;
@@ -695,17 +803,31 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
 
         // Shared onChange behavior for typing: shift styleRun offsets
         // so runs keep covering the same characters after the
-        // insert/delete. The overlay re-renders automatically from the
-        // dispatched content/runs, so per-run coloring tracks the caret.
+        // insert/delete. Writes the LOCAL draft (one-component re-render);
+        // the store commit is debounced — see the draft block above. Diffs
+        // run against the draft, not item.content, so each keystroke is
+        // still a single edit even while the store lags behind.
         const applyContentChange = (newContent: string) => {
-            const patch: Partial<TextItemType> = { content: newContent };
-            if (item.styleRuns && item.styleRuns.length > 0 && item.content !== newContent) {
-                const { pos, delta } = diffSingleEdit(item.content, newContent);
+            const prevContent = draftRef.current?.content ?? item.content;
+            const prevRuns = draftRef.current ? draftRef.current.styleRuns : item.styleRuns;
+            let nextRuns = prevRuns;
+            if (prevRuns && prevRuns.length > 0 && prevContent !== newContent) {
+                const { pos, delta } = diffSingleEdit(prevContent, newContent);
                 if (delta !== 0) {
-                    patch.styleRuns = shiftRuns(item.styleRuns, pos, delta, newContent.length);
+                    nextRuns = shiftRuns(prevRuns, pos, delta, newContent.length);
                 }
             }
-            dispatch({ type: 'UPDATE_ITEM', id: item.id, patch: patch as any });
+            setDraft({ content: newContent, styleRuns: nextRuns });
+            scheduleFlush();
+        };
+        // Structural edits (list prefix changes) bypass the debounce: they
+        // commit immediately because they patch more than content (listType),
+        // and the draft is synced so the textarea/overlay agree with the
+        // store on the same render.
+        const applyStructuralChange = (content: string, styleRuns: StyleRun[] | undefined, extra?: Partial<TextItemType>) => {
+            if (flushTimerRef.current != null) { window.clearTimeout(flushTimerRef.current); flushTimerRef.current = null; }
+            setDraft({ content, styleRuns });
+            dispatch({ type: 'UPDATE_ITEM', id: item.id, patch: { content, styleRuns: styleRuns ?? [], ...extra } as any });
         };
         // Let the [[ autocomplete commit through the same content path
         // (keeps styleRun shifting correct on link insert).
@@ -779,16 +901,10 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                 : /^\d+\.\s$/.test(currentLine);
             if (isEmptyPrefix && sel === lineEnd) {
                 e.preventDefault();
-                const stripped = stripListPrefixes(item.content, item.styleRuns);
-                dispatch({
-                    type: 'UPDATE_ITEM',
-                    id: item.id,
-                    patch: {
-                        content: stripped.content,
-                        styleRuns: stripped.runs ?? [],
-                        listType: undefined,
-                    } as any,
-                });
+                const curContent = draftRef.current?.content ?? item.content;
+                const curRuns = draftRef.current ? draftRef.current.styleRuns : item.styleRuns;
+                const stripped = stripListPrefixes(curContent, curRuns);
+                applyStructuralChange(stripped.content, stripped.runs, { listType: undefined } as any);
                 return true;
             }
 
@@ -805,10 +921,11 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
             // containers — see PREFIX_SEP in listOps.ts.
             const prefix = item.listType === 'bullet' ? '• ' : `${provisionalNum}. `;
             const insertion = '\n' + prefix;
+            const curRuns = draftRef.current ? draftRef.current.styleRuns : item.styleRuns;
             let newContent = before + insertion + after;
-            let newRuns: StyleRun[] | undefined = item.styleRuns;
-            if (item.styleRuns && item.styleRuns.length > 0) {
-                newRuns = shiftRuns(item.styleRuns, sel, insertion.length, newContent.length);
+            let newRuns: StyleRun[] | undefined = curRuns;
+            if (curRuns && curRuns.length > 0) {
+                newRuns = shiftRuns(curRuns, sel, insertion.length, newContent.length);
             }
             if (item.listType === 'numbered') {
                 // Re-sequence existing numbered prefixes only — leave
@@ -818,9 +935,7 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                 newContent = renumbered.content;
                 newRuns = renumbered.runs;
             }
-            const patch: any = { content: newContent };
-            if (newRuns !== item.styleRuns) patch.styleRuns = newRuns ?? [];
-            dispatch({ type: 'UPDATE_ITEM', id: item.id, patch });
+            applyStructuralChange(newContent, newRuns);
 
             // Caret lands at start-of-body of the freshly-inserted line.
             // Numbered renumber may have changed the new line's prefix
@@ -909,8 +1024,8 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                         while the overlay stayed LTR (glyphs on the left)
                         — caret and visible text drifted apart. */}
                     <div aria-hidden dir="auto" style={overlayStyle}>
-                        {item.content
-                            ? renderStyledContent(item.content, item.styleRuns, openExternalFromText)
+                        {effContent
+                            ? renderStyledContent(effContent, effRuns, openExternalFromText)
                             : null}
                     </div>
                     <textarea
@@ -922,10 +1037,10 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                         rows={1}
                         spellCheck={false}
                         style={editingStyle}
-                        value={item.content}
+                        value={effContent}
                         onChange={(e) => { applyContentChange(e.target.value); wikiAc.onValueChange(e.target.value, e.target.selectionStart ?? e.target.value.length); }}
                         onKeyUp={(e) => wikiAc.onValueChange(e.currentTarget.value, e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
-                        onBlur={() => dispatch({ type: 'SET_EDITING', id: null })}
+                        onBlur={() => { flushDraft(); dispatch({ type: 'SET_EDITING', id: null }); }}
                         onKeyDown={(e) => {
                             if (wikiAc.onKeyDown(e)) return;
                             if (e.key === 'Escape') {
@@ -1040,8 +1155,8 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                         characters under the caret. */}
                     <div aria-hidden dir="auto" style={overlayStyle}>
                         <div ref={overlayInnerRef} style={{ willChange: 'transform' }}>
-                            {item.content
-                                ? renderStyledContent(item.content, item.styleRuns, openExternalFromText)
+                            {effContent
+                                ? renderStyledContent(effContent, effRuns, openExternalFromText)
                                 : null}
                         </div>
                     </div>
@@ -1053,10 +1168,10 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                         rows={1}
                         spellCheck={false}
                         style={taStyle}
-                        value={item.content}
+                        value={effContent}
                         onChange={(e) => { applyContentChange(e.target.value); wikiAc.onValueChange(e.target.value, e.target.selectionStart ?? e.target.value.length); }}
                         onKeyUp={(e) => wikiAc.onValueChange(e.currentTarget.value, e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
-                        onBlur={() => dispatch({ type: 'SET_EDITING', id: null })}
+                        onBlur={() => { flushDraft(); dispatch({ type: 'SET_EDITING', id: null }); }}
                         onScroll={(e) => {
                             const inner = overlayInnerRef.current;
                             if (inner) inner.style.transform = `translateY(-${e.currentTarget.scrollTop}px)`;
@@ -1079,6 +1194,39 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
             </div>
         );
     }
+
+    // ── Wikilink chip menu (display mode only) ───────────────────────────
+    const openWikiMenu = (req: WikiChipMenuRequest) => { setWikiMenuHover(-1); setWikiMenu(req); };
+    // Resolve the target while the menu is open so "Open card" can show a
+    // dimmed no-match state instead of navigating into a toast. One
+    // O(items) index build per open-render — menus are rare and small.
+    const wikiMenuTarget = wikiMenu ? resolveWikilink(wikiMenu.title, buildTitleIndex(getState().items)) : null;
+    const applyDelink = (kind: 'unlink' | 'remove') => {
+        if (!wikiMenu) return;
+        const res = (kind === 'unlink' ? unlinkKeepText : removeLinkToken)(
+            item.content, item.styleRuns, wikiMenu.start, wikiMenu.end,
+        );
+        setWikiMenu(null);
+        // null = the range no longer holds a [[token]] (content changed
+        // under the open menu, e.g. a collab edit) — never cut at stale
+        // offsets. The derived dashed edge disappears with the text.
+        if (!res) return;
+        pushSnapshot();
+        const patch: Partial<TextItemType> = { content: res.content };
+        if (item.styleRuns && item.styleRuns.length > 0) patch.styleRuns = res.runs ?? [];
+        dispatch({ type: 'UPDATE_ITEM', id: item.id, patch: patch as any });
+    };
+    const wikiRows: Array<{ icon: React.ReactNode; label: string; act: () => void; danger?: boolean; dim?: boolean; hint?: string }> = wikiMenu ? [
+        {
+            icon: <ArrowUpRight size={13} />,
+            label: t('canvas.wikilink.open'),
+            dim: !wikiMenuTarget,
+            hint: !wikiMenuTarget ? t('canvas.connect.empty') : undefined,
+            act: () => { navigateToWikilink(wikiMenu.title); setWikiMenu(null); },
+        },
+        { icon: <Link2Off size={13} />, label: t('canvas.wikilink.unlink'), act: () => applyDelink('unlink') },
+        { icon: <Trash2 size={13} />, label: t('canvas.wikilink.remove'), danger: true, act: () => applyDelink('remove') },
+    ] : [];
 
     return (
         <>
@@ -1134,10 +1282,10 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                     // wrapper.
                     item.border ? (
                         <div style={{ textAlign: textAlignH }}>
-                            {renderStyledLines(item.content, item.styleRuns, item.listType, true, openExternalFromText)}
+                            {renderStyledLines(item.content, item.styleRuns, item.listType, true, openExternalFromText, openWikiMenu)}
                         </div>
                     ) : (
-                        renderStyledLines(item.content, item.styleRuns, item.listType, false, openExternalFromText)
+                        renderStyledLines(item.content, item.styleRuns, item.listType, false, openExternalFromText, openWikiMenu)
                     )
                 )}
                 {/* Follow-up thread — rendered inline inside bordered cards
@@ -1208,6 +1356,72 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                     x={item.x} y={item.y} w={item.w} h={item.h}
                     rotation={item.rotation ?? 0}
                 />
+            )}
+            {/* Per-chip right-click menu — portal at document.body (same
+                approach as the [[ autocomplete: crisp at any zoom, immune
+                to the card's overflow). The transparent backdrop closes on
+                any press; right-click on it closes without re-opening the
+                canvas context menu. */}
+            {wikiMenu && createPortal(
+                <>
+                    <div
+                        style={{ position: 'fixed', inset: 0, zIndex: 9999 }}
+                        onPointerDown={(e) => { e.stopPropagation(); setWikiMenu(null); }}
+                        onContextMenu={(e) => { e.preventDefault(); setWikiMenu(null); }}
+                    />
+                    <div
+                        style={{
+                            position: 'fixed',
+                            left: Math.max(8, Math.min(wikiMenu.x, window.innerWidth - 232)),
+                            top: Math.max(8, Math.min(wikiMenu.y + 2, window.innerHeight - 142)),
+                            width: 224,
+                            background: '#0e0e14',
+                            border: '1px solid rgba(255,255,255,0.12)',
+                            borderRadius: 8,
+                            boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
+                            zIndex: 10000,
+                            padding: 4,
+                            fontFamily: 'Thmanyah Sans, system-ui, sans-serif',
+                        }}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onContextMenu={(e) => e.preventDefault()}
+                    >
+                        <div
+                            style={{
+                                fontSize: 9, color: 'rgba(255,255,255,0.35)',
+                                letterSpacing: 0.6, padding: '4px 8px 6px',
+                                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                            }}
+                        >
+                            <span style={{ color: '#8b9cff' }}>[[</span>
+                            {' '}<bdi>{wikiMenu.title}</bdi>{' '}
+                            <span style={{ color: '#8b9cff' }}>]]</span>
+                        </div>
+                        {wikiRows.map((r, i) => (
+                            <div
+                                key={i}
+                                onClick={r.act}
+                                onMouseEnter={() => setWikiMenuHover(i)}
+                                onMouseLeave={() => setWikiMenuHover(-1)}
+                                title={r.hint}
+                                style={{
+                                    display: 'flex', alignItems: 'center', gap: 8,
+                                    padding: '7px 8px', borderRadius: 6, cursor: 'pointer',
+                                    fontSize: 12,
+                                    opacity: r.dim ? 0.45 : 1,
+                                    background: wikiMenuHover === i
+                                        ? (r.danger ? 'rgba(248,113,113,0.12)' : 'rgba(139,156,255,0.18)')
+                                        : 'transparent',
+                                    color: r.danger ? '#f87171' : (wikiMenuHover === i ? '#c7d0ff' : 'rgba(255,255,255,0.82)'),
+                                }}
+                            >
+                                <span style={{ flexShrink: 0, display: 'flex' }}>{r.icon}</span>
+                                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.label}</span>
+                            </div>
+                        ))}
+                    </div>
+                </>,
+                document.body,
             )}
         </>
     );

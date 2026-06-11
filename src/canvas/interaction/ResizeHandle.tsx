@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { useCanvasStore } from '../state/canvasStore';
+import { useCanvasApi, useCanvasSelector, shallowEqual } from '../state/canvasStore';
 import { refitContainers } from '../items/containerFit';
 
 // 8-handle resize (4 corners + 4 edges) for boxes, images, containers, and
@@ -74,18 +74,16 @@ interface Props {
 const DEFAULT_ALL: HandlePos[] = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
 
 export function ResizeHandle(props: Props) {
-    const { state } = useCanvasStore();
     // Phase 22.5: when 2+ entities are selected, hide per-item resize
     // handles entirely. The outer MultiSelectionBox provides group-level
     // handles. Previously the per-item handles stayed visible but inert
     // (the onPointerDown early-returns) — that left a visual mess of
     // dozens of small handles when a user selected several items at once,
     // and confused them about which surface was actually draggable.
-    const totalSel =
-        state.selectedIds.length
-        + state.selectedLineIds.length
-        + state.selectedStrokeIds.length;
-    if (totalSel >= 2) return null;
+    // Boolean selector: re-renders only when the multi-select gate flips.
+    const multiSel = useCanvasSelector(s =>
+        s.selectedIds.length + s.selectedLineIds.length + s.selectedStrokeIds.length >= 2);
+    if (multiSel) return null;
     const handles = props.handles || DEFAULT_ALL;
     return (
         <>
@@ -120,7 +118,18 @@ function offsetFor(pos: HandlePos, w: number, h: number): { x: number; y: number
 }
 
 function SingleHandle({ itemId, x, y, w, h, minW = 20, minH = 20, preserveAspect, aspectLockedByDefault, scaleField, lockHeight, widthField, scaleAnchor, rotation = 0, pos }: Props & { pos: HandlePos }) {
-    const { state, dispatch, pushSnapshot } = useCanvasStore();
+    const { dispatch, pushSnapshot } = useCanvasApi();
+    // Narrow-slice subscription (see ContainerItem note): skips dispatches
+    // that don't touch geometry, view, or selection.
+    const state = useCanvasSelector(s => ({
+        items: s.items,
+        lines: s.lines,
+        strokes: s.strokes,
+        view: s.view,
+        selectedIds: s.selectedIds,
+        selectedLineIds: s.selectedLineIds,
+        selectedStrokeIds: s.selectedStrokeIds,
+    }), shallowEqual);
     const zoomRef = useRef(state.view.zoom);
     zoomRef.current = state.view.zoom;
     // Capture base values at drag start, not at each render. Otherwise

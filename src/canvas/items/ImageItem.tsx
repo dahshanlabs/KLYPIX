@@ -3,7 +3,7 @@ import type { ImageItem as ImageItemType } from './types';
 import { ResizeHandle } from '../interaction/ResizeHandle';
 import { RotateHandle } from '../interaction/RotateHandle';
 import { getAsset } from '../file/assetRegistry';
-import { useCanvasStore } from '../state/canvasStore';
+import { useCanvasSelector } from '../state/canvasStore';
 
 interface Props {
     item: ImageItemType;
@@ -20,16 +20,14 @@ export const ImageItemView = React.memo(ImageItemViewImpl, (prev, next) => {
 });
 
 function ImageItemViewImpl({ item, selected }: Props) {
-    // Read zoom so the thumbnail-vs-full decision updates on zoom change.
-    // The memo comparison skips re-render when only external state changes,
-    // but our parent always passes fresh item on state change, so this is
-    // fine — when zoom alone changes without item reference changing, we
-    // re-evaluate on the parent's next real update. In practice zoom moves
-    // accompany item-level changes (pan resets pins, viewport cull changes
-    // which items mount) frequently enough that this is smooth.
-    const { state } = useCanvasStore();
-    const renderedW = item.w * state.view.zoom;
-    const useThumbnail = !selected && renderedW < THUMBNAIL_THRESHOLD_PX && !!item.thumbnailAssetId;
+    // Subscribe to the thumbnail-vs-full DECISION, not to zoom itself: the
+    // selector returns a boolean, so this component re-renders only when the
+    // item crosses THUMBNAIL_THRESHOLD_PX — not on every zoom frame. (This
+    // also fixes the old behavior where zoom-alone changes didn't re-evaluate
+    // the threshold until some unrelated dispatch came along.)
+    const useThumbnail = useCanvasSelector(
+        s => !selected && item.w * s.view.zoom < THUMBNAIL_THRESHOLD_PX && !!item.thumbnailAssetId,
+    );
     const effectiveAssetId = useThumbnail ? item.thumbnailAssetId : item.assetId;
     const blobUrl = effectiveAssetId ? getAsset(effectiveAssetId)?.blobUrl : undefined;
     const imgSrc = blobUrl || (item.assetId ? getAsset(item.assetId)?.blobUrl : undefined) || item.src || '';

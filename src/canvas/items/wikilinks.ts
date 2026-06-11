@@ -13,7 +13,8 @@
 // matches how people already write cards (a heading line), and keeps the
 // link target visible/editable. A future explicit-title field can layer on.
 
-import type { CanvasItem } from './types';
+import type { CanvasItem, StyleRun } from './types';
+import { shiftRuns } from './styleRuns';
 
 // [[Anything but brackets]]. Captures the inner title. Global for scanning.
 export const WIKILINK_REGEX = /\[\[([^[\]]+)\]\]/g;
@@ -108,6 +109,63 @@ export function extractWikilinks(content: string | undefined | null): string[] {
         out.push(title);
     }
     return out;
+}
+
+// ── Delink surgery ───────────────────────────────────────────────────────
+// A link IS its text — removing one is a content edit, and the derived
+// dashed edge disappears on the next computeWikilinkEdges pass. Both ops
+// take the ABSOLUTE [start, end) range of one `[[Title]]` token (known
+// exactly at render time, so a card with the same title linked twice acts
+// on the specific chip the user clicked) and return new content + runs,
+// or null when the range no longer holds a token (e.g. a collab peer
+// edited the card while the menu was open — never edit blindly on stale
+// offsets).
+
+const WIKILINK_TOKEN_RE = /^\[\[[^[\]]+\]\]$/;
+
+export interface DelinkResult { content: string; runs: StyleRun[] | undefined; }
+
+/** `[[Title]]` → `Title` — strip the brackets, keep the words (the link
+ *  text is usually part of the sentence). Two contiguous deletions applied
+ *  right-to-left so each is exact for shiftRuns: a run covering just the
+ *  inner title keeps covering it; only offsets move. */
+export function unlinkKeepText(
+    content: string,
+    runs: StyleRun[] | undefined,
+    start: number,
+    end: number,
+): DelinkResult | null {
+    if (!WIKILINK_TOKEN_RE.test(content.slice(start, end))) return null;
+    const len = content.length;
+    // Drop the closing ]] first — it sits after [[, so the [[ offsets stay valid.
+    let c = content.slice(0, end - 2) + content.slice(end);
+    let r = runs && runs.length > 0 ? shiftRuns(runs, end - 2, -2, len - 2) : runs;
+    c = c.slice(0, start) + c.slice(start + 2);
+    r = r && r.length > 0 ? shiftRuns(r, start, -2, len - 4) : r;
+    return { content: c, runs: r };
+}
+
+/** Delete the whole `[[Title]]` token. Eats one adjacent plain space
+ *  (trailing preferred, else leading) so "foo [[X]] bar" → "foo bar",
+ *  not "foo  bar" — same as deleting a word. Never eats newlines or the
+ *  NBSP that list prefixes use. */
+export function removeLinkToken(
+    content: string,
+    runs: StyleRun[] | undefined,
+    start: number,
+    end: number,
+): DelinkResult | null {
+    if (!WIKILINK_TOKEN_RE.test(content.slice(start, end))) return null;
+    let delStart = start;
+    let delEnd = end;
+    if (content[delEnd] === ' ') delEnd++;
+    else if (delStart > 0 && content[delStart - 1] === ' ') delStart--;
+    const removed = delEnd - delStart;
+    const c = content.slice(0, delStart) + content.slice(delEnd);
+    const r = runs && runs.length > 0
+        ? shiftRuns(runs, delStart, -removed, content.length - removed)
+        : runs;
+    return { content: c, runs: r };
 }
 
 /** A card's title for link-matching: first non-empty line of a text item's

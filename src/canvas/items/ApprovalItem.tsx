@@ -1,7 +1,7 @@
 import React from 'react';
 import { Check, X, Clock, ShieldAlert } from 'lucide-react';
 import type { ApprovalItem as ApprovalItemType } from './types';
-import { useCanvasStore } from '../state/canvasStore';
+import { useCanvasApi } from '../state/canvasStore';
 import { resolveApproval } from '../agent/approvalRegistry';
 import { t } from '../../i18n/strings';
 
@@ -27,7 +27,7 @@ function optionTone(opt: string): 'positive' | 'negative' | 'neutral' {
 }
 
 function ApprovalItemViewImpl({ item, selected }: Props) {
-    const { dispatch } = useCanvasStore();
+    const { dispatch } = useCanvasApi();
     const resolved = item.decision !== null;
 
     const click = (option: string) => {

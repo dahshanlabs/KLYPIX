@@ -2,7 +2,7 @@ import React from 'react';
 import type { BoxItem as BoxItemType, TextItem } from './types';
 import { ResizeHandle } from '../interaction/ResizeHandle';
 import { RotateHandle } from '../interaction/RotateHandle';
-import { useCanvasStore } from '../state/canvasStore';
+import { useCanvasApi } from '../state/canvasStore';
 import { newId } from './types';
 import { defaultTextColorFor, getCurrentGridSettings } from '../gridSettings';
 
@@ -22,19 +22,19 @@ function dashFor(style: string | undefined, width: number): string | undefined {
 }
 
 function BoxItemViewImpl({ item, selected }: Props) {
-    const { dispatch, commit } = useCanvasStore();
+    const { dispatch, commit } = useCanvasApi();
     const shape = item.shape || 'rect';
 
-    // Double-click a box → convert it to a bordered TextItem so the user
+    // Double-click a box â†’ convert it to a bordered TextItem so the user
     // can type directly inside the frame. The frame's border color and
     // parent are preserved. Non-rect shapes (circle/triangle/diamond) keep
     // their shape but gain a text overlay anchored to the center instead
-    // — we don't mutate geometric shapes into text cards because the
+    // â€” we don't mutate geometric shapes into text cards because the
     // border shape wouldn't match.
     const onDoubleClick = (e: React.MouseEvent) => {
         e.stopPropagation();
         if (!item.shape || item.shape === 'rect') {
-            // Rect → in-place convert to bordered TextItem. Same position,
+            // Rect â†’ in-place convert to bordered TextItem. Same position,
             // same frame, enter edit immediately. Any arrows that pointed
             // to the box will be dropped by DELETE_ITEMS (rare for plain
             // decorative boxes; acceptable tradeoff for the cleaner UX).
@@ -94,7 +94,7 @@ function BoxItemViewImpl({ item, selected }: Props) {
 
     // Wrapper positions + sizes the shape. Shapes themselves render as SVG so
     // we can do circle/triangle/diamond with the same code path.
-    // Rotation is applied via CSS transform around the center — visual only;
+    // Rotation is applied via CSS transform around the center â€” visual only;
     // hit-testing + resize handles still use the un-rotated AABB.
     const rotation = item.rotation ?? 0;
     const wrap: React.CSSProperties = {

@@ -278,9 +278,14 @@ textarea::placeholder {
   animation: palette-glow-drift 18s ease-in-out infinite;
 }
 
-/* Custom Scrollbar */
+/* Custom Scrollbar — applies to every scrollable in the app.
+   14px hit area with a 3px transparent border (background-clip) so the
+   visible thumb reads ~8px but the grab target is the full 14px — the
+   VS Code / Figma pattern. min-height/width stop the thumb collapsing
+   to a dot inside very long lists. `height` covers horizontal bars. */
 ::-webkit-scrollbar {
-  width: 4px;
+  width: 14px;
+  height: 14px;
 }
 
 ::-webkit-scrollbar-track {
@@ -288,12 +293,29 @@ textarea::placeholder {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.18);
+  border: 3px solid transparent;
+  background-clip: padding-box;
   border-radius: 10px;
+  min-height: 40px;
+  min-width: 40px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.32);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: rgba(255, 255, 255, 0.45);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+/* When both axes scroll, the corner square otherwise paints white. */
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* Shimmer loading skeleton */
@@ -357,3 +379,10 @@ textarea::placeholder {
   50% { opacity: 0.4; }
 }
 
+
+/* Canvas perf: scope style/layout invalidation to each item's own subtree.
+   Deliberately NOT `paint` containment - children like the rotate-handle
+   stem or selection chrome may extend past the item box and must not clip. */
+[data-canvas-item] {
+  contain: layout style;
+}

@@ -3,7 +3,7 @@ import { Play, Pause, ExternalLink, Music } from 'lucide-react';
 import type { AudioItem as AudioItemType } from './types';
 import { ResizeHandle } from '../interaction/ResizeHandle';
 import { getAsset } from '../file/assetRegistry';
-import { useCanvasStore } from '../state/canvasStore';
+import { useCanvasApi } from '../state/canvasStore';
 import { t as tr, useLocale } from '../../i18n/strings';
 
 interface Props {
@@ -26,7 +26,7 @@ function formatTime(s: number): string {
 
 function AudioItemViewImpl({ item, selected }: Props) {
     useLocale();
-    const { dispatch } = useCanvasStore();
+    const { dispatch } = useCanvasApi();
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const [playing, setPlaying] = useState(false);
     const [t, setT] = useState(item.currentTimeSec || 0);
@@ -138,7 +138,7 @@ function AudioItemViewImpl({ item, selected }: Props) {
                             {item.fileName}
                         </div>
                         <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,0.35)', letterSpacing: '0.06em', textTransform: 'uppercase', marginTop: 2 }}>
-                            {tr('canvas.meta_audio')} · {item.extension.toUpperCase()}
+                            {tr('canvas.meta_audio')} Â· {item.extension.toUpperCase()}
                         </div>
                     </div>
                     {item.originalPath && (
@@ -155,7 +155,7 @@ function AudioItemViewImpl({ item, selected }: Props) {
                         </button>
                     )}
                 </div>
-                {/* Waveform strip — click anywhere to seek. */}
+                {/* Waveform strip â€” click anywhere to seek. */}
                 <div
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
