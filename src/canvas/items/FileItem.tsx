@@ -6,7 +6,7 @@ import { previewPdfFromBytes, previewDocxFromBytes, previewSpreadsheetFromBytes 
 import type { FileItem as FileItemType } from './types';
 import { getAsset, bytesToBase64 } from '../file/assetRegistry';
 import { ResizeHandle } from '../interaction/ResizeHandle';
-import { useCanvasSelector } from '../state/canvasStore';
+import { useCanvasSelector, useCanvasStore } from '../state/canvasStore';
 import { setEmbedSync } from '../file/embedSyncStore';
 import { useEmbedSync } from '../../hooks/useEmbedSync';
 import { t, useLocale } from '../../i18n/strings';
