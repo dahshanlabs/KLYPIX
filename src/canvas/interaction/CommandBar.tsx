@@ -14,6 +14,9 @@ interface Props {
     open: boolean;
     onClose: () => void;
     onStartRun: (args: { command: string; scope: CommandScope; scopeItems: CanvasItem[] }) => void;
+    /** /garden — run the brain gardener (deterministic consolidation pass)
+     *  instead of an agent run. */
+    onGarden?: () => void;
 }
 
 const SUGGESTED_COMMANDS = [
@@ -26,9 +29,10 @@ const SUGGESTED_COMMANDS = [
     '/compile',
     '/organize',
     '/cleanup',
+    '/garden',
 ];
 
-export function CommandBar({ open, onClose, onStartRun }: Props) {
+export function CommandBar({ open, onClose, onStartRun, onGarden }: Props) {
     useLocale();
     const { state } = useCanvasStore();
     const [input, setInput] = useState('');
@@ -49,6 +53,13 @@ export function CommandBar({ open, onClose, onStartRun }: Props) {
     const submit = () => {
         const command = input.trim();
         if (!command) return;
+        // /garden is a deterministic consolidation pass, not an agent run.
+        if (/^\/garden\b/i.test(command)) {
+            onGarden?.();
+            setInput('');
+            onClose();
+            return;
+        }
         const scopeItems: CanvasItem[] = scope.itemIds
             .map(id => state.items[id])
             .filter(Boolean) as CanvasItem[];

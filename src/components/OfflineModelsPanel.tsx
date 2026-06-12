@@ -114,6 +114,50 @@ export function OfflineModelsPanel({ tx }: { tx: (k: string, fb: string) => stri
                 </div>
                 <p className="text-[11px] text-white/35 mt-2">{tx('offline.stt_note', 'Whisper runs in-app (no GPU required). Video keeps using cloud for on-screen visuals.')}</p>
             </div>
+
+            <SemanticMemoryRow tx={tx} />
+        </div>
+    );
+}
+
+// Semantic memory for the brain: one click installs the on-device embedding
+// runtime into ~/.claude/project-brain/semantic so the bundled MCP server can
+// rank brain searches by MEANING (the 23MB model auto-downloads + caches on
+// first search). Until installed, searches fall back to exact-word matching.
+function SemanticMemoryRow({ tx }: { tx: (k: string, fb: string) => string }) {
+    const [installed, setInstalled] = useState<boolean | null>(null);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const api = (window as any).electron?.semantic;
+    useEffect(() => { api?.status?.().then((r: any) => setInstalled(!!r?.installed)).catch(() => setInstalled(false)); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    const install = async () => {
+        setBusy(true); setError(null);
+        try {
+            const r = await api?.install?.();
+            if (r?.ok) setInstalled(true); else setError(r?.error || tx('offline.failed', 'Download failed'));
+        } finally { setBusy(false); }
+    };
+    return (
+        <div>
+            <div className="text-[11px] uppercase tracking-wider text-white/40 mb-2">{tx('offline.semantic_group', 'Search your project brains by meaning')}</div>
+            <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-white/[0.03] border border-white/10">
+                <div className="flex-1 min-w-0">
+                    <div className="text-[13px] text-white/85">{tx('offline.semantic_label', 'Semantic memory (on-device)')}</div>
+                    <div className="text-[11px] text-white/40 mt-0.5">
+                        {tx('offline.semantic_note', '“What did I decide about auth?” finds the answer across every project brain — 100% local, no API key. ~380 MB runtime + a 23 MB model on first search.')}
+                        {error && <span className="text-red-400"> · {error}</span>}
+                    </div>
+                </div>
+                {installed ? (
+                    <span className="flex items-center gap-1 text-[12px] text-emerald-300"><Check size={13} /> {tx('offline.installed', 'Installed')}</span>
+                ) : busy ? (
+                    <span className="flex items-center gap-1.5 text-[12px] text-emerald-300"><Loader2 size={13} className="animate-spin" /> {tx('offline.downloading', 'Downloading…')}</span>
+                ) : (
+                    <button onClick={install} disabled={installed === null} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 text-[12.5px] font-medium">
+                        <Download size={13} /> {tx('offline.install', 'Install')}
+                    </button>
+                )}
+            </div>
         </div>
     );
 }

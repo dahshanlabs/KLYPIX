@@ -42,6 +42,7 @@ import { buildTitleIndex, resolveWikilink, findCardsWithTag, computeBacklinks } 
 import { CommandBar } from './interaction/CommandBar';
 import { AgentRunsTray } from './interaction/AgentRunsTray';
 import { useAgentRuns } from './agent/useAgentRuns';
+import { runBrainGardener } from './agent/brainGardener';
 import { Breadcrumbs } from './interaction/Breadcrumbs';
 import { ContextMenu } from './interaction/ContextMenu';
 import { TextFormatCapsule } from './interaction/TextFormatCapsule';
@@ -3371,6 +3372,14 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 open={commandOpen}
                 onClose={() => setCommandOpen(false)}
                 onStartRun={agentRuns.start}
+                onGarden={() => {
+                    void runBrainGardener({
+                        getState: () => stateRef.current,
+                        dispatch,
+                        pushSnapshot,
+                        onToast: (text) => setToast({ text, id: Date.now() }),
+                    });
+                }}
             />
             <AgentRunsTray runs={agentRuns.runs} onStop={agentRuns.stop} onDismiss={agentRuns.dismiss} onOpen={() => setCommandOpen(true)} />
 

@@ -29,6 +29,11 @@ export interface BaseItem {
     parentId: string | null;
     createdAt: number;
     createdBy: 'user' | 'agent';
+    // Provenance: WHICH agent wrote this (claude-code / cursor / cline /
+    // gardener / the MCP client's name) — additive, shown as a badge on
+    // agent cards so memory is auditable. Written by the brain hook, the
+    // MCP server's add_to_canvas, and the gardener.
+    createdVia?: string;
     tags?: string[];              // lowercase labels, small
     status?: ItemStatus;          // small colored badge
     colorCode?: string;           // semantic color override (green/yellow/red/blue/purple)

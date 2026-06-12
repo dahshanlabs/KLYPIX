@@ -246,6 +246,10 @@ contextBridge.exposeInMainWorld('electron', {
     },
     readFileBytes: (filePath: string) => ipcRenderer.invoke('read-file-bytes', { filePath }),
     readFolderTree: (folderPath: string) => ipcRenderer.invoke('read-folder-tree', { folderPath }),
+    semantic: {
+        status: () => ipcRenderer.invoke('semantic:status'),
+        install: () => ipcRenderer.invoke('semantic:install'),
+    },
     // ── Encrypted API Key Storage ────────────────────────────────────────
     apiKey: {
         store: (key: string) => ipcRenderer.invoke('api-key:store', key),

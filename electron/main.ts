@@ -2127,6 +2127,37 @@ function prepareLocalMcp(): void {
     if (!localMcpReady()) warmKlypixMcpCache();
 }
 
+// ── Semantic memory install (one click, no terminal) ───────────────────────
+// The bundled MCP server gains on-device semantic search when
+// ~/.claude/project-brain/semantic holds @huggingface/transformers (the ONNX
+// runtimes are ~350MB unpacked — far too heavy to ship in the installer, so
+// this installs them on demand via npm, same one-click principle as the
+// offline OCR/Whisper models). The 23MB MiniLM model then auto-downloads on
+// the first semantic search and caches under project-brain/hf-cache.
+const SEMANTIC_DIR = path.join(os.homedir(), '.claude', 'project-brain', 'semantic');
+function semanticInstalled(): boolean {
+    try { return fs.existsSync(path.join(SEMANTIC_DIR, 'node_modules', '@huggingface', 'transformers', 'package.json')); }
+    catch { return false; }
+}
+ipcMain.handle('semantic:status', () => ({ installed: semanticInstalled() }));
+ipcMain.handle('semantic:install', async () => {
+    if (semanticInstalled()) return { ok: true, already: true };
+    try { fs.mkdirSync(SEMANTIC_DIR, { recursive: true }); } catch { /* mkdir best-effort */ }
+    return await new Promise((resolve) => {
+        const cmd = process.platform === 'win32' ? 'cmd' : 'npm';
+        const args = process.platform === 'win32'
+            ? ['/c', 'npm', 'i', '--prefix', SEMANTIC_DIR, '@huggingface/transformers', '--no-audit', '--no-fund']
+            : ['i', '--prefix', SEMANTIC_DIR, '@huggingface/transformers', '--no-audit', '--no-fund'];
+        const child = spawn(cmd, args, { stdio: 'ignore', windowsHide: true });
+        const killTimer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } resolve({ ok: false, error: 'Install timed out (10 min) — check your network and retry.' }); }, 600_000);
+        child.on('exit', (code) => {
+            clearTimeout(killTimer);
+            resolve(semanticInstalled() ? { ok: true } : { ok: false, error: `npm exited with code ${code} — is Node.js installed?` });
+        });
+        child.on('error', (err) => { clearTimeout(killTimer); resolve({ ok: false, error: err?.message || 'npm not found — install Node.js first.' }); });
+    });
+});
+
 // Pre-warm the npx cache for klypix-mcp the moment a config is written: the
 // FIRST `npx -y klypix-mcp` ever pays a cold npm download that can outlast an
 // MCP client's connect timeout ("server doesn't seem to have come up" on the

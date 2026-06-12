@@ -1248,6 +1248,10 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                     Pointer-events-none so clicks pass through to the card. */}
                 {isAgentCard && !editing && (
                     <div
+                        // Provenance badge: WHICH agent remembered this (createdVia
+                        // from the brain hook / MCP client / gardener) — auditable
+                        // memory. Falls back to the plain AI chip.
+                        title={item.createdVia ? `Written by ${item.createdVia}` : undefined}
                         style={{
                             position: 'absolute',
                             top: 6,
@@ -1262,9 +1266,10 @@ function TextItemViewImpl({ item, selected, editing }: Props) {
                             lineHeight: 1.4,
                             pointerEvents: 'none',
                             userSelect: 'none',
+                            textTransform: 'uppercase',
                         }}
                     >
-                        AI
+                        {item.createdVia ? item.createdVia.replace(/-/g, ' ').slice(0, 14) : 'AI'}
                     </div>
                 )}
                 {item.content && (
