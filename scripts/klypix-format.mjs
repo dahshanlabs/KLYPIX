@@ -109,6 +109,10 @@ export async function parseKlypix(buffer) {
             links: it.type === 'text' ? extractLinks(it.content) : [],
             tags: it.type === 'text' ? extractTags(it.content) : [],
             pos: { x: it.x, y: it.y },
+            createdAt: Number(it.createdAt) || 0,
+            parentId: it.parentId ?? null,
+            // Parent container's title — the card's "area" in brain terms.
+            area: it.parentId ? (cardTitle(items[it.parentId]) || null) : null,
         })),
         connections: connections.map(c => ({
             from: titleOf(c.fromId), to: titleOf(c.toId),
@@ -540,6 +544,220 @@ export async function tidyBrain(buffer) {
 
     const out = await finalizeBrainZip(zip, canvas, manifest, now);
     return { buffer: out, moved, containers: byTitle.size };
+}
+
+// ── Tiered brain brief ───────────────────────────────────────────────────────
+// A compact, token-bounded session brief: area map + open questions + recent
+// decisions + milestones. Everything older stays in the file, reachable via the
+// klypix-canvas MCP search or `--full`. Keeps the session-start cost flat as
+// the brain grows (the full markdown scales with history; this doesn't).
+export function structToBrief(struct, { recentDays = 14, maxRecent = 40, maxMilestones = 8, maxConnections = 30 } = {}) {
+    const cutoff = Date.now() - recentDays * 86_400_000;
+    const texts = struct.cards.filter(c => c.type !== 'container' && (c.text || '').trim());
+    const containers = struct.cards.filter(c => c.type === 'container');
+    const isArchived = (c) => /^archive$/i.test(c.area || '');
+    const live = texts.filter(c => !isArchived(c));
+    const open = live.filter(c => /❓/.test(c.text));
+    const miles = live.filter(c => /🏁/.test(c.text) && !/❓/.test(c.text));
+    const plain = live.filter(c => !open.includes(c) && !miles.includes(c));
+    const recent = plain.filter(c => c.createdAt >= cutoff).sort((a, b) => b.createdAt - a.createdAt).slice(0, maxRecent);
+    const olderCount = plain.length - recent.length;
+    const archivedCount = texts.length - live.length;
+
+    const flat = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+    const line = (c) => `- ${flat(c.text)}`;
+    const day = (ts) => ts ? new Date(ts).toISOString().slice(0, 10) : '';
+    const out = [];
+    out.push(`# ${struct.title} — brain brief`);
+    out.push(`*${struct.format} · ${struct.counts.cards} cards · ${struct.counts.connections} connections · tiered brief (open + last ${recentDays}d); full history stays in the file*`);
+    const areaCounts = containers
+        .filter(c => !/^archive$/i.test(c.title || ''))
+        .map(c => `${flat(c.title)} (${texts.filter(t => t.parentId === c.id).length})`);
+    if (areaCounts.length) { out.push('', '## Areas', areaCounts.join(' · ')); }
+    if (open.length) { out.push('', '## Open questions'); for (const c of open) out.push(line(c)); }
+    if (miles.length) {
+        out.push('', '## Milestones');
+        for (const c of miles.sort((a, b) => b.createdAt - a.createdAt).slice(0, maxMilestones)) out.push(line(c));
+    }
+    if (recent.length) {
+        out.push('', `## Recent decisions (last ${recentDays}d)`);
+        const byArea = new Map();
+        for (const c of recent) { const a = flat(c.area) || 'Notes'; if (!byArea.has(a)) byArea.set(a, []); byArea.get(a).push(c); }
+        for (const [a, cs] of byArea) { out.push(`### ${a}`); for (const c of cs) out.push(`- ${day(c.createdAt)} ${flat(c.text)}`); }
+    }
+    if (struct.connections.length) {
+        out.push('', '## Connections');
+        for (const cn of struct.connections.slice(0, maxConnections)) out.push(`- ${cn.from} → ${cn.to}${cn.label || cn.relationship ? ` (${cn.label || cn.relationship})` : ''}`);
+    }
+    const hidden = [];
+    if (olderCount > 0) hidden.push(`${olderCount} older decision${olderCount === 1 ? '' : 's'}`);
+    if (archivedCount > 0) hidden.push(`${archivedCount} archived/superseded`);
+    if (hidden.length) out.push('', `*${hidden.join(' + ')} not shown — search the full brain via the klypix-canvas MCP (search/read tools) or \`node ~/.claude/project-brain/global-brain-hook.mjs --full\`.*`);
+    return out.join('\n') + '\n';
+}
+
+// ── Atomic brain capture: supersede + append + resolve + auto-link ──────────
+// One verified write per capture batch. Beyond appendIntoContainers it adds:
+//   • SUPERSEDE — a new decision that heavily overlaps an existing live card in
+//     the same area archives the old one (↩︎ prefix, gray, → Archive) and draws
+//     an old→new "superseded by" arrow, instead of stacking a contradiction.
+//   • RESOLVE — resolutions[] (the ✓ marker) finds the best-matching live card
+//     in the area, stamps "✅ <date>: <note>" onto it and archives it; if no
+//     match, the note lands as a 🏁 milestone so nothing is lost.
+//   • AUTO-LINK — [[Title]] in a new card's text becomes a real connection to
+//     the card/container whose title matches (the graph stops being decorative).
+const tokenSet = (s) => new Set(String(s || '').toLowerCase().replace(/\[\[|\]\]/g, ' ').split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 4));
+const overlapScore = (a, b) => {
+    if (a.size < 4 || b.size < 4) return 0;            // too short to judge
+    let hit = 0; for (const w of a) if (b.has(w)) hit++;
+    return hit / Math.min(a.size, b.size);
+};
+export async function captureIntoBrain(buffer, { cards = [], resolutions = [] } = {}) {
+    const SUPERSEDE_AT = 0.6, RESOLVE_AT = 0.3;
+    let work = buffer;
+    const stats = { added: 0, superseded: 0, resolved: 0, linked: 0 };
+
+    // Pass 1 — resolutions + supersede marking operate on EXISTING cards.
+    if (resolutions.length || cards.length) {
+        const { zip, canvas, manifest, isV4, struct } = await parseKlypix(work);
+        if (!isV4 || !canvas.positions) {
+            // Legacy file — no surgery possible; degrade to plain append.
+            return { buffer: await appendToKlypix(work, { cards }), stats };
+        }
+        const now = Date.now();
+        const today = new Date(now).toISOString().slice(0, 10);
+        const rand = () => Math.random().toString(36).slice(2, 10);
+        const top = Object.values(canvas.positions).map(p => p && p.zKey).filter(k => k && isValidZKey(k)).sort().pop() || null;
+        const nextZKey = makeZKeyGen(top);
+        const byTitle = new Map();
+        for (const c of struct.cards) if (c.type === 'container') { const t = (c.title || '').trim().toLowerCase(); if (t && !byTitle.has(t)) byTitle.set(t, c.id); }
+        const ensureArchive = () => {
+            let id = byTitle.get('archive');
+            if (id) return id;
+            id = `ctn_${rand()}`;
+            const G = BRAIN_GEOM;
+            zip.file(`items/${shard(id)}/${id}.json`, JSON.stringify({ type: 'container', locked: false, createdAt: now, createdBy: 'agent', title: 'Archive', collapsed: false, scopeLocked: false, borderColor: 'rgba(120,120,135,0.6)' }));
+            canvas.positions[id] = { x: nextContainerX(canvas), y: G.START, w: G.AREA_W, h: G.TITLE_BAR + G.PAD * 2, zKey: nextZKey(), zIndex: canvas.order.length, parentId: null };
+            canvas.order.push(id);
+            byTitle.set('archive', id);
+            return id;
+        };
+        const liveTextCards = () => struct.cards.filter(c =>
+            c.type !== 'container' && (c.text || '').trim()
+            && !/^archive$/i.test(c.area || '')
+            && !/↩|✅/.test(c.text));
+        const rewriteCard = async (id, mutate) => {
+            const ip = `items/${shard(id)}/${id}.json`;
+            const f = zip.file(ip); if (!f) return false;
+            const j = JSON.parse(await f.async('string'));
+            mutate(j);
+            j.content = wrapText(String(j.content || ''));
+            zip.file(ip, JSON.stringify(j));
+            const pos = canvas.positions[id];
+            if (pos) canvas.positions[id] = { ...pos, h: measureCardH(j.content) };
+            return true;
+        };
+        const archiveCard = (id) => {
+            const arc = ensureArchive();
+            const pos = canvas.positions[id];
+            if (pos) canvas.positions[id] = { ...pos, parentId: arc };
+        };
+        canvas.connections = Array.isArray(canvas.connections) ? canvas.connections : [];
+
+        // RESOLVE (✓ markers) — best live match in the area; ❓ cards preferred.
+        const milestonesFallback = [];
+        for (const r of resolutions) {
+            const rTok = tokenSet(r.text);
+            let best = null, bestScore = 0;
+            for (const c of liveTextCards()) {
+                if (r.area && (c.area || '').toLowerCase() !== r.area.toLowerCase()) continue;
+                const s = overlapScore(rTok, tokenSet(c.text)) + (/❓/.test(c.text) ? 0.15 : 0);
+                if (s > bestScore) { bestScore = s; best = c; }
+            }
+            if (best && bestScore >= RESOLVE_AT) {
+                await rewriteCard(best.id, j => {
+                    j.content = `${j.content}\n✅ ${today}: ${r.text}`;
+                    j.borderColor = 'rgba(16,185,129,0.35)';
+                });
+                archiveCard(best.id);
+                best.text += ` ✅ ${r.text}`; // keep in-memory struct honest for later matching
+                stats.resolved++;
+            } else {
+                milestonesFallback.push({ text: (r.area ? `${r.area}: ` : '') + `🏁 ${r.text}`, area: r.area, borderColor: 'rgba(59,130,246,0.8)' });
+            }
+        }
+
+        // SUPERSEDE — pre-mark old cards that a NEW decision replaces. The arrow
+        // to the new card is drawn in pass 2 (after the new ids exist), matched
+        // back by remembering which old card each new card displaced.
+        for (const card of cards) {
+            if (/❓|🏁/.test(card.text)) continue; // only plain decisions supersede
+            const nTok = tokenSet(card.text);
+            const area = (card.area || '').toLowerCase();
+            let best = null, bestScore = 0;
+            for (const c of liveTextCards()) {
+                if (area && (c.area || '').toLowerCase() !== area) continue;
+                const s = overlapScore(nTok, tokenSet(c.text));
+                if (s > bestScore) { bestScore = s; best = c; }
+            }
+            if (best && bestScore >= SUPERSEDE_AT) {
+                await rewriteCard(best.id, j => {
+                    j.content = `↩︎ superseded ${today}\n${j.content}`;
+                    j.borderColor = 'rgba(120,120,135,0.5)';
+                });
+                archiveCard(best.id);
+                best.text = `↩︎ ${best.text}`;
+                card.__supersedes = best.id;
+                stats.superseded++;
+            }
+        }
+
+        cards.push(...milestonesFallback);
+        work = await finalizeBrainZip(zip, canvas, manifest, now);
+    }
+
+    // Pass 2 — append the new cards (existing self-organizing path), then wire
+    // connections: supersede arrows + [[wikilink]] auto-links.
+    if (cards.length) {
+        work = await appendIntoContainers(work, { cards });
+        stats.added = cards.length;
+        const { zip, canvas, manifest, struct } = await parseKlypix(work);
+        const now = Date.now();
+        const rand = () => Math.random().toString(36).slice(2, 10);
+        canvas.connections = Array.isArray(canvas.connections) ? canvas.connections : [];
+        const hasConn = (a, b) => canvas.connections.some(cn => (cn.fromId === a && cn.toId === b) || (cn.fromId === b && cn.toId === a));
+        const addConn = (fromId, toId, label, relationship) => {
+            if (!fromId || !toId || fromId === toId || hasConn(fromId, toId)) return;
+            canvas.connections.push({ id: `con_${rand()}`, fromId, toId, relationship, label, arrowHead: true, width: 2, color: '#10b981', style: 'solid' });
+            stats.linked++;
+        };
+        // Locate each appended card by exact text match (newest first wins).
+        const findNew = (text) => {
+            const flatT = wrapText(String(text));
+            for (let i = struct.cards.length - 1; i >= 0; i--) {
+                const c = struct.cards[i];
+                if (c.type !== 'container' && (c.text || '') === flatT) return c;
+            }
+            return null;
+        };
+        const titleIndex = struct.cards
+            .filter(c => (c.title || '').trim())
+            .map(c => ({ id: c.id, t: c.title.trim().toLowerCase() }));
+        for (const card of cards) {
+            const created = findNew(card.text);
+            if (!created) continue;
+            if (card.__supersedes) addConn(card.__supersedes, created.id, 'superseded by', undefined);
+            for (const link of (created.links || [])) {
+                const want = String(link).trim().toLowerCase();
+                if (!want) continue;
+                const target = titleIndex.find(e => e.id !== created.id && (e.t === want || e.t.startsWith(want)));
+                if (target) addConn(created.id, target.id, undefined, 'relates_to');
+            }
+        }
+        work = await finalizeBrainZip(zip, canvas, manifest, now);
+    }
+
+    return { buffer: work, stats };
 }
 
 /**

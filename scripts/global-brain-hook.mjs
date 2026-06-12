@@ -25,7 +25,8 @@ const CWD = process.cwd();
 const BRAIN = path.resolve(CWD, 'brain.klypix');
 const STATE = path.resolve(CWD, '.claude', 'brain-capture-state.json');
 // 🧠 BRAIN [Area]: decision  ·  [Area] ?: open question  ·  [Area] !: milestone
-const MARKER = /🧠\s*BRAIN\s*(?:\[([^\]]+)\])?\s*([?!]?)\s*:\s*(.+)$/i;
+//                · [Area] ✓: resolves the matching existing card (archives it)
+const MARKER = /🧠\s*BRAIN\s*(?:\[([^\]]+)\])?\s*([?!✓]?)\s*:\s*(.+)$/i;
 const sha = (s) => crypto.createHash('sha1').update(s).digest('hex').slice(0, 16);
 
 const readState = () => { try { return new Set(JSON.parse(fs.readFileSync(STATE, 'utf8')).seen || []); } catch { return new Set(); } };
@@ -49,6 +50,7 @@ async function capture(lib) {
     let lines; try { lines = fs.readFileSync(tp, 'utf8').split('\n').filter(Boolean); } catch { return; }
     const seen = readState();
     const cards = [];
+    const resolutions = [];
     for (const ln of lines) {
         let e; try { e = JSON.parse(ln); } catch { continue; }
         const text = textOf(e);
@@ -60,33 +62,50 @@ async function capture(lib) {
             // brain: a placeholder body like "<decision>", or a marker shown inside a
             // code span (a backtick before the 🧠). Real markers are emitted plainly.
             if (/<[^>]{1,40}>/.test(body) || /`[^`]*🧠/.test(raw)) continue;
-            // Type → scannable prefix + border color: ? open question (amber),
-            // ! milestone (blue), else decision (green).
-            const prefix = type === '?' ? '❓ ' : type === '!' ? '🏁 ' : '';
-            const borderColor = type === '?' ? 'rgba(245,166,35,0.8)' : type === '!' ? 'rgba(59,130,246,0.8)' : 'rgba(16,185,129,0.6)';
-            const card = (area ? `${area}: ${prefix}${body}` : `${prefix}${body}`) + (area ? `\n#${area.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : '');
             // Same hash as the legacy brain-capture.mjs so a project's existing
             // state file stays compatible (no double-capture during the switch
             // to the global hook). State is already per-project; the vault
             // cross-brain footgun is handled by per-brain state files in Phase 3.
             const key = sha((area + '|' + body).toLowerCase());
             if (seen.has(key)) continue;
-            seen.add(key); cards.push({ text: card, area, borderColor });
+            seen.add(key);
+            // ✓ resolves an EXISTING card (stamped ✅ + archived) — not a new card.
+            if (type === '✓') { resolutions.push({ area, text: body }); continue; }
+            // Type → scannable prefix + border color: ? open question (amber),
+            // ! milestone (blue), else decision (green).
+            const prefix = type === '?' ? '❓ ' : type === '!' ? '🏁 ' : '';
+            const borderColor = type === '?' ? 'rgba(245,166,35,0.8)' : type === '!' ? 'rgba(59,130,246,0.8)' : 'rgba(16,185,129,0.6)';
+            const card = (area ? `${area}: ${prefix}${body}` : `${prefix}${body}`) + (area ? `\n#${area.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : '');
+            cards.push({ text: card, area, borderColor });
         }
     }
-    if (!cards.length) return;
-    // Route each captured decision INTO its [Area] container (find-or-create) so
-    // the brain stays a clean areas-as-containers map, not a rightward strip.
-    const buf = await lib.appendIntoContainers(fs.readFileSync(BRAIN), { cards: cards.map(c => ({ text: c.text, color: '#e8e8ed', borderColor: c.borderColor, area: c.area })) });
+    if (!cards.length && !resolutions.length) return;
+    // Atomic capture: supersede heavily-overlapping old cards (→ Archive +
+    // "superseded by" arrow), apply ✓ resolutions, route new cards INTO their
+    // [Area] containers, and wire [[wikilink]] connections.
+    const { buffer: buf, stats } = await lib.captureIntoBrain(fs.readFileSync(BRAIN), {
+        cards: cards.map(c => ({ text: c.text, color: '#e8e8ed', borderColor: c.borderColor, area: c.area })),
+        resolutions,
+    });
     // Re-pack the whole grid so a container that grew never overlaps its neighbor.
     let out = buf; try { out = (await lib.tidyBrain(buf)).buffer; } catch { /* keep append result if tidy fails */ }
     await lib.atomicWrite(BRAIN, out);
     writeState(seen);
-    process.stderr.write(`[brain] captured ${cards.length} decision(s) → brain.klypix\n`);
+    const bits = [`${stats.added} added`];
+    if (stats.resolved) bits.push(`${stats.resolved} resolved`);
+    if (stats.superseded) bits.push(`${stats.superseded} superseded`);
+    if (stats.linked) bits.push(`${stats.linked} linked`);
+    process.stderr.write(`[brain] capture: ${bits.join(' · ')} → brain.klypix\n`);
 }
 
 async function read(lib) {
     const { struct } = await lib.parseKlypix(fs.readFileSync(BRAIN));
+    // Default = TIERED brief (open questions + recent + area map) so the
+    // session-start cost stays flat as the brain grows. --full = everything.
+    if (!process.argv.includes('--full') && typeof lib.structToBrief === 'function') {
+        process.stdout.write(lib.structToBrief(struct));
+        return;
+    }
     process.stdout.write(lib.structToMarkdown(struct));
 }
 
