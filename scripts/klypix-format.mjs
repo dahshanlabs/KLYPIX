@@ -556,43 +556,76 @@ export function structToBrief(struct, { recentDays = 14, maxRecent = 40, maxMile
     const texts = struct.cards.filter(c => c.type !== 'container' && (c.text || '').trim());
     const containers = struct.cards.filter(c => c.type === 'container');
     const isArchived = (c) => /^archive$/i.test(c.area || '');
+    // 📌 FOCUS — the human steers agent attention SPATIALLY: any card dragged
+    // into a container titled "Focus" (any decoration: "📌 Focus", "Focus
+    // (drag cards here)") leads every brief, full text, regardless of age.
+    const isFocus = (c) => /(^|\s)focus\b/i.test(c.area || '');
     const live = texts.filter(c => !isArchived(c));
-    const open = live.filter(c => /❓/.test(c.text));
-    const miles = live.filter(c => /🏁/.test(c.text) && !/❓/.test(c.text));
-    const plain = live.filter(c => !open.includes(c) && !miles.includes(c));
+    const focus = live.filter(isFocus);
+    const rest = live.filter(c => !isFocus(c));
+    const open = rest.filter(c => /❓/.test(c.text));
+    const miles = rest.filter(c => /🏁/.test(c.text) && !/❓/.test(c.text));
+    const plain = rest.filter(c => !open.includes(c) && !miles.includes(c));
     const recent = plain.filter(c => c.createdAt >= cutoff).sort((a, b) => b.createdAt - a.createdAt).slice(0, maxRecent);
-    const olderCount = plain.length - recent.length;
     const archivedCount = texts.length - live.length;
 
     const flat = (s) => String(s || '').replace(/\s+/g, ' ').trim();
-    const line = (c) => `- ${flat(c.text)}`;
+    // HEADLINE = first sentence-ish, hard-capped — the brief is a scannable
+    // changelog; the agent pulls any card's full text via the MCP when needed.
+    const headline = (c, max = 160) => {
+        const t = flat(c.text);
+        const stop = t.search(/(?<=[.!?])\s/);
+        const h = stop > 40 && stop < max ? t.slice(0, stop) : t;
+        return h.length > max ? h.slice(0, max - 1).trimEnd() + '…' : h;
+    };
     const day = (ts) => ts ? new Date(ts).toISOString().slice(0, 10) : '';
+
+    // TOKEN BUDGET (≈ chars/4): sections are added in priority order — Focus,
+    // Open, Areas, Milestones, Recent, Connections — and Recent stops when the
+    // budget is hit. The brief stays ~flat forever no matter how active a week.
+    const BUDGET_CHARS = 11_000; // ≈ 2.7k tokens
+    let used = 0;
     const out = [];
-    out.push(`# ${struct.title} — brain brief`);
-    out.push(`*${struct.format} · ${struct.counts.cards} cards · ${struct.counts.connections} connections · tiered brief (open + last ${recentDays}d); full history stays in the file*`);
+    const push = (...lines) => { for (const l of lines) { out.push(l); used += l.length + 1; } };
+
+    push(`# ${struct.title} — brain brief`);
+    push(`*${struct.format} · ${struct.counts.cards} cards · ${struct.counts.connections} connections · tiered brief (focus + open + last ${recentDays}d headlines); full cards via klypix-canvas MCP search*`);
+    if (focus.length) {
+        push('', '## 📌 Human focus (cards the human placed here — act on these first)');
+        for (const c of focus) push(`- ${flat(c.text)}`);
+    }
+    if (open.length) { push('', '## Open questions'); for (const c of open) push(`- ${flat(c.text)}`); }
     const areaCounts = containers
         .filter(c => !/^archive$/i.test(c.title || ''))
         .map(c => `${flat(c.title)} (${texts.filter(t => t.parentId === c.id).length})`);
-    if (areaCounts.length) { out.push('', '## Areas', areaCounts.join(' · ')); }
-    if (open.length) { out.push('', '## Open questions'); for (const c of open) out.push(line(c)); }
+    if (areaCounts.length) { push('', '## Areas', areaCounts.join(' · ')); }
     if (miles.length) {
-        out.push('', '## Milestones');
-        for (const c of miles.sort((a, b) => b.createdAt - a.createdAt).slice(0, maxMilestones)) out.push(line(c));
+        push('', '## Milestones');
+        for (const c of miles.sort((a, b) => b.createdAt - a.createdAt).slice(0, maxMilestones)) push(`- ${headline(c)}`);
     }
+    let shownRecent = 0;
     if (recent.length) {
-        out.push('', `## Recent decisions (last ${recentDays}d)`);
+        push('', `## Recent decisions (last ${recentDays}d — headlines)`);
         const byArea = new Map();
         for (const c of recent) { const a = flat(c.area) || 'Notes'; if (!byArea.has(a)) byArea.set(a, []); byArea.get(a).push(c); }
-        for (const [a, cs] of byArea) { out.push(`### ${a}`); for (const c of cs) out.push(`- ${day(c.createdAt)} ${flat(c.text)}`); }
+        outer: for (const [a, cs] of byArea) {
+            push(`### ${a}`);
+            for (const c of cs) {
+                if (used > BUDGET_CHARS) break outer;
+                push(`- ${day(c.createdAt)} ${headline(c)}`);
+                shownRecent++;
+            }
+        }
     }
-    if (struct.connections.length) {
-        out.push('', '## Connections');
-        for (const cn of struct.connections.slice(0, maxConnections)) out.push(`- ${cn.from} → ${cn.to}${cn.label || cn.relationship ? ` (${cn.label || cn.relationship})` : ''}`);
+    if (struct.connections.length && used <= BUDGET_CHARS) {
+        push('', '## Connections');
+        for (const cn of struct.connections.slice(0, maxConnections)) push(`- ${cn.from} → ${cn.to}${cn.label || cn.relationship ? ` (${cn.label || cn.relationship})` : ''}`);
     }
     const hidden = [];
-    if (olderCount > 0) hidden.push(`${olderCount} older decision${olderCount === 1 ? '' : 's'}`);
+    const unshown = plain.length - shownRecent;
+    if (unshown > 0) hidden.push(`${unshown} older/over-budget decision${unshown === 1 ? '' : 's'}`);
     if (archivedCount > 0) hidden.push(`${archivedCount} archived/superseded`);
-    if (hidden.length) out.push('', `*${hidden.join(' + ')} not shown — search the full brain via the klypix-canvas MCP (search/read tools) or \`node ~/.claude/project-brain/global-brain-hook.mjs --full\`.*`);
+    if (hidden.length) push('', `*${hidden.join(' + ')} not shown — search the full brain via the klypix-canvas MCP (search/read tools) or \`node ~/.claude/project-brain/global-brain-hook.mjs --full\`.*`);
     return out.join('\n') + '\n';
 }
 

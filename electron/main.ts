@@ -2210,9 +2210,10 @@ function writeBrainRules(folder: string): string[] {
         'Reuse a consistent `[Area]` (e.g. Backend, UI, Infra) so cards group; relate a decision',
         'to another card inline with `[[its title]]` to draw a real graph edge. A new decision that',
         'replaces an old one auto-archives it (superseded). Markers are auto-harvested into',
-        'brain.klypix — grouped by area, chronological. The session-start brief is TIERED (open',
-        'questions + recent); search older history via the klypix MCP. (No hook installed? append',
-        'with the MCP `add_to_canvas` "brain" instead.)',
+        'brain.klypix — grouped by area, chronological. The session-start brief is TIERED (📌 Focus',
+        'cards the human placed lead it, then open questions + recent headlines); fetch any full',
+        'card via the klypix MCP search, and use `search_all_brains` when the answer may live in',
+        'ANOTHER project\'s brain. (No hook installed? append with the MCP `add_to_canvas` instead.)',
         '<!-- klypix-brain:end -->',
         '',
     ].join('\n');

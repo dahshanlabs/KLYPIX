@@ -112,6 +112,44 @@ function maybeOfflineSttTip(setToast: (t: { text: string; id: number }) => void)
     } catch { /* localStorage quota — skip the tip */ }
 }
 
+// Seed a brand-new project brain with the starter areas a coding agent needs
+// (Cline Memory Bank-style projectbrief/activeContext, spatially). Fired by the
+// 🧠 plug when the canvas is EMPTY — a day-one brain instead of a blank file.
+// 📌 Focus stays empty: it's the human's steering zone (cards dragged in lead
+// every session brief).
+function seedBrainTemplate(commit: (action: any) => void): void {
+    const now = Date.now();
+    const textColor = defaultTextColorFor(getCurrentGridSettings().background);
+    const AREAS: Array<{ title: string; card?: string }> = [
+        { title: 'Goal', card: '❓ What is this project for, and for whom?\nAgent: survey the repo on your first session and replace this with the real goal.' },
+        { title: 'Architecture', card: '❓ Key components and how they fit.\nAgent: record the actual shape here from the repo — keep it to what a new session must know.' },
+        { title: 'Decisions', card: 'Decisions land here automatically: agents emit 🧠 BRAIN [Area]: markers and the Stop hook files them by area, chronological. A new decision that replaces an old one archives it (superseded). Resolve finished items with the ✓ marker. Drag any card into 📌 Focus to make it lead every session brief.' },
+        { title: 'Pending / next', card: 'What is in flight and what comes next. Agents: keep this honest — close finished items with ✓.' },
+        { title: 'Open questions', card: 'Unresolved questions (the ? marker) live here — the session brief always surfaces them first.' },
+        { title: '📌 Focus' },
+    ];
+    const CTN_W = 360, CTN_H = 300, GAP = 44, COLS = 3, START_X = 80, START_Y = 80;
+    AREAS.forEach((a, i) => {
+        const cx = START_X + (i % COLS) * (CTN_W + GAP);
+        const cy = START_Y + Math.floor(i / COLS) * (CTN_H + GAP);
+        const ctn: ContainerItem = {
+            id: newId('ctn'), type: 'container', x: cx, y: cy, w: CTN_W, h: CTN_H,
+            zIndex: i * 2, locked: false, parentId: null, createdAt: now, createdBy: 'user',
+            title: a.title, collapsed: false, scopeLocked: false, borderColor: 'rgba(16,185,129,0.35)',
+        };
+        commit({ type: 'ADD_ITEM', item: ctn });
+        if (a.card) {
+            const card: TextItem = {
+                id: newId('txt'), type: 'text', x: cx + 20, y: cy + 48, w: CTN_W - 40, h: 120,
+                zIndex: i * 2 + 1, locked: false, parentId: ctn.id, createdAt: now, createdBy: 'user',
+                content: a.card, fontSize: 12, color: textColor,
+                border: true, borderColor: 'rgba(16,185,129,0.45)', heading: false,
+            };
+            commit({ type: 'ADD_ITEM', item: card });
+        }
+    });
+}
+
 // Auto-tag a just-dropped/pasted item in the background. Only applies to
 // FileItem and ImageItem (text notes are agent-tagged via a different path).
 // Fire-and-forget: we don't await, and failure/empty-result is a no-op.
@@ -3481,6 +3519,14 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                     const folder = await el?.vault?.chooseFolder?.();
                     if (!folder) return;
                     setToast({ text: 'Setting up project brain…', id: Date.now(), kind: 'simple' });
+                    // Empty canvas → seed the starter areas (Goal / Architecture /
+                    // Decisions / Pending / Open questions / 📌 Focus) so the first
+                    // agent session gets a day-one brain, not a blank file. Two rAFs
+                    // let React commit the dispatches before saveCopyTo snapshots.
+                    if (stateRef.current.order.length === 0) {
+                        seedBrainTemplate(commit);
+                        await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+                    }
                     const brainPath = String(folder).replace(/[\\/]+$/, '') + '/brain.klypix';
                     const saved = await file.saveCopyTo?.(brainPath);
                     if (!saved?.ok) { setToast({ text: saved?.error || 'Could not save brain.klypix', id: Date.now(), kind: 'simple' }); return; }

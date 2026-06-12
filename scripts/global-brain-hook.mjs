@@ -18,6 +18,7 @@
 // klypix-format.mjs (+ a node_modules with jszip) where it actually runs.
 
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 
@@ -109,8 +110,30 @@ async function read(lib) {
     process.stdout.write(lib.structToMarkdown(struct));
 }
 
+// Registry of every brain this machine has touched — written on each hook run,
+// read by the MCP's search_all_brains for vault-wide, cross-project memory
+// ("what did I decide about auth — in ANY project?"). Zero-config data gravity:
+// just having worked in a brain project makes it searchable. Never throws.
+function registerBrain() {
+    try {
+        const dir = path.join(os.homedir(), '.claude', 'project-brain');
+        const reg = path.join(dir, 'registry.json');
+        fs.mkdirSync(dir, { recursive: true });
+        let data = { brains: [] };
+        try { data = JSON.parse(fs.readFileSync(reg, 'utf8')); } catch { /* fresh */ }
+        if (!Array.isArray(data.brains)) data.brains = [];
+        const norm = BRAIN.replace(/\\/g, '/');
+        const i = data.brains.findIndex(b => b && b.path === norm);
+        const entry = { path: norm, project: path.basename(CWD), lastSeen: Date.now() };
+        if (i >= 0) data.brains[i] = { ...data.brains[i], ...entry }; else data.brains.push(entry);
+        data.brains = data.brains.filter(b => { try { return fs.existsSync(b.path); } catch { return false; } }).slice(-200);
+        fs.writeFileSync(reg, JSON.stringify(data, null, 2));
+    } catch { /* registry is best-effort */ }
+}
+
 async function main() {
     if (!fs.existsSync(BRAIN)) return;                  // not a brain project → instant no-op
+    registerBrain();
     const lib = await import('./klypix-format.mjs');    // lazy: only when a brain exists
     if (process.argv.includes('--capture')) await capture(lib); else await read(lib);
 }

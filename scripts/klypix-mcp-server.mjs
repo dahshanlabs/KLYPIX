@@ -179,6 +179,58 @@ server.registerTool('search_canvases', {
     return { content: [{ type: 'text', text: hits.length ? `# Matches for "${query}"\n\n${hits.join('\n\n')}` : `No matches for "${query}" in ${VAULT}.` }] };
 });
 
+// Cross-project memory: search EVERY brain this machine has touched, not just
+// this vault. The SessionStart/Stop hook registers each ./brain.klypix it runs
+// against into ~/.claude/project-brain/registry.json — so simply having worked
+// in a project makes its decisions findable from any other project ("what did
+// I decide about auth — in ANY project?"). Lexical scoring v1: term hits
+// weighted title>tag>text, with a recency boost; the on-device embedding
+// upgrade ranks the same index later without changing this tool's shape.
+server.registerTool('search_all_brains', {
+    title: 'Search every project brain on this machine',
+    description: 'Cross-project memory search: looks through every brain.klypix this machine has worked with (auto-registered by the brain hook), not just the current vault. Use when the answer may live in ANOTHER project\'s decisions.',
+    inputSchema: { query: z.string().describe('What to find across all project brains.') },
+}, async ({ query }) => {
+    const q = String(query || '').trim().toLowerCase();
+    if (!q) return { content: [{ type: 'text', text: 'Provide a non-empty query.' }], isError: true };
+    const reg = path.join(os.homedir(), '.claude', 'project-brain', 'registry.json');
+    let brains = [];
+    try { brains = (JSON.parse(fs.readFileSync(reg, 'utf8')).brains || []).filter(b => b && b.path); } catch { /* no registry yet */ }
+    if (!brains.length) return { content: [{ type: 'text', text: 'No brains registered yet — the brain hook registers each project as you work in it.' }] };
+    const terms = q.split(/[^\p{L}\p{N}#]+/u).filter(t => t.length >= 3);
+    if (!terms.length) return { content: [{ type: 'text', text: 'Query too short — use words of 3+ characters.' }], isError: true };
+    const fresh = Date.now() - 30 * 86_400_000;
+    const scored = [];
+    for (const b of brains) {
+        let struct;
+        try { ({ struct } = await parseKlypix(fs.readFileSync(b.path))); } catch { continue; }
+        for (const c of struct.cards) {
+            if (c.type === 'container') continue;
+            const text = String(c.text || '').toLowerCase();
+            const title = String(c.title || '').toLowerCase();
+            const tags = (c.tags || []).map(t => ('#' + t).toLowerCase());
+            let score = 0;
+            for (const t of terms) {
+                if (title.includes(t)) score += 3;
+                if (tags.some(g => g.includes(t))) score += 2;
+                if (text.includes(t)) score += 1;
+            }
+            if (!score) continue;
+            if ((c.createdAt || 0) >= fresh) score += 1;            // recency boost
+            if (/^archive$/i.test(c.area || '')) score -= 0.5;      // superseded ranks lower
+            scored.push({ score, project: b.project || path.basename(path.dirname(b.path)), area: c.area, c });
+        }
+    }
+    if (!scored.length) return { content: [{ type: 'text', text: `No matches for "${query}" across ${brains.length} registered brain(s).` }] };
+    scored.sort((a, b2) => b2.score - a.score);
+    const top = scored.slice(0, 20);
+    const lines = top.map(h => {
+        const when = h.c.createdAt ? new Date(h.c.createdAt).toISOString().slice(0, 10) : '';
+        return `- [${h.project}${h.area ? ' › ' + h.area : ''}] ${when} ${String(h.c.text || '').replace(/\s+/g, ' ').slice(0, 240)}`;
+    });
+    return { content: [{ type: 'text', text: `# Cross-project matches for "${query}" (${scored.length} hits in ${brains.length} brains, top ${top.length})\n\n${lines.join('\n')}` }] };
+});
+
 // Format the cards (optionally only a set of new ids) + connection graph so an
 // agent that just wrote can chain follow-ups: reference card IDs, place near a
 // position, or draw an arrow to something it created. Additive — appended after
