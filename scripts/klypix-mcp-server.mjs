@@ -18,6 +18,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import crypto from 'crypto';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -179,46 +180,135 @@ server.registerTool('search_canvases', {
     return { content: [{ type: 'text', text: hits.length ? `# Matches for "${query}"\n\n${hits.join('\n\n')}` : `No matches for "${query}" in ${VAULT}.` }] };
 });
 
+// ── On-device semantic memory ────────────────────────────────────────────────
+// Embeddings run INSIDE this long-lived server (the hook stays instant), 100%
+// local: transformers.js (WASM) + a 23MB MiniLM model cached under
+// ~/.claude/project-brain/hf-cache on first use. Per-brain vectors are cached
+// incrementally (content-hashed per card) in ~/.claude/project-brain/embeddings/
+// — brains themselves are never mutated by search. Everything degrades to
+// lexical scoring gracefully: no lib, no model, no network → search still works.
+const PB_DIR = path.join(os.homedir(), '.claude', 'project-brain');
+const EMB_DIR = path.join(PB_DIR, 'embeddings');
+const sha1 = (s) => crypto.createHash('sha1').update(s).digest('hex');
+let embedderPromise = null;
+function getEmbedder() {
+    if (!embedderPromise) {
+        embedderPromise = (async () => {
+            // Dual-path: (1) bare specifier — npx/npm installs ship the lib;
+            // (2) ~/.claude/project-brain/semantic — where KLYPIX's one-click
+            // "semantic memory" install places it for the bundled server
+            // (the ONNX runtimes are ~350MB unpacked, far too heavy to bundle
+            // in the installer payload).
+            let t;
+            try { t = await import('@huggingface/transformers'); }
+            catch {
+                const local = path.join(PB_DIR, 'semantic', 'node_modules', '@huggingface', 'transformers', 'dist', 'transformers.mjs');
+                t = await import(new URL('file:///' + local.replace(/\\/g, '/')).href);
+            }
+            t.env.cacheDir = path.join(PB_DIR, 'hf-cache');
+            return await t.pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', { dtype: 'q8' });
+        })().catch(e => { log('semantic unavailable (lexical fallback):', e?.message || e); return null; });
+    }
+    return embedderPromise;
+}
+async function embedTexts(pipe, texts) {
+    const out = await pipe(texts, { pooling: 'mean', normalize: true });
+    const [n, d] = out.dims;
+    const vecs = [];
+    for (let i = 0; i < n; i++) vecs.push(Array.from(out.data.slice(i * d, (i + 1) * d)));
+    return vecs;
+}
+const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+// Incremental per-brain vector cache: only new/changed cards get embedded.
+async function vectorsForBrain(pipe, brainPath, cards) {
+    const file = path.join(EMB_DIR, sha1(brainPath.replace(/\\/g, '/')) + '.json');
+    let cache = { v: 1, cards: {} };
+    try { cache = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* fresh */ }
+    const want = cards.filter(c => c.type !== 'container' && (c.text || '').trim());
+    const missing = want.filter(c => cache.cards[c.id]?.h !== sha1(String(c.text)));
+    if (missing.length) {
+        const vecs = await embedTexts(pipe, missing.map(c => String(c.text).slice(0, 1500)));
+        missing.forEach((c, i) => { cache.cards[c.id] = { h: sha1(String(c.text)), v: vecs[i] }; });
+        const live = new Set(want.map(c => c.id));
+        for (const id of Object.keys(cache.cards)) if (!live.has(id)) delete cache.cards[id];
+        try { fs.mkdirSync(EMB_DIR, { recursive: true }); fs.writeFileSync(file, JSON.stringify(cache)); } catch { /* cache is best-effort */ }
+    }
+    const map = new Map();
+    for (const c of want) { const e = cache.cards[c.id]; if (e?.v) map.set(c.id, e.v); }
+    return map;
+}
+// Death date of an archived card (for as-of queries): the supersede/resolve stamp.
+const deathDateOf = (text) => { const m = /(?:↩︎ superseded|✅) (\d{4}-\d{2}-\d{2})/.exec(String(text)); return m ? Date.parse(m[1]) : null; };
+
 // Cross-project memory: search EVERY brain this machine has touched, not just
 // this vault. The SessionStart/Stop hook registers each ./brain.klypix it runs
 // against into ~/.claude/project-brain/registry.json — so simply having worked
 // in a project makes its decisions findable from any other project ("what did
-// I decide about auth — in ANY project?"). Lexical scoring v1: term hits
-// weighted title>tag>text, with a recency boost; the on-device embedding
-// upgrade ranks the same index later without changing this tool's shape.
+// I decide about auth — in ANY project?"). Hybrid ranking: on-device semantic
+// similarity (when the local model is ready) blended with lexical term hits;
+// as_of answers "what was true on <date>" via createdAt + supersession stamps.
 server.registerTool('search_all_brains', {
     title: 'Search every project brain on this machine',
-    description: 'Cross-project memory search: looks through every brain.klypix this machine has worked with (auto-registered by the brain hook), not just the current vault. Use when the answer may live in ANOTHER project\'s decisions.',
-    inputSchema: { query: z.string().describe('What to find across all project brains.') },
-}, async ({ query }) => {
+    description: 'Cross-project memory search: looks through every brain.klypix this machine has worked with (auto-registered by the brain hook), not just the current vault. Semantic (on-device) + lexical hybrid ranking. Use when the answer may live in ANOTHER project\'s decisions. Optional as_of (YYYY-MM-DD) answers "what was true then" — superseded cards count as live if they were current at that date.',
+    inputSchema: {
+        query: z.string().describe('What to find across all project brains.'),
+        as_of: z.string().optional().describe('Optional YYYY-MM-DD: rank what was TRUE at that date (time-travel query).'),
+    },
+}, async ({ query, as_of }) => {
     const q = String(query || '').trim().toLowerCase();
     if (!q) return { content: [{ type: 'text', text: 'Provide a non-empty query.' }], isError: true };
-    const reg = path.join(os.homedir(), '.claude', 'project-brain', 'registry.json');
+    const reg = path.join(PB_DIR, 'registry.json');
     let brains = [];
     try { brains = (JSON.parse(fs.readFileSync(reg, 'utf8')).brains || []).filter(b => b && b.path); } catch { /* no registry yet */ }
     if (!brains.length) return { content: [{ type: 'text', text: 'No brains registered yet — the brain hook registers each project as you work in it.' }] };
     const terms = q.split(/[^\p{L}\p{N}#]+/u).filter(t => t.length >= 3);
     if (!terms.length) return { content: [{ type: 'text', text: 'Query too short — use words of 3+ characters.' }], isError: true };
+    const asOfTs = as_of ? Date.parse(as_of) : null;
+    if (as_of && Number.isNaN(asOfTs)) return { content: [{ type: 'text', text: `Bad as_of date: "${as_of}" — use YYYY-MM-DD.` }], isError: true };
+
+    // Semantic lane: wait briefly for the embedder; first-ever use downloads
+    // the model in the background — searches stay lexical until it's warm.
+    const pipe = await Promise.race([getEmbedder(), new Promise(r => setTimeout(() => r(null), 20_000))]);
+    let qv = null;
+    if (pipe) { try { [qv] = await embedTexts(pipe, [q]); } catch { /* lexical only */ } }
+
     const fresh = Date.now() - 30 * 86_400_000;
     const scored = [];
     for (const b of brains) {
         let struct;
         try { ({ struct } = await parseKlypix(fs.readFileSync(b.path))); } catch { continue; }
+        let vecs = null;
+        if (qv) { try { vecs = await vectorsForBrain(pipe, b.path, struct.cards); } catch { /* lexical for this brain */ } }
         for (const c of struct.cards) {
             if (c.type === 'container') continue;
             const text = String(c.text || '').toLowerCase();
+            const isArchived = /^archive$/i.test(c.area || '');
+            if (asOfTs != null) {
+                if ((c.createdAt || 0) > asOfTs) continue;                  // didn't exist yet
+                const died = isArchived ? deathDateOf(c.text) : null;
+                if (died != null && died <= asOfTs) continue;               // already superseded then
+            }
+            let lex = 0;
             const title = String(c.title || '').toLowerCase();
             const tags = (c.tags || []).map(t => ('#' + t).toLowerCase());
-            let score = 0;
             for (const t of terms) {
-                if (title.includes(t)) score += 3;
-                if (tags.some(g => g.includes(t))) score += 2;
-                if (text.includes(t)) score += 1;
+                if (title.includes(t)) lex += 3;
+                if (tags.some(g => g.includes(t))) lex += 2;
+                if (text.includes(t)) lex += 1;
             }
-            if (!score) continue;
-            if ((c.createdAt || 0) >= fresh) score += 1;            // recency boost
-            if (/^archive$/i.test(c.area || '')) score -= 0.5;      // superseded ranks lower
-            scored.push({ score, project: b.project || path.basename(path.dirname(b.path)), area: c.area, c });
+            // Floor calibrated on real cards: related ≈ 0.25, unrelated ≈ 0.0
+            // (MiniLM, short decision texts) — 0.18 keeps recall with margin.
+            const sem = (qv && vecs?.get(c.id)) ? dot(qv, vecs.get(c.id)) : null;
+            if (!lex && (sem == null || sem < 0.18)) continue;
+            // Hybrid: semantic dominates when available; lexical is the tie-breaker
+            // and the only signal pre-warm-up. Recency/archive nudges skipped for
+            // time-travel queries (validity already handled above).
+            let score = sem != null ? sem * 10 + Math.min(lex, 6) * 0.5 : lex;
+            if (asOfTs == null) {
+                if ((c.createdAt || 0) >= fresh) score += 0.5;
+                if (isArchived) score -= 1;
+            }
+            scored.push({ score, sem, project: b.project || path.basename(path.dirname(b.path)), area: c.area, c });
         }
     }
     if (!scored.length) return { content: [{ type: 'text', text: `No matches for "${query}" across ${brains.length} registered brain(s).` }] };
@@ -228,7 +318,9 @@ server.registerTool('search_all_brains', {
         const when = h.c.createdAt ? new Date(h.c.createdAt).toISOString().slice(0, 10) : '';
         return `- [${h.project}${h.area ? ' › ' + h.area : ''}] ${when} ${String(h.c.text || '').replace(/\s+/g, ' ').slice(0, 240)}`;
     });
-    return { content: [{ type: 'text', text: `# Cross-project matches for "${query}" (${scored.length} hits in ${brains.length} brains, top ${top.length})\n\n${lines.join('\n')}` }] };
+    const mode = qv ? 'semantic+lexical (on-device)' : 'lexical (semantic model warming — retry for semantic ranking)';
+    const asOfNote = asOfTs != null ? ` · as of ${as_of}` : '';
+    return { content: [{ type: 'text', text: `# Cross-project matches for "${query}" (${scored.length} hits in ${brains.length} brains, top ${top.length} · ${mode}${asOfNote})\n\n${lines.join('\n')}` }] };
 });
 
 // Format the cards (optionally only a set of new ids) + connection graph so an
@@ -291,7 +383,11 @@ server.registerTool('add_to_canvas', {
         // Snapshot existing ids so we can report ONLY the newly-added cards back.
         let beforeIds = new Set();
         try { const b = await parseKlypix(original); beforeIds = new Set(b.struct.cards.map(c => c.id)); } catch { /* new/legacy → treat all as new */ }
-        const buf = await appendToKlypix(original, { cards, connections });
+        // Provenance: stamp WHICH agent wrote these cards (cursor / claude /
+        // cline — from the MCP client's initialize handshake).
+        let via; try { via = server.server.getClientVersion()?.name; } catch { /* optional */ }
+        const stamped = via ? cards.map(c => ({ ...c, createdVia: via })) : cards;
+        const buf = await appendToKlypix(original, { cards: stamped, connections });
         await atomicWrite(file, buf);
         let detail = '';
         try {

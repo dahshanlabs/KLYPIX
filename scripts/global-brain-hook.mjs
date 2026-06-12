@@ -27,7 +27,8 @@ const BRAIN = path.resolve(CWD, 'brain.klypix');
 const STATE = path.resolve(CWD, '.claude', 'brain-capture-state.json');
 // 🧠 BRAIN [Area]: decision  ·  [Area] ?: open question  ·  [Area] !: milestone
 //                · [Area] ✓: resolves the matching existing card (archives it)
-const MARKER = /🧠\s*BRAIN\s*(?:\[([^\]]+)\])?\s*([?!✓]?)\s*:\s*(.+)$/i;
+//                · [Area] ~: updates the matching card IN PLACE (small corrections)
+const MARKER = /🧠\s*BRAIN\s*(?:\[([^\]]+)\])?\s*([?!✓~]?)\s*:\s*(.+)$/i;
 const sha = (s) => crypto.createHash('sha1').update(s).digest('hex').slice(0, 16);
 
 const readState = () => { try { return new Set(JSON.parse(fs.readFileSync(STATE, 'utf8')).seen || []); } catch { return new Set(); } };
@@ -52,6 +53,7 @@ async function capture(lib) {
     const seen = readState();
     const cards = [];
     const resolutions = [];
+    const updates = [];
     for (const ln of lines) {
         let e; try { e = JSON.parse(ln); } catch { continue; }
         const text = textOf(e);
@@ -72,6 +74,8 @@ async function capture(lib) {
             seen.add(key);
             // ✓ resolves an EXISTING card (stamped ✅ + archived) — not a new card.
             if (type === '✓') { resolutions.push({ area, text: body }); continue; }
+            // ~ updates the matching card in place (small corrections).
+            if (type === '~') { updates.push({ area, text: body, createdVia: 'claude-code' }); continue; }
             // Type → scannable prefix + border color: ? open question (amber),
             // ! milestone (blue), else decision (green).
             const prefix = type === '?' ? '❓ ' : type === '!' ? '🏁 ' : '';
@@ -80,13 +84,14 @@ async function capture(lib) {
             cards.push({ text: card, area, borderColor });
         }
     }
-    if (!cards.length && !resolutions.length) return;
+    if (!cards.length && !resolutions.length && !updates.length) return;
     // Atomic capture: supersede heavily-overlapping old cards (→ Archive +
-    // "superseded by" arrow), apply ✓ resolutions, route new cards INTO their
-    // [Area] containers, and wire [[wikilink]] connections.
+    // "superseded by" arrow), apply ✓ resolutions + ~ in-place updates, route
+    // new cards INTO their [Area] containers, and wire [[wikilink]] connections.
     const { buffer: buf, stats } = await lib.captureIntoBrain(fs.readFileSync(BRAIN), {
-        cards: cards.map(c => ({ text: c.text, color: '#e8e8ed', borderColor: c.borderColor, area: c.area })),
+        cards: cards.map(c => ({ text: c.text, color: '#e8e8ed', borderColor: c.borderColor, area: c.area, createdVia: 'claude-code' })),
         resolutions,
+        updates,
     });
     // Re-pack the whole grid so a container that grew never overlaps its neighbor.
     let out = buf; try { out = (await lib.tidyBrain(buf)).buffer; } catch { /* keep append result if tidy fails */ }
@@ -94,6 +99,7 @@ async function capture(lib) {
     writeState(seen);
     const bits = [`${stats.added} added`];
     if (stats.resolved) bits.push(`${stats.resolved} resolved`);
+    if (stats.updated) bits.push(`${stats.updated} updated`);
     if (stats.superseded) bits.push(`${stats.superseded} superseded`);
     if (stats.linked) bits.push(`${stats.linked} linked`);
     process.stderr.write(`[brain] capture: ${bits.join(' · ')} → brain.klypix\n`);

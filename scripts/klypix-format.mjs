@@ -302,6 +302,7 @@ export async function appendToKlypix(buffer, addition) {
     for (const a of added) {
         zip.file(`items/${shard(a.id)}/${a.id}.json`, JSON.stringify({
             type: 'text', locked: false, createdAt: now, createdBy: 'agent',
+            ...(a.card.createdVia ? { createdVia: String(a.card.createdVia) } : {}),
             content: String(a.card.text), fontSize: FONT,
             color: a.card.color || '#1a1a1f', border: !!a.card.border, borderColor: '#1e1e2e',
             heading: !!a.card.heading, fontFamily: 'Thmanyah Sans',
@@ -459,6 +460,9 @@ export async function appendIntoContainers(buffer, addition) {
         const id = `txt_${rand()}`;
         zip.file(`items/${shard(id)}/${id}.json`, JSON.stringify({
             type: 'text', locked: false, createdAt: now, createdBy: 'agent',
+            // Provenance: WHICH agent remembered this (claude-code / cursor /
+            // cline / …) — additive field, ignored by older readers.
+            ...(card.createdVia ? { createdVia: String(card.createdVia) } : {}),
             content: wrapped, fontSize: G.FONT,
             color: card.color || '#e8e8ed', border: true, borderColor: card.borderColor || card.color || 'rgba(16,185,129,0.45)',
             fillColor: 'rgba(18,18,26,0.85)', heading: !!card.heading, fontFamily: 'Thmanyah Sans',
@@ -645,13 +649,13 @@ const overlapScore = (a, b) => {
     let hit = 0; for (const w of a) if (b.has(w)) hit++;
     return hit / Math.min(a.size, b.size);
 };
-export async function captureIntoBrain(buffer, { cards = [], resolutions = [] } = {}) {
-    const SUPERSEDE_AT = 0.6, RESOLVE_AT = 0.3;
+export async function captureIntoBrain(buffer, { cards = [], resolutions = [], updates = [] } = {}) {
+    const SUPERSEDE_AT = 0.6, RESOLVE_AT = 0.3, UPDATE_AT = 0.45;
     let work = buffer;
-    const stats = { added: 0, superseded: 0, resolved: 0, linked: 0 };
+    const stats = { added: 0, superseded: 0, resolved: 0, linked: 0, updated: 0 };
 
     // Pass 1 — resolutions + supersede marking operate on EXISTING cards.
-    if (resolutions.length || cards.length) {
+    if (resolutions.length || cards.length || updates.length) {
         const { zip, canvas, manifest, isV4, struct } = await parseKlypix(work);
         if (!isV4 || !canvas.positions) {
             // Legacy file — no surgery possible; degrade to plain append.
@@ -717,6 +721,33 @@ export async function captureIntoBrain(buffer, { cards = [], resolutions = [] } 
                 stats.resolved++;
             } else {
                 milestonesFallback.push({ text: (r.area ? `${r.area}: ` : '') + `🏁 ${r.text}`, area: r.area, borderColor: 'rgba(59,130,246,0.8)' });
+            }
+        }
+
+        // UPDATE (~ markers) — rewrite a matching card IN PLACE: for small
+        // corrections that don't deserve supersession history. Content is
+        // replaced (area prefix + tag preserved), createdAt bumped so the
+        // brief treats it as fresh. No match → falls through as a new card.
+        for (const u of updates) {
+            const uTok = tokenSet(u.text);
+            let best = null, bestScore = 0;
+            for (const c of liveTextCards()) {
+                if (u.area && (c.area || '').toLowerCase() !== u.area.toLowerCase()) continue;
+                const s = overlapScore(uTok, tokenSet(c.text));
+                if (s > bestScore) { bestScore = s; best = c; }
+            }
+            if (best && bestScore >= UPDATE_AT) {
+                const tag = u.area ? `\n#${u.area.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : '';
+                await rewriteCard(best.id, j => {
+                    j.content = (u.area ? `${u.area}: ` : '') + u.text + tag;
+                    j.createdAt = now;
+                    j.borderColor = 'rgba(16,185,129,0.6)';
+                    if (u.createdVia) j.createdVia = String(u.createdVia);
+                });
+                best.text = u.text;
+                stats.updated++;
+            } else {
+                cards.push({ text: (u.area ? `${u.area}: ` : '') + u.text + (u.area ? `\n#${u.area.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : ''), area: u.area, createdVia: u.createdVia });
             }
         }
 

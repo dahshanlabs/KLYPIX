@@ -23,6 +23,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
     "@google/generative-ai": "^0.24.1",
+    "@huggingface/transformers": "^4.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@nut-tree-fork/nut-js": "^4.2.6",
     "@supabase/supabase-js": "^2.99.3",
@@ -94,7 +95,10 @@
       "!dist-electron/project-brain/**/*"
     ],
     "extraResources": [
-      { "from": "dist-electron/project-brain", "to": "project-brain" }
+      {
+        "from": "dist-electron/project-brain",
+        "to": "project-brain"
+      }
     ],
     "win": {
       "target": "nsis",
