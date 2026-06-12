@@ -413,6 +413,12 @@ export function TextFormatCapsule({ ctxMenuOpen = false, ctxMenuRect = null }: T
     const fontFamily = anchor.fontFamily ?? 'Virgil';
     const fontFamilyMixed = isFieldMixed('fontFamily', it => it.fontFamily ?? 'Virgil');
     const fontSizeValue = anchor.fontSize;
+    // Display at 0.1 resolution — group scaling stores full-precision sizes
+    // (16.666666…) so repeated scale down/up round-trips without drift, but
+    // the input must not show that tail. Whole numbers stay whole (no ".0").
+    const fontSizeDisplay = typeof fontSizeValue === 'number'
+        ? Math.round(fontSizeValue * 10) / 10
+        : fontSizeValue;
     const fontSizeMixed = isFieldMixed('fontSize', it => it.fontSize as number);
     const isBold = anchor.fontWeight === 'bold' || anchor.heading === true;
     const boldMixed = isFieldMixed('bold', it => it.fontWeight === 'bold' || it.heading === true);
@@ -531,12 +537,12 @@ export function TextFormatCapsule({ ctxMenuOpen = false, ctxMenuRect = null }: T
                     min={8}
                     max={400}
                     step={1}
-                    value={fontSizeMixed ? '' : fontSizeValue}
+                    value={fontSizeMixed ? '' : fontSizeDisplay}
                     placeholder={fontSizeMixed ? '—' : undefined}
                     onChange={(e) => {
                         const v = Number(e.target.value);
                         if (!Number.isFinite(v) || v <= 0) return;
-                        applyToAllTexts({ fontSize: v });
+                        applyToAllTexts({ fontSize: Math.round(v * 10) / 10 });
                     }}
                     onKeyDown={(e) => { e.stopPropagation(); }}
                     className="w-12 bg-transparent text-[11px] text-white/85 text-center outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:m-0 [&::-webkit-inner-spin-button]:m-0 placeholder:text-white/35"
