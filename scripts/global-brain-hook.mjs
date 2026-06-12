@@ -97,12 +97,32 @@ async function capture(lib) {
     let out = buf; try { out = (await lib.tidyBrain(buf)).buffer; } catch { /* keep append result if tidy fails */ }
     await lib.atomicWrite(BRAIN, out);
     writeState(seen);
+    try { await refreshAgentsBrief(lib, out); } catch { /* AGENTS.md refresh is best-effort */ }
     const bits = [`${stats.added} added`];
     if (stats.resolved) bits.push(`${stats.resolved} resolved`);
     if (stats.updated) bits.push(`${stats.updated} updated`);
     if (stats.superseded) bits.push(`${stats.superseded} superseded`);
     if (stats.linked) bits.push(`${stats.linked} linked`);
     process.stderr.write(`[brain] capture: ${bits.join(' · ')} → brain.klypix\n`);
+}
+
+// Keep a compact brain-brief block inside AGENTS.md so agents that read
+// AGENTS.md but run no hooks (Codex, Cursor, OpenCode, …) still get current
+// project state — the ecosystem-widening half of "agent-neutral". Headlines
+// only + rewritten ONLY when content actually changed, so git diffs stay
+// quiet. We refresh an existing AGENTS.md, never create one (that's the
+// 🧠 plug's job).
+async function refreshAgentsBrief(lib, buffer) {
+    const agentsPath = path.resolve(CWD, 'AGENTS.md');
+    if (!fs.existsSync(agentsPath) || typeof lib.structToBrief !== 'function') return;
+    const { struct } = await lib.parseKlypix(buffer);
+    const brief = lib.structToBrief(struct, { recentDays: 7, maxRecent: 10, maxMilestones: 3, maxConnections: 5 }).trim();
+    const START = '<!-- klypix-brain-brief:start -->', END = '<!-- klypix-brain-brief:end -->';
+    const block = `${START}\n<!-- auto-refreshed by the brain hook on capture · headlines only · full cards via the klypix-canvas MCP -->\n${brief}\n${END}`;
+    const txt = fs.readFileSync(agentsPath, 'utf8');
+    const re = new RegExp(`${START}[\\s\\S]*?${END}`);
+    const next = re.test(txt) ? txt.replace(re, block) : (txt.trimEnd() + '\n\n' + block + '\n');
+    if (next !== txt) fs.writeFileSync(agentsPath, next, 'utf8');
 }
 
 async function read(lib) {

@@ -122,13 +122,38 @@ function addMissingConnections(
     }
 }
 
+// Per-canvas agent instructions — the canvas BRIEFS its own agent (the spatial
+// sibling of 📌 Focus): every text card inside a container titled "Instructions"
+// (any decoration: "🤖 Instructions", "Agent instructions") is prepended to the
+// system prompt of every run on this canvas. No settings UI, no format change —
+// the author drops instruction cards on the board and any agent obeys them.
+function canvasInstructionsOf(state: { items: Record<string, CanvasItem & { title?: string; content?: string }>; order: string[] }): string {
+    const isInstr = (t?: string) => /(^|\s)(agent\s+)?instructions\b/i.test(t || '');
+    const ctnIds = new Set(state.order.filter(id => {
+        const it = state.items[id];
+        return it?.type === 'container' && isInstr((it as { title?: string }).title);
+    }));
+    if (!ctnIds.size) return '';
+    const texts: string[] = [];
+    for (const id of state.order) {
+        const it = state.items[id];
+        if (it?.type === 'text' && it.parentId && ctnIds.has(it.parentId) && (it.content || '').trim()) {
+            texts.push(it.content.trim());
+        }
+    }
+    return texts.join('\n');
+}
+
 export async function runCanvasAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     const { command, scope, scopeItems, getState, dispatch, onToast, onProgress, signal } = opts;
 
+    const instructions = canvasInstructionsOf(getState());
     const genAI = new GoogleGenerativeAI(getApiKeySync());
     const model = genAI.getGenerativeModel({
         model: MODEL_ID,
-        systemInstruction: SYSTEM_PROMPT,
+        systemInstruction: instructions
+            ? `${SYSTEM_PROMPT}\n\nCANVAS INSTRUCTIONS — written by this canvas's author for you; follow them in every answer:\n${instructions}`
+            : SYSTEM_PROMPT,
         tools: [{ functionDeclarations: CANVAS_TOOLS }],
     });
 
