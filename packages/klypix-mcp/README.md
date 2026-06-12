@@ -47,6 +47,7 @@ notes into a board,"* or *"add a card with the decision we just made."*
 | `search_canvases` | Search across canvases by name + content |
 | `create_canvas` | Create a new `.klypix` from cards + connections |
 | `add_to_canvas` | Append cards/connections to an existing canvas (positions preserved) |
+| `search_all_brains` | Search every registered project brain (`~/.claude/project-brain/registry.json`) — cross-project recall |
 
 ## Use it as a library
 

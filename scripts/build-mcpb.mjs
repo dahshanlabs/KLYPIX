@@ -44,6 +44,7 @@ const manifest = {
         { name: 'search_canvases', description: 'Search cards, titles, and #tags across all canvases.' },
         { name: 'create_canvas', description: 'Create a new .klypix canvas from cards + connections.' },
         { name: 'add_to_canvas', description: 'Append cards (and connections) to an existing canvas.' },
+        { name: 'search_all_brains', description: 'Search every registered project brain — cross-project recall.' },
     ],
     user_config: {
         vault: {

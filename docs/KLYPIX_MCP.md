@@ -17,6 +17,7 @@ format logic (`scripts/klypix-format.mjs`), exposed as real MCP tools.
 | `search_canvases` | Search card text/titles/`#tags` across **all** canvases |
 | `create_canvas` | Build a new canvas from cards + connections and save it to the vault |
 | `add_to_canvas` | Append cards (+ connections) to an existing canvas, **preserving** existing items + positions |
+| `search_all_brains` | Search every registered project brain (`~/.claude/project-brain/registry.json`) — cross-project recall |
 
 It operates on the `.klypix` **files** in a "vault" folder. Nothing here touches
 a running canvas, so it can't corrupt live state — worst case is a clear error.
