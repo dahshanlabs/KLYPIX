@@ -99,6 +99,8 @@ const strings: Strings = {
     'offline.stt_note': { en: 'Whisper runs in-app (no GPU). Drop an audio or video file and the agent transcribes its speech locally — only a video’s on-screen visuals still use cloud.', ar: 'يعمل Whisper داخل التطبيق (بدون معالج رسومات). أسقط ملف صوت أو فيديو ويُنسخ كلامه محليًا — تبقى العناصر المرئية للفيديو فقط تستخدم السحابة.' },
     'offline.install': { en: 'Install', ar: 'تثبيت' },
     'canvas.tip.offline_stt': { en: 'Tip: transcribe audio & video on-device — Settings → Canvas → Offline models (one-click, no setup).', ar: 'نصيحة: انسخ الصوت والفيديو على الجهاز — الإعدادات ← اللوحة ← النماذج دون اتصال (بنقرة واحدة، دون إعداد).' },
+    'canvas.tidy.suggest': { en: '{cards} old cards in {areas} areas could be tidied into summaries', ar: 'يمكن ترتيب {cards} بطاقة قديمة في {areas} منطقة ضمن ملخصات' },
+    'canvas.tidy.action': { en: 'Tidy', ar: 'ترتيب' },
     'offline.installed': { en: 'Installed', ar: 'مُثبّت' },
     'offline.remove': { en: 'Remove', ar: 'إزالة' },
     'offline.downloading': { en: 'Downloading…', ar: 'جارٍ التنزيل…' },

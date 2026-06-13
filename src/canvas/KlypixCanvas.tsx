@@ -42,7 +42,8 @@ import { buildTitleIndex, resolveWikilink, findCardsWithTag, computeBacklinks } 
 import { CommandBar } from './interaction/CommandBar';
 import { AgentRunsTray } from './interaction/AgentRunsTray';
 import { useAgentRuns } from './agent/useAgentRuns';
-import { runBrainGardener } from './agent/brainGardener';
+import { runBrainGardener, selectConsolidationCandidates } from './agent/brainGardener';
+import { TidyBrainPill } from './interaction/TidyBrainPill';
 import { Breadcrumbs } from './interaction/Breadcrumbs';
 import { ContextMenu } from './interaction/ContextMenu';
 import { TextFormatCapsule } from './interaction/TextFormatCapsule';
@@ -977,6 +978,26 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             setTimeout(() => setEyesState('idle'), 3000);
         },
     });
+    // Brain gardener — run from the proactive Tidy pill OR the (hidden) /garden
+    // command alias. Same single entry point.
+    const runGarden = useCallback(() => {
+        void runBrainGardener({
+            getState: () => stateRef.current,
+            dispatch,
+            pushSnapshot,
+            onToast: (text) => setToast({ text, id: Date.now() }),
+        });
+    }, [dispatch, pushSnapshot]);
+    // "This brain could be tidied" — cheap, pure (no LLM): null on a normal
+    // canvas / below threshold, so the pill is silent until consolidation is
+    // genuinely worth offering. Recomputes when items change (incl. after a
+    // garden run → candidates drop → pill auto-hides).
+    const [tidyDismissed, setTidyDismissed] = useState(false);
+    const tidyCandidates = useMemo(() => {
+        const areas = selectConsolidationCandidates(state.items, state.order);
+        if (!areas.length) return null;
+        return { areas: areas.length, cards: areas.reduce((n, a) => n + a.candidates.length, 0) };
+    }, [state.items, state.order]);
     const [searchOpen, setSearchOpen] = useState(false);
     const [outlineOpen, setOutlineOpen] = useState(false);
     const [layersOpen, setLayersOpen] = useState(false);
@@ -3372,16 +3393,17 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 open={commandOpen}
                 onClose={() => setCommandOpen(false)}
                 onStartRun={agentRuns.start}
-                onGarden={() => {
-                    void runBrainGardener({
-                        getState: () => stateRef.current,
-                        dispatch,
-                        pushSnapshot,
-                        onToast: (text) => setToast({ text, id: Date.now() }),
-                    });
-                }}
+                onGarden={runGarden}
             />
             <AgentRunsTray runs={agentRuns.runs} onStop={agentRuns.stop} onDismiss={agentRuns.dismiss} onOpen={() => setCommandOpen(true)} />
+            {tabActive && tidyCandidates && !tidyDismissed && (
+                <TidyBrainPill
+                    cardCount={tidyCandidates.cards}
+                    areaCount={tidyCandidates.areas}
+                    onTidy={() => { setTidyDismissed(true); runGarden(); }}
+                    onDismiss={() => setTidyDismissed(true)}
+                />
+            )}
 
             {/* Agent toast — short answers float and auto-dismiss; pin converts to permanent card */}
             {toast && (
