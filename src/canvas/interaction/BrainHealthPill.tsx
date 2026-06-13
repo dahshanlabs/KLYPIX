@@ -40,9 +40,9 @@ export function BrainHealthPill({ health, onConnect, onTidy, onJump, onDismiss }
     return (
         <div data-canvas-ui="1" className="absolute bottom-4 left-16 z-40 no-drag animate-in fade-in slide-in-from-left-1 duration-200">
             {open && (
-                <div className="mb-2 w-[320px] rounded-2xl bg-[#12121a]/97 backdrop-blur-xl border border-blue-400/30 shadow-[0_8px_32px_rgba(0,0,0,0.5)] overflow-hidden animate-in fade-in slide-in-from-bottom-1 duration-150">
+                <div className="mb-2 w-[320px] rounded-2xl bg-[#12121a]/[0.98] backdrop-blur-xl border border-blue-400/30 shadow-[0_8px_32px_rgba(0,0,0,0.6)] overflow-hidden animate-in fade-in slide-in-from-bottom-1 duration-150">
                     {/* stats */}
-                    <div className="px-3.5 pt-3 pb-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-white/55">
+                    <div className="px-3.5 pt-3 pb-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-white/70">
                         <span title={t('canvas.brain.hubs_hint')}>🪢 {hubs.length} {t('canvas.brain.hubs')}</span>
                         <span>🔌 {orphans.length} {t('canvas.brain.unlinked')}</span>
                         {staleQuestions.length > 0 && <span>⏳ {staleQuestions.length} {t('canvas.brain.stale_short')}</span>}
@@ -77,7 +77,7 @@ export function BrainHealthPill({ health, onConnect, onTidy, onJump, onDismiss }
                                     {c.kind === 'orphan'
                                         ? <Unlink size={12} className="text-white/30 mt-0.5 shrink-0 group-hover:text-emerald-300/70" />
                                         : <HelpCircle size={12} className="text-amber-300/50 mt-0.5 shrink-0" />}
-                                    <span className="text-[11.5px] text-white/65 leading-snug line-clamp-2 group-hover:text-white/90">{c.headline}</span>
+                                    <span className="text-[11.5px] text-white/80 leading-snug line-clamp-2 group-hover:text-white">{c.headline}</span>
                                 </button>
                             ))}
                         </div>
