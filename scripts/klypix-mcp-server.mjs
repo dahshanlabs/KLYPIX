@@ -22,10 +22,34 @@ import crypto from 'crypto';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { parseKlypix, buildKlypix, appendToKlypix, structToMarkdown, atomicWrite } from './klypix-format.mjs';
+import { parseKlypix, buildKlypix, buildKlypixMap, appendToKlypix, structToMarkdown, atomicWrite } from './klypix-format.mjs';
 
 // IMPORTANT: stdout is the JSON-RPC channel. Never console.log — only stderr.
 const log = (...a) => console.error('[klypix-mcp]', ...a);
+
+// `npx klypix-mcp init` — 60-second onboarding: seed a starter project brain in
+// the current folder so a new user's FIRST contact isn't an empty vault, then
+// print a paste-ready MCP config. Runs before any server setup. (Dormant for
+// the in-app bundled server, which always launches with --vault.)
+if (process.argv[2] === 'init') {
+    const target = path.resolve(process.cwd(), 'brain.klypix');
+    if (fs.existsSync(target)) { console.error(`brain.klypix already exists in ${process.cwd()} — not overwriting.`); process.exit(0); }
+    const buf = await buildKlypixMap({
+        title: 'project brain',
+        areas: [
+            { title: 'Goal', cards: [{ text: '❓ What is this project for, and for whom?\nAgent: survey the repo on your first session and replace this with the real goal.' }] },
+            { title: 'Architecture', cards: [{ text: '❓ Key components and how they fit.\nAgent: record the actual shape from the repo — only what a new session must know.' }] },
+            { title: 'Decisions', cards: [{ text: 'Decisions land here automatically: agents emit `🧠 BRAIN [Area]: …` markers; a new decision that replaces an old one archives it (superseded). Resolve finished items with `✓`, correct in place with `~`. Drag any card into 📌 Focus to make it lead every session brief.' }] },
+            { title: 'Pending / next', cards: [{ text: 'What is in flight and what comes next. Close finished items with the ✓ marker.' }] },
+            { title: 'Open questions', cards: [{ text: 'Unresolved questions (the ❓ marker) live here — the session brief surfaces them first.' }] },
+            { title: '📌 Focus', cards: [{ text: 'Drag any card into this area to make it lead every session brief — steer your agent by moving cards.' }] },
+        ],
+    });
+    fs.writeFileSync(target, buf);
+    const cfg = JSON.stringify({ mcpServers: { 'klypix-canvas': { command: 'npx', args: ['-y', 'klypix-mcp', '--vault', process.cwd().replace(/\\/g, '/')] } } }, null, 2);
+    console.error(`✓ Created ${target}\n\nAdd this to your MCP client config (.mcp.json / claude_desktop_config.json):\n\n${cfg}\n\nThen ask your agent to read the canvas "brain" — it now has a project memory.`);
+    process.exit(0);
+}
 
 const vaultArgIdx = process.argv.indexOf('--vault');
 const VAULT = path.resolve(
