@@ -689,6 +689,64 @@ export function insightsToMarkdown(ins, title = 'brain') {
     return out.join('\n') + '\n';
 }
 
+// Append raw connections (by id) to a brain — additive, never deletes, skips
+// self-links / duplicates / dangling ids, verifies a round-trip parse. Used by
+// the brain_connect tool to densify a sparse brain into a real graph.
+export async function addBrainConnections(buffer, edges) {
+    const { zip, canvas, manifest, isV4 } = await parseKlypix(buffer);
+    if (!isV4 || !canvas.positions) throw new Error('connections need a v4 .klypix');
+    canvas.connections = Array.isArray(canvas.connections) ? canvas.connections : [];
+    const linked = (a, b) => canvas.connections.some(c => (c.fromId === a && c.toId === b) || (c.fromId === b && c.toId === a));
+    const rand = () => Math.random().toString(36).slice(2, 10);
+    let added = 0;
+    for (const e of edges || []) {
+        if (!e.fromId || !e.toId || e.fromId === e.toId) continue;
+        if (!canvas.positions[e.fromId] || !canvas.positions[e.toId]) continue; // both must exist
+        if (linked(e.fromId, e.toId)) continue;
+        canvas.connections.push({
+            id: `con_${rand()}`, fromId: e.fromId, toId: e.toId,
+            relationship: REL.has(e.relationship) ? e.relationship : 'relates_to',
+            label: typeof e.label === 'string' ? e.label : undefined,
+            arrowHead: true, width: 2, color: '#10b981', style: 'solid',
+        });
+        added++;
+    }
+    if (!added) return { buffer, added: 0 };
+    const out = await finalizeBrainZip(zip, canvas, manifest, Date.now());
+    return { buffer: out, added };
+}
+
+// Structural connection suggestions — pure, no embeddings (the fallback when
+// the on-device model isn't installed). Two signals: an unlinked [[title]]
+// mention in a card's text, and a shared non-area #tag between two cards.
+export function proposeStructuralConnections(struct) {
+    const live = struct.cards.filter(c => c.type !== 'container' && (c.text || '').trim() && !/^archive$/i.test(c.area || ''));
+    const linked = new Set(struct.connections.map(c => [c.fromId, c.toId].sort().join('|')));
+    const titleIx = live.filter(c => (c.title || '').trim()).map(c => ({ id: c.id, t: c.title.trim().toLowerCase() }));
+    const edges = [];
+    const take = (a, b, why) => {
+        if (a === b) return;
+        const key = [a, b].sort().join('|');
+        if (linked.has(key)) return;
+        linked.add(key);
+        edges.push({ fromId: a, toId: b, why });
+    };
+    for (const c of live) {
+        for (const link of (c.links || [])) {
+            const want = String(link).trim().toLowerCase();
+            const tgt = titleIx.find(e => e.id !== c.id && (e.t === want || e.t.startsWith(want)));
+            if (tgt) take(c.id, tgt.id, 'mention');
+        }
+        const tags = (c.tags || []).filter(t => !/^#?area$/i.test(t)); // area-tag is noise
+        for (const d of live) {
+            if (d.id <= c.id) continue;
+            const shared = tags.filter(t => (d.tags || []).includes(t));
+            if (shared.length) take(c.id, d.id, `#${shared[0]}`);
+        }
+    }
+    return edges;
+}
+
 // ── Atomic brain capture: supersede + append + resolve + auto-link ──────────
 // One verified write per capture batch. Beyond appendIntoContainers it adds:
 //   • SUPERSEDE — a new decision that heavily overlaps an existing live card in

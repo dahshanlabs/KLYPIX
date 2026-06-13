@@ -22,7 +22,7 @@ import crypto from 'crypto';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { parseKlypix, buildKlypix, buildKlypixMap, appendToKlypix, structToMarkdown, brainInsights, insightsToMarkdown, atomicWrite } from './klypix-format.mjs';
+import { parseKlypix, buildKlypix, buildKlypixMap, appendToKlypix, structToMarkdown, brainInsights, insightsToMarkdown, addBrainConnections, proposeStructuralConnections, atomicWrite } from './klypix-format.mjs';
 
 // IMPORTANT: stdout is the JSON-RPC channel. Never console.log — only stderr.
 const log = (...a) => console.error('[klypix-mcp]', ...a);
@@ -363,6 +363,71 @@ server.registerTool('brain_insights', {
         return { content: [{ type: 'text', text: insightsToMarkdown(ins, struct.title) }] };
     } catch (e) {
         return { content: [{ type: 'text', text: `Insights failed: ${e.message}` }], isError: true };
+    }
+});
+
+server.registerTool('brain_connect', {
+    title: 'Connect related-but-unlinked brain cards (densify the graph)',
+    description: 'Finds genuinely related cards that AREN\'T linked yet and proposes connections — semantic similarity when the on-device model is installed, else shared tags + [[mentions]]. Dry-run by default (review the suggestions); pass apply:true to draw them (ADDITIVE — never deletes; the human can remove any arrow). Use after brain_insights flags many orphans, to turn a flat list into a real knowledge graph.',
+    inputSchema: {
+        canvas: z.string().optional().describe('Canvas filename/path. Defaults to the project brain ("brain").'),
+        apply: z.boolean().optional().describe('false (default) = suggest only; true = draw the connections.'),
+        max: z.number().optional().describe('Max connections to propose/draw (default 24).'),
+        threshold: z.number().optional().describe('Min semantic similarity 0–1 to link (default 0.45). Higher = fewer, tighter links.'),
+    },
+}, async ({ canvas, apply = false, max = 24, threshold = 0.45 }) => {
+    const file = resolveCanvas(canvas || 'brain') || resolveCanvas('brain.klypix');
+    if (!file) return { content: [{ type: 'text', text: `No brain canvas found in ${VAULT}.` }], isError: true };
+    let struct;
+    try { ({ struct } = await parseKlypix(fs.readFileSync(file))); } catch (e) { return { content: [{ type: 'text', text: `Read failed: ${e.message}` }], isError: true }; }
+    const flat = (s) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, 70);
+    const byId = new Map(struct.cards.map(c => [c.id, c]));
+    const live = struct.cards.filter(c => c.type !== 'container' && (c.text || '').trim() && !/^archive$/i.test(c.area || ''));
+    const linked = new Set(struct.connections.map(c => [c.fromId, c.toId].sort().join('|')));
+
+    let edges = [];
+    let mode = 'structural (shared tags + [[mentions]])';
+    const pipe = await Promise.race([getEmbedder(), new Promise(r => setTimeout(() => r(null), 20_000))]);
+    if (pipe) {
+        try {
+            const vecs = await vectorsForBrain(pipe, file, struct.cards);
+            const items = live.filter(c => vecs.get(c.id));
+            for (const a of items) {
+                const av = vecs.get(a.id);
+                const sims = items
+                    .filter(b => b.id !== a.id)
+                    .map(b => ({ b, s: dot(av, vecs.get(b.id)), cross: (b.area || '') !== (a.area || '') }))
+                    .sort((x, y) => (y.s + (y.cross ? 0.03 : 0)) - (x.s + (x.cross ? 0.03 : 0))); // nudge toward cross-area links
+                let taken = 0;
+                for (const { b, s } of sims) {
+                    if (s < threshold || taken >= 2) break;       // each card keeps its ≤2 strongest fresh links
+                    const key = [a.id, b.id].sort().join('|');
+                    if (linked.has(key)) continue;
+                    linked.add(key);
+                    edges.push({ fromId: a.id, toId: b.id, sim: s });
+                    taken++;
+                }
+            }
+            edges.sort((x, y) => y.sim - x.sim);
+            mode = 'semantic (on-device)';
+        } catch (e) { mode = `structural (semantic failed: ${e.message})`; }
+    }
+    if (!edges.length && mode.startsWith('structural')) {
+        edges = proposeStructuralConnections(struct);
+    }
+    const chosen = edges.slice(0, max);
+    if (!chosen.length) return { content: [{ type: 'text', text: `Nothing to connect — no related-but-unlinked cards found (mode: ${mode}).` }] };
+
+    const render = (e) => `- ${flat(byId.get(e.fromId)?.text)} ↔ ${flat(byId.get(e.toId)?.text)}${e.sim != null ? `  (${e.sim.toFixed(2)})` : e.why ? `  (${e.why})` : ''}`;
+    if (!apply) {
+        return { content: [{ type: 'text', text: `# ${chosen.length} suggested connection(s) · ${mode}\n_Review, then re-run with apply:true to draw them._\n\n${chosen.map(render).join('\n')}` }] };
+    }
+    try {
+        const { buffer, added } = await addBrainConnections(fs.readFileSync(file), chosen);
+        await atomicWrite(file, buffer);
+        return { content: [{ type: 'text', text: `✓ Drew ${added} connection(s) into ${path.relative(VAULT, file)} (${mode}). Reopen the brain to see the new arrows.\n\n${chosen.slice(0, added).map(render).join('\n')}` }] };
+    } catch (e) {
+        return { content: [{ type: 'text', text: `Apply failed (brain unchanged): ${e.message}` }], isError: true };
     }
 });
 
