@@ -116,6 +116,7 @@ export async function parseKlypix(buffer) {
         })),
         connections: connections.map(c => ({
             from: titleOf(c.fromId), to: titleOf(c.toId),
+            fromId: c.fromId, toId: c.toId,        // raw ids — for graph analysis (brainInsights)
             relationship: c.relationship || null, label: c.label || null,
         })),
         assets: assetPaths.map(p => path.basename(p)),
@@ -630,6 +631,61 @@ export function structToBrief(struct, { recentDays = 14, maxRecent = 40, maxMile
     if (unshown > 0) hidden.push(`${unshown} older/over-budget decision${unshown === 1 ? '' : 's'}`);
     if (archivedCount > 0) hidden.push(`${archivedCount} archived/superseded`);
     if (hidden.length) push('', `*${hidden.join(' + ')} not shown — search the full brain via the klypix-canvas MCP (search/read tools) or \`node ~/.claude/project-brain/global-brain-hook.mjs --full\`.*`);
+    return out.join('\n') + '\n';
+}
+
+// ── Brain insights ───────────────────────────────────────────────────────────
+// "What matters here, and what am I forgetting?" — a deterministic structural
+// read of the brain (borrowed from graphify's GRAPH_REPORT, applied to the
+// AUTHORED brain, not derived code). Surfaces:
+//   • hubs       — the most-connected cards (load-bearing decisions)
+//   • orphans    — decision/milestone cards with NO connections (isolated;
+//                  maybe forgotten — link them or archive them)
+//   • stale ❓   — open questions older than `staleDays` (aging unknowns)
+//   • areas      — live-card count per area (what's growing / dormant)
+// Pure + node-runnable: no LLM, no network. The agent renders/acts on it.
+export function brainInsights(struct, { staleDays = 21, topHubs = 6 } = {}) {
+    const cutoff = Date.now() - staleDays * 86_400_000;
+    const isArchived = (c) => /^archive$/i.test(c.area || '');
+    const cards = struct.cards.filter(c => c.type !== 'container' && (c.text || '').trim());
+    const live = cards.filter(c => !isArchived(c));
+    const deg = new Map();
+    for (const cn of struct.connections) {
+        if (cn.fromId) deg.set(cn.fromId, (deg.get(cn.fromId) || 0) + 1);
+        if (cn.toId) deg.set(cn.toId, (deg.get(cn.toId) || 0) + 1);
+    }
+    const headline = (c) => String(c.text || '').replace(/\s+/g, ' ').trim().replace(/^(.*?)([.!?](\s|$)|$)/, '$1').slice(0, 120);
+    const isQuestion = (c) => /❓/.test(c.text);
+    const hubs = live
+        .map(c => ({ id: c.id, area: c.area, degree: deg.get(c.id) || 0, headline: headline(c) }))
+        .filter(x => x.degree > 0)
+        .sort((a, b) => b.degree - a.degree)
+        .slice(0, topHubs);
+    const orphans = live
+        .filter(c => !isQuestion(c) && !/🌿|⤵/.test(c.text) && !(deg.get(c.id) > 0))
+        .map(c => ({ id: c.id, area: c.area, headline: headline(c), age: c.createdAt }));
+    const staleQuestions = live
+        .filter(c => isQuestion(c) && (c.createdAt || 0) < cutoff)
+        .map(c => ({ id: c.id, area: c.area, headline: headline(c), age: c.createdAt }))
+        .sort((a, b) => (a.age || 0) - (b.age || 0));
+    const areas = struct.cards
+        .filter(c => c.type === 'container' && !/^archive$/i.test(c.title || ''))
+        .map(c => ({ title: c.title, count: cards.filter(t => t.parentId === c.id).length }))
+        .sort((a, b) => b.count - a.count);
+    return {
+        hubs, orphans, staleQuestions, areas,
+        totals: { live: live.length, archived: cards.length - live.length, connections: struct.connections.length },
+    };
+}
+
+// Render brainInsights as a compact markdown report (used by the MCP tool).
+export function insightsToMarkdown(ins, title = 'brain') {
+    const out = [`# ${title} — insights`, `*${ins.totals.live} live cards · ${ins.totals.archived} archived · ${ins.totals.connections} connections*`];
+    if (ins.hubs.length) { out.push('', '## 🪢 Hubs (most-connected — the load-bearing cards)'); for (const h of ins.hubs) out.push(`- (${h.degree}) [${h.area || '?'}] ${h.headline}`); }
+    if (ins.orphans.length) { out.push('', `## 🔌 Orphaned decisions (${ins.orphans.length} — no connections; link them or archive)`); for (const o of ins.orphans.slice(0, 12)) out.push(`- [${o.area || '?'}] ${o.headline}`); if (ins.orphans.length > 12) out.push(`- …and ${ins.orphans.length - 12} more`); }
+    if (ins.staleQuestions.length) { out.push('', `## ⏳ Stale open questions (${ins.staleQuestions.length} — unresolved & aging)`); for (const q of ins.staleQuestions.slice(0, 12)) out.push(`- [${q.area || '?'}] ${q.headline}`); }
+    out.push('', '## 📍 Areas (by live cards)', ins.areas.map(a => `${a.title} (${a.count})`).join(' · ') || '(none)');
+    if (!ins.hubs.length && !ins.orphans.length && !ins.staleQuestions.length) out.push('', '_Brain is small/tidy — no hubs, orphans, or stale questions to flag yet._');
     return out.join('\n') + '\n';
 }
 

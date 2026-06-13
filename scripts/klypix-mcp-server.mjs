@@ -22,7 +22,7 @@ import crypto from 'crypto';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { parseKlypix, buildKlypix, buildKlypixMap, appendToKlypix, structToMarkdown, atomicWrite } from './klypix-format.mjs';
+import { parseKlypix, buildKlypix, buildKlypixMap, appendToKlypix, structToMarkdown, brainInsights, insightsToMarkdown, atomicWrite } from './klypix-format.mjs';
 
 // IMPORTANT: stdout is the JSON-RPC channel. Never console.log — only stderr.
 const log = (...a) => console.error('[klypix-mcp]', ...a);
@@ -345,6 +345,25 @@ server.registerTool('search_all_brains', {
     const mode = qv ? 'semantic+lexical (on-device)' : 'lexical (semantic model warming — retry for semantic ranking)';
     const asOfNote = asOfTs != null ? ` · as of ${as_of}` : '';
     return { content: [{ type: 'text', text: `# Cross-project matches for "${query}" (${scored.length} hits in ${brains.length} brains, top ${top.length} · ${mode}${asOfNote})\n\n${lines.join('\n')}` }] };
+});
+
+server.registerTool('brain_insights', {
+    title: 'What matters in a brain — hubs, orphans, stale questions',
+    description: 'Structural read of a brain.klypix: the most-connected "hub" cards (load-bearing decisions), orphaned decisions (no connections — maybe forgotten), stale open questions (aging & unresolved), and area sizes. Use to answer "what matters here / what am I forgetting / what should I review?" — read it at the start of a planning session, or before tidying.',
+    inputSchema: {
+        canvas: z.string().optional().describe('Canvas filename/path. Defaults to the project brain ("brain").'),
+        staleDays: z.number().optional().describe('Open questions older than this many days count as stale (default 21).'),
+    },
+}, async ({ canvas, staleDays }) => {
+    const file = resolveCanvas(canvas || 'brain') || resolveCanvas('brain.klypix');
+    if (!file) return { content: [{ type: 'text', text: `No brain canvas found in ${VAULT}. Pass canvas: "<name>", or run \`npx klypix-mcp init\` to create one.` }], isError: true };
+    try {
+        const { struct } = await parseKlypix(fs.readFileSync(file));
+        const ins = brainInsights(struct, staleDays ? { staleDays } : {});
+        return { content: [{ type: 'text', text: insightsToMarkdown(ins, struct.title) }] };
+    } catch (e) {
+        return { content: [{ type: 'text', text: `Insights failed: ${e.message}` }], isError: true };
+    }
 });
 
 // Format the cards (optionally only a set of new ids) + connection graph so an
