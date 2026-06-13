@@ -35,7 +35,7 @@ import { SandboxManager } from './sandbox/sandboxManager';
 import { CommandExecutor, type ApprovalRequest } from './sandbox/commandExecutor';
 import { FileManager } from './sandbox/fileManager';
 import { FallbackExecutor } from './sandbox/fallbackExecutor';
-import { generateXLSX, generateDOCX, generatePPTX, generatePDF } from './generators/index';
+import { generateXLSX, generateDOCX, generatePPTX, renderPdf } from './generators/index';
 import { saveAnyFile, loadAnyFile, listAnyVersions, loadAnyVersion, readAssetBytes, evictZipCache } from './canvas/anyFileHandler';
 import { saveKlypixFile, loadKlypixFile, detectKlypixFormat } from './canvas/klypixFileHandler';
 import { openAndWatch as embedOpenAndWatch, openAndWatchLeaf as embedOpenAndWatchLeaf, stopWatching as embedStopWatching, cleanupCanvas as embedCleanupCanvas, setEmbedEventSink } from './canvas/embedWatcher';
@@ -2245,6 +2245,13 @@ function writeBrainRules(folder: string): string[] {
         'cards the human placed lead it, then open questions + recent headlines); fetch any full',
         'card via the klypix MCP search, and use `search_all_brains` when the answer may live in',
         'ANOTHER project\'s brain. (No hook installed? append with the MCP `add_to_canvas` instead.)',
+        '',
+        '**First session in a fresh project?** The brain starts with placeholder Goal +',
+        'Architecture areas. Survey the repo (structure, entry points, key modules, the stack)',
+        'and fill them with what a FUTURE session must know to be productive — DISTILLED, not',
+        'exhaustive (you can always re-read the code; the brain holds the map, not a copy). Use',
+        '`🧠 BRAIN [Architecture]: <load-bearing fact>` for structure. The brain remembers the',
+        'codebase as decided understanding, not an auto-generated index.',
         '<!-- klypix-brain:end -->',
         '',
     ].join('\n');
@@ -5229,7 +5236,7 @@ ipcMain.handle('canvas:compile-bytes', async (_evt: any, args: { format: 'pdf' |
             case 'xlsx': buffer = await generateXLSX(args.spec); break;
             case 'docx': buffer = await generateDOCX(args.spec); break;
             case 'pptx': buffer = await generatePPTX(args.spec); break;
-            case 'pdf':  buffer = await generatePDF(args.content || '', { title: args.spec?.metadata?.title }); break;
+            case 'pdf':  buffer = await renderPdf(args.content || '', { title: args.spec?.metadata?.title }); break;
             default: return { ok: false, error: `unsupported format: ${args.format}` };
         }
         const fileName = (args.fileName || `compiled.${args.format}`).replace(/[\\/:*?"<>|]+/g, '_');
@@ -5271,7 +5278,7 @@ ipcMain.handle('generate-file', async (_event: any, { format, spec, content }: a
                 filterName = 'PowerPoint Presentation';
                 break;
             case 'pdf':
-                buffer = await generatePDF(content || '');
+                buffer = await renderPdf(content || '', spec?.title ? { title: spec.title } : undefined);
                 filterName = 'PDF Document';
                 break;
             default:
