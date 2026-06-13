@@ -821,10 +821,28 @@ export async function captureIntoBrain(buffer, { cards = [], resolutions = [], u
             if (pos) canvas.positions[id] = { ...pos, h: measureCardH(j.content) };
             return true;
         };
-        const archiveCard = (id) => {
+        const archiveCard = async (id) => {
             const arc = ensureArchive();
+            // The Archive is readable STORAGE, not a vector-scaled layout: un-bake
+            // any group-shrink (font/width baked tiny) by restoring the frozen
+            // authored baseline and dropping it, so the card sits in the Archive
+            // at full readable size and re-seeds cleanly if the Archive is resized.
+            let authoredW = null;
+            const ip = `items/${shard(id)}/${id}.json`;
+            const f = zip.file(ip);
+            if (f) {
+                const j = JSON.parse(await f.async('string'));
+                const a = j.authoredInParent;
+                if (a) {
+                    if (j.type === 'text' && a.fontSize) j.fontSize = a.fontSize;
+                    if (a.authoredWidth != null) j.authoredWidth = a.authoredWidth;
+                    authoredW = a.w || null;
+                    delete j.authoredInParent;
+                    zip.file(ip, JSON.stringify(j));
+                }
+            }
             const pos = canvas.positions[id];
-            if (pos) canvas.positions[id] = { ...pos, parentId: arc };
+            if (pos) canvas.positions[id] = { ...pos, parentId: arc, ...(authoredW ? { w: authoredW } : {}) };
         };
         canvas.connections = Array.isArray(canvas.connections) ? canvas.connections : [];
 
@@ -843,7 +861,7 @@ export async function captureIntoBrain(buffer, { cards = [], resolutions = [], u
                     j.content = `${j.content}\n✅ ${today}: ${r.text}`;
                     j.borderColor = 'rgba(16,185,129,0.35)';
                 });
-                archiveCard(best.id);
+                await archiveCard(best.id);
                 best.text += ` ✅ ${r.text}`; // keep in-memory struct honest for later matching
                 stats.resolved++;
             } else {
@@ -896,7 +914,7 @@ export async function captureIntoBrain(buffer, { cards = [], resolutions = [], u
                     j.content = `↩︎ superseded ${today}\n${j.content}`;
                     j.borderColor = 'rgba(120,120,135,0.5)';
                 });
-                archiveCard(best.id);
+                await archiveCard(best.id);
                 best.text = `↩︎ ${best.text}`;
                 card.__supersedes = best.id;
                 stats.superseded++;

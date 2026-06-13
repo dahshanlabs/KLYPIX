@@ -127,7 +127,14 @@ ${areas.map(a => `AREA: ${a.title}\n${a.candidates.map(c => `- ${c.content.repla
         ctx.dispatch({ type: 'ADD_ITEM', item: synth });
         made++;
         for (const c of area.candidates) {
-            ctx.dispatch({ type: 'UPDATE_ITEM', id: c.id, patch: { content: `⤵ consolidated ${today}\n${c.content}`, parentId: archiveId, borderColor: 'rgba(120,120,135,0.5)' } });
+            // Un-bake any group-shrink as the card enters the Archive (readable
+            // storage, not a vector-scaled layout): restore its authored font /
+            // width from the frozen baseline and drop it so it sits full-size.
+            const a = c.authoredInParent;
+            const unbake = a
+                ? { fontSize: a.fontSize ?? c.fontSize, w: a.w ?? c.w, authoredWidth: a.authoredWidth, authoredInParent: undefined }
+                : {};
+            ctx.dispatch({ type: 'UPDATE_ITEM', id: c.id, patch: { content: `⤵ consolidated ${today}\n${c.content}`, parentId: archiveId, borderColor: 'rgba(120,120,135,0.5)', ...unbake } });
             const conn: Connection = { id: newId('conn'), fromId: c.id, toId: synth.id, label: 'consolidated into', color: 'rgba(120,120,135,0.7)', width: 1.5, arrowHead: true, style: 'solid', createdBy: 'agent' };
             ctx.dispatch({ type: 'ADD_CONNECTION', connection: conn });
             merged++;

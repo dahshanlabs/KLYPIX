@@ -149,6 +149,31 @@ function normalizeV3(doc: CanvasDocumentV3): CanvasDocumentV3 {
             }
         }
     }
+
+    // Heal archived cards that a past group-shrink baked microscopic. The
+    // Archive is readable STORAGE, not a designed (proportionally vector-scaled)
+    // layout, so an archived text card whose font was scaled below readability
+    // is restored to its authored size — the frozen baseline (authoredInParent)
+    // is intact — and that baseline is dropped so it re-seeds full-size in the
+    // Archive. Idempotent: once font ≥ floor it never re-triggers. (Root-caused
+    // from a superseded card rendering at fontSize 3.2 vs the authored 12.)
+    const ARCHIVE_FONT_FLOOR = 6;
+    const archiveIds = new Set(
+        doc.items.filter(it => it && it.type === 'container' && /^archive$/i.test((it as { title?: string }).title || '')).map(it => it.id),
+    );
+    if (archiveIds.size) {
+        for (const it of doc.items) {
+            if (!it || it.type !== 'text' || !it.parentId || !archiveIds.has(it.parentId)) continue;
+            const t = it as { fontSize?: number; w?: number; authoredWidth?: number; authoredInParent?: { fontSize?: number; w?: number; authoredWidth?: number } };
+            const a = t.authoredInParent;
+            if (a && a.fontSize && (t.fontSize ?? 0) < ARCHIVE_FONT_FLOOR) {
+                t.fontSize = a.fontSize;
+                if (a.w) t.w = a.w;
+                if (a.authoredWidth != null) t.authoredWidth = a.authoredWidth;
+                t.authoredInParent = undefined;
+            }
+        }
+    }
     return doc;
 }
 
