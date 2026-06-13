@@ -18,7 +18,8 @@
     "build": "vite build && npx tsc -p tsconfig.electron.json && node scripts/build-electron.js && electron-builder",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "brain:eval": "node scripts/brain-eval.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
