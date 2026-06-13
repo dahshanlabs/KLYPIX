@@ -31,8 +31,9 @@ const SUGGESTED_COMMANDS = [
     '/cleanup',
 ];
 // /garden still WORKS if typed (power users / agents), but it's intentionally
-// not a visible chip — the brain offers tidying via the proactive TidyBrainPill
-// instead, so normal users never need to learn a slash command for maintenance.
+// not a visible chip — the brain offers tidying (and connecting) via the
+// proactive Brain Health pill instead, so normal users never need to learn a
+// slash command for maintenance.
 
 export function CommandBar({ open, onClose, onStartRun, onGarden }: Props) {
     useLocale();

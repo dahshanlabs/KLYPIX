@@ -42,8 +42,9 @@ import { buildTitleIndex, resolveWikilink, findCardsWithTag, computeBacklinks } 
 import { CommandBar } from './interaction/CommandBar';
 import { AgentRunsTray } from './interaction/AgentRunsTray';
 import { useAgentRuns } from './agent/useAgentRuns';
-import { runBrainGardener, selectConsolidationCandidates } from './agent/brainGardener';
-import { TidyBrainPill } from './interaction/TidyBrainPill';
+import { runBrainGardener } from './agent/brainGardener';
+import { computeBrainHealth, structuralConnectEdges } from './agent/brainHealth';
+import { BrainHealthPill } from './interaction/BrainHealthPill';
 import { Breadcrumbs } from './interaction/Breadcrumbs';
 import { ContextMenu } from './interaction/ContextMenu';
 import { TextFormatCapsule } from './interaction/TextFormatCapsule';
@@ -988,16 +989,40 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             onToast: (text) => setToast({ text, id: Date.now() }),
         });
     }, [dispatch, pushSnapshot]);
-    // "This brain could be tidied" — cheap, pure (no LLM): null on a normal
-    // canvas / below threshold, so the pill is silent until consolidation is
-    // genuinely worth offering. Recomputes when items change (incl. after a
-    // garden run → candidates drop → pill auto-hides).
+    // Brain Health — cheap, pure (no LLM): the in-app twin of brain_insights.
+    // null on a normal/small canvas, so the pill stays silent there. Recomputes
+    // when items/connections change (after connect or garden → counts drop →
+    // pill auto-updates / hides). `brainActionable` is the show gate: only nudge
+    // when there's a real lever to pull, not for a brain with 1–2 loose cards.
     const [tidyDismissed, setTidyDismissed] = useState(false);
-    const tidyCandidates = useMemo(() => {
-        const areas = selectConsolidationCandidates(state.items, state.order);
-        if (!areas.length) return null;
-        return { areas: areas.length, cards: areas.reduce((n, a) => n + a.candidates.length, 0) };
-    }, [state.items, state.order]);
+    const brainHealth = useMemo(() => computeBrainHealth(state), [state.items, state.order, state.connections]);
+    const brainActionable = !!brainHealth && (brainHealth.tidyable > 0 || brainHealth.connectable > 0 || brainHealth.staleQuestions.length > 0 || brainHealth.orphans.length >= 5);
+
+    // One-click in-app connect: link related-but-unlinked cards by shared tag /
+    // [[mention]] (structural — semantic linking lives in the MCP brain_connect,
+    // where the model is). Additive, ONE undo step. Zero edges → a hint toast.
+    const connectRelated = useCallback(() => {
+        const edges = structuralConnectEdges(stateRef.current);
+        if (!edges.length) { setToast({ text: tLocale('canvas.brain.no_structural'), id: Date.now() }); return; }
+        pushSnapshot();
+        for (const e of edges) {
+            dispatch({ type: 'ADD_CONNECTION', connection: { id: newId('conn'), fromId: e.fromId, toId: e.toId, label: '', color: 'rgba(16,185,129,0.55)', width: 1.5, arrowHead: true, style: 'solid', createdBy: 'agent', relationship: 'relates_to' } });
+        }
+        setToast({ text: tLocale('canvas.brain.connected').replace('{n}', String(edges.length)), id: Date.now() });
+    }, [dispatch, pushSnapshot]);
+
+    // Jump-to-card from the Brain Health list: select + center it (same framing
+    // as wikilink-nav).
+    const jumpToCard = useCallback((id: string) => {
+        const it = stateRef.current.items[id] as CanvasItem | undefined;
+        if (!it) return;
+        dispatch({ type: 'SELECT', ids: [id] });
+        const view = fitToViewport(
+            { x: it.x - 200, y: it.y - 200, w: (it.w ?? 0) + 400, h: (it.h ?? 0) + 400 },
+            { w: window.innerWidth, h: window.innerHeight },
+        );
+        dispatch({ type: 'SET_VIEW', view });
+    }, [dispatch]);
     const [searchOpen, setSearchOpen] = useState(false);
     const [outlineOpen, setOutlineOpen] = useState(false);
     const [layersOpen, setLayersOpen] = useState(false);
@@ -3396,11 +3421,12 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 onGarden={runGarden}
             />
             <AgentRunsTray runs={agentRuns.runs} onStop={agentRuns.stop} onDismiss={agentRuns.dismiss} onOpen={() => setCommandOpen(true)} />
-            {tabActive && tidyCandidates && !tidyDismissed && (
-                <TidyBrainPill
-                    cardCount={tidyCandidates.cards}
-                    areaCount={tidyCandidates.areas}
-                    onTidy={() => { setTidyDismissed(true); runGarden(); }}
+            {tabActive && brainHealth && brainActionable && !tidyDismissed && (
+                <BrainHealthPill
+                    health={brainHealth}
+                    onConnect={connectRelated}
+                    onTidy={runGarden}
+                    onJump={jumpToCard}
                     onDismiss={() => setTidyDismissed(true)}
                 />
             )}

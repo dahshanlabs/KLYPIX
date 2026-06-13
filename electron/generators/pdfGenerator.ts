@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { containsArabic } from './arabicUtil';
@@ -81,10 +82,14 @@ const SPACING = {
 // electron main process runs from dist-electron/, so the relative jump is
 // ../dist/. Mirrors the pattern used for logo.png in electron/main.ts.
 function resolveFontPath(filename: string): string {
-    const isDev = process.env.NODE_ENV === 'development';
+    // Compiled to dist-electron/generators/, so fonts are two levels up
+    // (../../public in dev, ../../dist when packaged). This previously used a
+    // single ../ and keyed only off NODE_ENV, so the Thmanyah load silently
+    // failed and Arabic fell back to Helvetica.
+    const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
     const base = isDev
-        ? path.join(__dirname, '../public/fonts/thmanyah')
-        : path.join(__dirname, '../dist/fonts/thmanyah');
+        ? path.join(__dirname, '../../public/fonts/thmanyah')
+        : path.join(__dirname, '../../dist/fonts/thmanyah');
     return path.join(base, filename);
 }
 

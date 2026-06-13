@@ -107,7 +107,7 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
     // component only mounts while shown, so active:true is correct). Selecting
     // chips filters the canvas lists client-side via an O(1) Set membership
     // check — never a file read on toggle.
-    const { tags, tagToPaths } = useVaultTags({ active: true });
+    const { tags, tagToPaths, loading: tagsLoading } = useVaultTags({ active: true });
     const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
     const matchingPaths = React.useMemo(() => {
         if (selectedTags.size === 0) return null; // null = no filter (show all)
@@ -321,8 +321,11 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
 
                 {/* Tag filter chips (Obsidian-comfort). Click to filter the lists
                     below to canvases carrying that #tag. O(1) Set check per row
-                    on toggle — no file reads. Hidden when the vault has no tags. */}
-                {tags.length > 0 && (
+                    on toggle — no file reads. Hidden when the vault has no tags.
+                    While the index builds (cold open) we render shimmer pills in
+                    the SAME row so the chips swap in smoothly instead of popping
+                    the layout open after a hang. */}
+                {(tags.length > 0 || tagsLoading) && (
                     <div style={{ marginBottom: 14, flexShrink: 0 }}>
                         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.4)', marginBottom: 7 }}>
                             FILTER BY TAG
@@ -332,6 +335,8 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                             onWheel={(e) => e.stopPropagation()}
                             style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'flex-start', maxHeight: 120, overflowY: 'auto' }}
                         >
+                            {/* Cold open: full skeleton until the first batch lands. */}
+                            {tags.length === 0 && tagsLoading && <TagChipsSkeleton />}
                             {tags.map(({ tag, count }) => {
                                 const key = tag.toLowerCase();
                                 const on = selectedTags.has(key);
@@ -354,6 +359,10 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
                                     </button>
                                 );
                             })}
+                            {/* Chips already showing but more batches in flight:
+                                a short shimmer tail keeps the wave-fill reading
+                                as intentional rather than a half-loaded list. */}
+                            {tags.length > 0 && tagsLoading && <TagChipsSkeleton count={4} />}
                             {selectedTags.size > 0 && (
                                 <button
                                     onPointerDown={(e) => { e.stopPropagation(); setSelectedTags(new Set()); }}
@@ -547,6 +556,28 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
         </div>
     ), document.body);
 };
+
+// Shimmer placeholder for the tag-filter row while the vault index builds on
+// a cold dashboard open. Reserves the row's vertical space + animates, so the
+// real chips swap IN smoothly rather than popping the layout open after the
+// "hang". Fixed pill widths (varied) read as a believable tag cloud; reuses
+// the shared `.shimmer-bar` class from index.css.
+const TAG_SKELETON_WIDTHS = [64, 86, 52, 98, 70, 48, 80, 58, 92, 66];
+function TagChipsSkeleton({ count }: { count?: number }) {
+    const widths = count != null ? TAG_SKELETON_WIDTHS.slice(0, count) : TAG_SKELETON_WIDTHS;
+    return (
+        <>
+            {widths.map((w, i) => (
+                <div
+                    key={'sk' + i}
+                    className="shimmer-bar"
+                    aria-hidden="true"
+                    style={{ width: w, height: 24, borderRadius: 999, flexShrink: 0 }}
+                />
+            ))}
+        </>
+    );
+}
 
 // ── Pending-invitation inbox row (2026-05-30) ───────────────────────────
 function PendingInviteRow({ invite, busy, onAccept, onDecline }: {

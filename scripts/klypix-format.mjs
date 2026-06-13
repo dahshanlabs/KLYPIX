@@ -717,32 +717,45 @@ export async function addBrainConnections(buffer, edges) {
 }
 
 // Structural connection suggestions — pure, no embeddings (the fallback when
-// the on-device model isn't installed). Two signals: an unlinked [[title]]
-// mention in a card's text, and a shared non-area #tag between two cards.
-export function proposeStructuralConnections(struct) {
+// the on-device model isn't installed, and the twin of the in-app Connect
+// button). Signals, strongest first: an unlinked [[title]] mention (3), a
+// shared topical tag ACROSS areas (2), a shared tag within an area (1). The
+// area-name tag is dropped (redundant with containment), and — crucially —
+// each card keeps at most `maxPerCard` links, so a tag shared by ten cards
+// can't explode into a 45-edge clique. Mirrors the semantic pass's discipline.
+export function proposeStructuralConnections(struct, { maxPerCard = 2 } = {}) {
     const live = struct.cards.filter(c => c.type !== 'container' && (c.text || '').trim() && !/^archive$/i.test(c.area || ''));
     const linked = new Set(struct.connections.map(c => [c.fromId, c.toId].sort().join('|')));
     const titleIx = live.filter(c => (c.title || '').trim()).map(c => ({ id: c.id, t: c.title.trim().toLowerCase() }));
-    const edges = [];
-    const take = (a, b, why) => {
-        if (a === b) return;
-        const key = [a, b].sort().join('|');
-        if (linked.has(key)) return;
-        linked.add(key);
-        edges.push({ fromId: a, toId: b, why });
-    };
+    const tagsOf = (c) => (c.tags || [])
+        .map(t => String(t).toLowerCase().replace(/^#/, ''))
+        .filter(t => t && t !== 'area' && t !== String(c.area || '').toLowerCase());
+    const cand = [];
     for (const c of live) {
         for (const link of (c.links || [])) {
             const want = String(link).trim().toLowerCase();
             const tgt = titleIx.find(e => e.id !== c.id && (e.t === want || e.t.startsWith(want)));
-            if (tgt) take(c.id, tgt.id, 'mention');
+            if (tgt) cand.push({ a: c.id, b: tgt.id, score: 3, why: 'mention' });
         }
-        const tags = (c.tags || []).filter(t => !/^#?area$/i.test(t)); // area-tag is noise
+        const ct = tagsOf(c);
+        if (!ct.length) continue;
         for (const d of live) {
             if (d.id <= c.id) continue;
-            const shared = tags.filter(t => (d.tags || []).includes(t));
-            if (shared.length) take(c.id, d.id, `#${shared[0]}`);
+            if (tagsOf(d).some(t => ct.includes(t))) cand.push({ a: c.id, b: d.id, score: c.area !== d.area ? 2 : 1, why: 'shared tag' });
         }
+    }
+    cand.sort((x, y) => y.score - x.score);
+    const per = new Map();
+    const edges = [];
+    for (const e of cand) {
+        if (e.a === e.b) continue;
+        const key = [e.a, e.b].sort().join('|');
+        if (linked.has(key)) continue;
+        if ((per.get(e.a) || 0) >= maxPerCard || (per.get(e.b) || 0) >= maxPerCard) continue;
+        linked.add(key);
+        per.set(e.a, (per.get(e.a) || 0) + 1);
+        per.set(e.b, (per.get(e.b) || 0) + 1);
+        edges.push({ fromId: e.a, toId: e.b, why: e.why });
     }
     return edges;
 }

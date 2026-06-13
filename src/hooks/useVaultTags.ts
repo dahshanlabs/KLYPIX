@@ -25,7 +25,11 @@ function ensureStalenessSub() {
  */
 export function useVaultTags({ active }: { active: boolean }) {
     const [index, setIndex] = useState<VaultTagIndex | null>(cached);
-    const [loading, setLoading] = useState(false);
+    // Seed `loading` true on a cold/stale open so the dashboard can paint the
+    // tag-row shimmer on the FIRST frame — without this, the row starts empty,
+    // the index build "hangs", then chips pop in and shove the list down. A
+    // fresh cache seeds false (chips render immediately, no shimmer).
+    const [loading, setLoading] = useState(() => active && !(cached && builtGen === staleGen));
     const abortRef = useRef<AbortController | null>(null);
 
     useEffect(() => { ensureStalenessSub(); }, []);
@@ -38,7 +42,11 @@ export function useVaultTags({ active }: { active: boolean }) {
         abortRef.current = ac;
         const gen = staleGen;
         setLoading(true);
-        buildVaultTagIndex(listRecentCanvases(), ac.signal)
+        buildVaultTagIndex(listRecentCanvases(), ac.signal, partial => {
+            // Progressive: paint chips in waves as each batch lands. We do NOT
+            // cache partials — only the final, complete index is cached below.
+            if (!ac.signal.aborted) setIndex(partial);
+        })
             .then(idx => {
                 if (ac.signal.aborted) return;
                 cached = idx; builtGen = gen;
