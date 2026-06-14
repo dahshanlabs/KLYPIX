@@ -908,6 +908,41 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     }, [state.title, state.isDirty, hasContent, state.filePath]);
     const [isDragOver, setIsDragOver] = useState(false);
     const [commandOpen, setCommandOpen] = useState(false);
+    // Voice FAB placement: the FAB sits bottom-CENTER on a wide window, but on a
+    // narrow one (e.g. Windows half-snap) the centered FAB collides with the
+    // bottom-right status bar. When that would happen we right-anchor the FAB
+    // just left of the status bar instead. `fabRightPx` = px from the right edge
+    // when shifted, or null when centered. The FAB + status bar are positioned
+    // relative to the full-width canvas surface, so window width is the measure;
+    // the status bar's own width is dynamic (title / shared-by / item count) so
+    // we observe it too.
+    const statusBarRef = useRef<HTMLDivElement | null>(null);
+    const [fabRightPx, setFabRightPx] = useState<number | null>(null);
+    useEffect(() => {
+        const recompute = () => {
+            const w = window.innerWidth;
+            if (!w) return;
+            const statusW = statusBarRef.current?.offsetWidth ?? 0;
+            const FAB = 40;   // button diameter
+            const EDGE = 12;  // matches the status bar's right-3 / FAB's bottom-3
+            const GAP = 12;   // breathing room between FAB and status bar
+            const centeredRightEdge = w / 2 + FAB / 2;
+            const statusLeftEdge = w - EDGE - statusW;
+            if (statusW > 0 && centeredRightEdge + GAP > statusLeftEdge) {
+                setFabRightPx(EDGE + statusW + GAP);
+            } else {
+                setFabRightPx(null);
+            }
+        };
+        recompute();
+        window.addEventListener('resize', recompute);
+        let ro: ResizeObserver | null = null;
+        if (statusBarRef.current) {
+            ro = new ResizeObserver(recompute);
+            ro.observe(statusBarRef.current);
+        }
+        return () => { window.removeEventListener('resize', recompute); ro?.disconnect(); };
+    }, [tabActive]);
     // `kind: 'simple'` strips the pin/dismiss buttons and shortens the
     // timeout. Used for system feedback (OCR result, "folder packed", etc.)
     // where the actual artifact already exists on the canvas — no need to
@@ -3828,7 +3863,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 'Untitled' is the canonical state value (kept in English so
                 .klypix files don't change shape across locales); we only
                 translate it at display time. Same for the tool name. */}
-            <div data-canvas-ui="1" className="absolute bottom-3 right-3 z-20 no-drag flex items-center gap-2 px-2.5 py-1 rounded-full bg-black/60 border border-white/10 text-[10px] text-white/50 font-medium tracking-wider uppercase">
+            <div ref={statusBarRef} data-canvas-ui="1" className="absolute bottom-3 right-3 z-20 no-drag flex items-center gap-2 px-2.5 py-1 rounded-full bg-black/60 border border-white/10 text-[10px] text-white/50 font-medium tracking-wider uppercase">
                 <span className={state.isDirty ? 'text-amber-300' : 'text-white/70'}>
                     {state.isDirty ? '• ' : ''}{state.title === 'Untitled' ? tLocale('status.untitled') : state.title}
                 </span>
@@ -3890,13 +3925,16 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 otherwise into the floating transcription card. */}
             <div
                 data-canvas-ui="1"
-                className="absolute bottom-3 left-1/2 z-30 no-drag"
-                style={{
-                    transform: commandOpen
-                        ? 'translateX(calc(50vw - 52px))'
-                        : 'translateX(-50%)',
-                    transition: 'transform 200ms ease-out',
-                }}
+                className="absolute bottom-3 z-30 no-drag"
+                style={
+                    commandOpen
+                        ? { left: '50%', transform: 'translateX(calc(50vw - 52px))', transition: 'transform 200ms ease-out' }
+                        : fabRightPx != null
+                            // Narrow window: anchor just left of the status bar.
+                            ? { right: fabRightPx, transition: 'right 200ms ease-out' }
+                            // Wide window: bottom-center.
+                            : { left: '50%', transform: 'translateX(-50%)', transition: 'transform 200ms ease-out' }
+                }
             >
                 <button
                     ref={canvasVoiceFabRef}

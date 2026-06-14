@@ -677,6 +677,10 @@ function createWindow() {
                 preMaximizeBounds = null;
                 mainWindow.webContents.send('maximize-state-changed', false);
             }
+            // Same for edge-snap: a manual resize means the user has taken over
+            // the size, so forget the snap (a later drag won't pop to a stale
+            // pre-snap size). Cap is reasserted on the next maximize/fullscreen.
+            if (snapSide) { snapSide = null; preSnapBounds = null; }
             // Signal resizing start to frontend for performance mode
             mainWindow.webContents.send('window-resizing', true);
             if (resizeTimer)
@@ -1764,6 +1768,8 @@ ipcMain.handle('toggle-maximize', () => {
         return false;
     isTogglingMaximize = true;
     setTimeout(() => { isTogglingMaximize = false; }, 200); // Clear after events settle
+    // An explicit maximize supersedes any edge-snap; drop the snap bookkeeping.
+    snapSide = null; preSnapBounds = null;
     const { workArea } = screen.getPrimaryDisplay();
     if (preMaximizeBounds) {
         // Restore to the bounds we had before maximizing
@@ -1798,13 +1804,80 @@ ipcMain.handle('is-maximized', () => {
 // cursor at ~120fps and repositions the window by the delta.
 let dragPoll: NodeJS.Timeout | null = null;
 let dragAnchor: { cursor: { x: number; y: number }; win: { x: number; y: number }; size: { width: number; height: number } } | null = null;
+
+// --- Windows-style edge snap (Aero Snap replica) ---
+// The window is frameless and dragged by a manual cursor poll (see the
+// drag-start handler), so native Aero Snap never fires — Windows only snaps
+// windows IT moves, not ones we reposition via setBounds. We replicate it:
+// while dragging, if the cursor reaches a work-area edge we remember which
+// snap that edge implies and apply it on release. Dragging a snapped window
+// "pops" it back to its pre-snap size under the cursor, exactly like Windows.
+type SnapSide = 'left' | 'right' | 'maxed';
+let snapSide: SnapSide | null = null;            // current snapped state, if any
+let preSnapBounds: Electron.Rectangle | null = null; // size/pos to restore on un-snap
+let pendingSnap: SnapSide | null = null;         // edge under cursor during the live drag
+const SNAP_EDGE = 24;                            // px proximity to an edge that arms a snap
+
+// The screen region a given snap targets, in work-area coords.
+function snapTargetBounds(side: SnapSide, wa: Electron.Rectangle): Electron.Rectangle {
+    if (side === 'maxed') return { x: wa.x, y: wa.y, width: wa.width, height: wa.height };
+    if (side === 'left') return { x: wa.x, y: wa.y, width: Math.floor(wa.width / 2), height: wa.height };
+    const w = Math.floor(wa.width / 2);
+    return { x: wa.x + wa.width - w, y: wa.y, width: w, height: wa.height };
+}
+
+function applySnap(side: SnapSide) {
+    if (!mainWindow) return;
+    const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+    // Lift the 750-wide overlay cap so a half/full snap isn't clamped, and
+    // behave like a normal taskbar window while snapped (matches maximize).
+    mainWindow.setMaximumSize(0, 0);
+    isTogglingMaximize = true;
+    setTimeout(() => { isTogglingMaximize = false; }, 200);
+    const target = snapTargetBounds(side, wa);
+    lastSetWidth = target.width;
+    lastSetHeight = target.height;
+    mainWindow.setBounds(target, true);
+    snapSide = side;
+    applyOverlayMode(false);
+}
+
 ipcMain.on('window:drag-start', () => {
     if (!mainWindow) return;
     if (preMaximizeBounds || preCanvasFullscreenBounds) return; // never drag while maximized
     if (dragPoll) { clearInterval(dragPoll); dragPoll = null; }
+    pendingSnap = null;
+
+    // If currently snapped, "pop out" to the pre-snap size and re-home the
+    // window under the cursor so the rest of the drag feels like un-snapping.
+    if (snapSide && preSnapBounds) {
+        const cur = screen.getCursorScreenPoint();
+        const [px, py] = mainWindow.getPosition();
+        const [cw, ch] = mainWindow.getSize();
+        const fracX = cw > 0 ? (cur.x - px) / cw : 0.5;
+        const fracY = ch > 0 ? (cur.y - py) / ch : 0;
+        const restoreW = preSnapBounds.width;
+        const restoreH = preSnapBounds.height;
+        mainWindow.setMaximumSize(750, 1200);
+        isTogglingMaximize = true;
+        setTimeout(() => { isTogglingMaximize = false; }, 200);
+        mainWindow.setBounds({
+            x: Math.round(cur.x - restoreW * fracX),
+            y: Math.round(cur.y - restoreH * Math.min(fracY, 0.5)),
+            width: restoreW,
+            height: restoreH,
+        });
+        lastSetWidth = restoreW;
+        lastSetHeight = restoreH;
+        snapSide = null;
+        preSnapBounds = null;
+        applyOverlayMode(true);
+    }
+
     const [wx, wy] = mainWindow.getPosition();
     const [ww, wh] = mainWindow.getSize();
     dragAnchor = { cursor: screen.getCursorScreenPoint(), win: { x: wx, y: wy }, size: { width: ww, height: wh } };
+    let dragMoved = false; // only arm snapping once it's a real drag, not a click
     dragPoll = setInterval(() => {
         if (!dragAnchor || !mainWindow) return;
         const cur = screen.getCursorScreenPoint();
@@ -1820,11 +1893,31 @@ ipcMain.on('window:drag-start', () => {
             width: dragAnchor.size.width,
             height: dragAnchor.size.height,
         });
+        // Arm a snap when the cursor reaches an edge of the display it's on,
+        // but only after a real drag (so clicking the title bar near a screen
+        // edge doesn't snap). Top edge → maximize; left/right edge → that half.
+        // Checked against the work area so it respects the taskbar.
+        if (!dragMoved && Math.abs(dx) + Math.abs(dy) > 8) dragMoved = true;
+        if (!dragMoved) { pendingSnap = null; return; }
+        const wa = screen.getDisplayNearestPoint(cur).workArea;
+        if (cur.y <= wa.y + SNAP_EDGE) pendingSnap = 'maxed';
+        else if (cur.x <= wa.x + SNAP_EDGE) pendingSnap = 'left';
+        else if (cur.x >= wa.x + wa.width - 1 - SNAP_EDGE) pendingSnap = 'right';
+        else pendingSnap = null;
     }, 8);
 });
 ipcMain.on('window:drag-end', () => {
     if (dragPoll) { clearInterval(dragPoll); dragPoll = null; }
+    const anchor = dragAnchor;
     dragAnchor = null;
+    const snap = pendingSnap;
+    pendingSnap = null;
+    if (snap && anchor && mainWindow) {
+        // Remember where the window was before snapping so a later drag-away
+        // restores that exact size (Windows keeps the pre-snap dimensions).
+        preSnapBounds = { x: anchor.win.x, y: anchor.win.y, width: anchor.size.width, height: anchor.size.height };
+        applySnap(snap);
+    }
 });
 
 // --- Canvas fullscreen ---
@@ -1834,6 +1927,9 @@ ipcMain.on('window:drag-end', () => {
 let preCanvasFullscreenBounds: any = null;
 ipcMain.handle('canvas:set-fullscreen', (_evt: any, enable: boolean) => {
     if (!mainWindow) return false;
+    // Fullscreen supersedes any edge-snap; drop the snap bookkeeping so a later
+    // drag doesn't try to restore a stale pre-snap size.
+    snapSide = null; preSnapBounds = null;
     const { workArea } = screen.getPrimaryDisplay();
     if (enable) {
         if (preCanvasFullscreenBounds) return true; // already on
@@ -2646,6 +2742,13 @@ ipcMain.on('open-external', (_event: any, url: string) => {
 });
 ipcMain.on('resize-window', (event: any, newHeight: number, newWidth: number) => {
     if (mainWindow) {
+        // Don't auto-fit while the window is in a user-chosen LARGE state:
+        // edge-snapped (half/full), chat-maximized, or canvas-fullscreen.
+        // This handler clamps width to the 750 overlay cap, so without this
+        // guard the first auto-fit tick after an edge-snap would immediately
+        // shrink the chat window back to 750 and undo the snap.
+        if (snapSide || preMaximizeBounds || preCanvasFullscreenBounds)
+            return;
         // If the user has manually touched the window size, stop automatic updates
         if (isManualResizeActive)
             return;

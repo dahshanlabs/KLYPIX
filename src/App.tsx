@@ -922,6 +922,22 @@ function AppMain() {
         };
     }, []);
 
+    // The command-palette pill in the input bar advertises the *configured*
+    // palette hotkey (Settings → Hotkeys), not a hardcoded "Ctrl K". Re-reads
+    // whenever the settings panel toggles so a rebind reflects once it closes.
+    // Defaults to the shipped Alt+K until the main process reports the value.
+    const [paletteHotkey, setPaletteHotkey] = useState('Alt+K');
+    useEffect(() => {
+        let alive = true;
+        (async () => {
+            try {
+                const all = await (window as any).electron?.hotkey?.getAll?.();
+                if (alive && all?.palette) setPaletteHotkey(all.palette);
+            } catch { /* keep default */ }
+        })();
+        return () => { alive = false; };
+    }, [showAdvancedSettings]);
+
     // Chat→Canvas hand-off. Pushes the response content into a localStorage
     // queue keyed `klypix:pendingCanvasItems`, then flips the app tab to
     // canvas. The drain effect inside CanvasSurface picks it up once the
@@ -2577,7 +2593,12 @@ Rules:
                         justify-between). flex-1 fills the gap and pushes ModeTabs
                         to the right, browser-style. */}
                     {activeTab === 'canvas' && (
-                        <div ref={setCanvasTabSlot} className="no-drag flex-1 min-w-0 flex items-center overflow-hidden mx-2 self-stretch" />
+                        // NOT .no-drag: the empty area to the right of the file
+                        // tabs is part of this slot (an App-tree DOM node), so the
+                        // title-bar's pointerdown handler picks it up and drags the
+                        // window. The tab pills themselves are portaled in with
+                        // their own .no-drag, so clicking a tab still switches it.
+                        <div ref={setCanvasTabSlot} className="flex-1 min-w-0 flex items-center overflow-hidden mx-2 self-stretch" />
                     )}
                     {/* Chat / Canvas mode tabs — centered in title bar */}
                     <ModeTabs active={activeTab} onChange={setActiveTab} canvasBadge={pendingInviteCount} />
@@ -2792,16 +2813,27 @@ Rules:
                             <ClipboardIcon size={14} />
                         </button>
                         {/* Phase 23: discoverability pill for the command palette.
-                            Tiny pill labelled "Ctrl K" — clickable, opens the
-                            palette. Stays out of the way; Ctrl+K still works
-                            from anywhere via useGlobalHotkey. */}
+                            Labelled with the *configured* palette hotkey (Settings
+                            → Hotkeys, default Alt+K) so it never disagrees with the
+                            binding. Clickable; the global hotkey opens it too. */}
                         <button
                             onClick={togglePalette}
-                            title={t('palette.open_hint')}
+                            title={`${t('palette.open_hint')} (${paletteHotkey.replace(/\+/g, ' ')})`}
                             className="no-drag flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-mono font-semibold text-white/50 hover:text-white/85 bg-white/5 hover:bg-white/12 border border-white/10 hover:border-white/25 rounded-md transition-all cursor-pointer"
                         >
-                            <span style={{ fontSize: 9, opacity: 0.7 }}>Ctrl</span>
-                            <span>K</span>
+                            {(() => {
+                                const parts = paletteHotkey.split('+');
+                                const mainKey = parts[parts.length - 1];
+                                const mods = parts.slice(0, -1);
+                                return (
+                                    <>
+                                        {mods.map((m, i) => (
+                                            <span key={i} style={{ fontSize: 9, opacity: 0.7 }}>{m}</span>
+                                        ))}
+                                        <span>{mainKey}</span>
+                                    </>
+                                );
+                            })()}
                         </button>
                         {chat.isTyping || chat.isAnalyzing ? (
                             <button onClick={chat.stopGeneration} className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-all no-drag ml-1" title={t('chat.stop_generation')}><StopIcon size={18} className="fill-current" /></button>
