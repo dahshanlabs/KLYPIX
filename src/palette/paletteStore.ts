@@ -54,16 +54,19 @@ interface PaletteState {
      *  resolves successfully. Auto-clears after ~1.6s. id forces React
      *  reconciliation so back-to-back identical texts still re-animate. */
     toast: { text: string; id: number } | null;
-    /** Sticky detail-pane visibility. Defaults false. Auto-flips true on
-     *  the first row-with-detail the user highlights; stays true for the
-     *  rest of this palette open even when arrowing to detail-less rows
-     *  ("No preview" placeholder renders instead). Toggle off via the
-     *  eye button in the header. Reset on palette close. */
+    /** Sticky detail-pane (preview) visibility. With NO explicit user
+     *  choice it defaults false and auto-flips true on the first
+     *  row-with-detail the user highlights (stays true for the rest of the
+     *  open even on detail-less rows — "No preview" placeholder renders
+     *  instead). Toggled via the eye button in the header; that explicit
+     *  choice is PERSISTED (localStorage 'klypix:palette:detailPane:v1')
+     *  and restored across palette re-opens AND app restarts via
+     *  detailPaneInitial(). */
     detailPaneSticky: boolean;
-    /** Set when the user explicitly turned the detail pane off via the
-     *  eye button. Suppresses the auto-flip-on-detail behavior until the
-     *  palette closes — respects the user's "I don't want this right
-     *  now" intent across arrow navigation. Reset on palette close. */
+    /** Set when the user explicitly turned the detail pane off via the eye
+     *  button — suppresses the auto-flip-on-detail behavior so a deliberate
+     *  "hide" survives arrow navigation, palette re-opens, and restarts.
+     *  Seeded from the persisted preference (see detailPaneInitial). */
     detailPaneUserDismissed: boolean;
     /** Smart-paste target — captured at palette open() so the primary
      *  Paste action can SendKeys ^v straight into the app the user just
@@ -99,6 +102,34 @@ function readPersistedClipSort(): 'newest' | 'oldest' {
     }
 }
 
+// Detail-pane (preview) visibility preference. Tri-state on purpose:
+//   null → user has never used the eye button → keep the auto-flip-on-detail
+//          default (preview pops open when you land on a row that has one).
+//   'on'/'off' → an EXPLICIT choice via the eye button, which we honor as a
+//          sticky preference across palette re-opens AND app restarts.
+// Persisting a plain boolean would force every user into ON or OFF and lose
+// the pleasant auto-open default, so we keep the "never chosen" state.
+const DETAIL_PANE_KEY = 'klypix:palette:detailPane:v1';
+function readDetailPanePref(): 'on' | 'off' | null {
+    try {
+        const v = localStorage.getItem(DETAIL_PANE_KEY);
+        return v === '1' ? 'on' : v === '0' ? 'off' : null;
+    } catch {
+        return null;
+    }
+}
+// The {sticky, dismissed} pair implied by the persisted preference. Used for
+// BOTH the initial store state (governs restart) and close() (governs between
+// opens), so the explicit choice — or the auto-flip default — carries over.
+// 'off' seeds detailPaneUserDismissed=true so the auto-flip (set(), below)
+// can't silently re-open a deliberately-hidden pane.
+function detailPaneInitial(): { detailPaneSticky: boolean; detailPaneUserDismissed: boolean } {
+    const pref = readDetailPanePref();
+    if (pref === 'off') return { detailPaneSticky: false, detailPaneUserDismissed: true };
+    if (pref === 'on') return { detailPaneSticky: true, detailPaneUserDismissed: false };
+    return { detailPaneSticky: false, detailPaneUserDismissed: false };
+}
+
 let state: PaletteState = {
     open: false,
     query: '',
@@ -110,8 +141,7 @@ let state: PaletteState = {
     clipFilter: null,
     clipSort: readPersistedClipSort(),
     toast: null,
-    detailPaneSticky: false,
-    detailPaneUserDismissed: false,
+    ...detailPaneInitial(),
     target: null,
     compact: false,
 };
@@ -307,7 +337,10 @@ export function close() {
     if (!state.open) return;
     queryAbort?.abort();
     queryAbort = null;
-    set({ open: false, secondaryCursor: 0, target: null, detailPaneSticky: false, detailPaneUserDismissed: false });
+    // Restore the detail-pane to the persisted preference (or the auto-flip
+    // default if never chosen) instead of force-hiding — so an explicit
+    // show/hide choice survives the next open.
+    set({ open: false, secondaryCursor: 0, target: null, ...detailPaneInitial() });
 }
 
 export function toggle() {
@@ -377,6 +410,9 @@ export function jumpSelection(to: 'top' | 'bottom' | number) {
  *  close the palette. Turning ON clears the dismissed flag. */
 export function toggleDetailPane() {
     const willBeOn = !state.detailPaneSticky;
+    // Persist the explicit choice so it survives palette re-opens AND restarts
+    // (mirrors setClipSort). '1' = always show, '0' = always hide.
+    try { localStorage.setItem(DETAIL_PANE_KEY, willBeOn ? '1' : '0'); } catch { /* private mode */ }
     set({
         detailPaneSticky: willBeOn,
         detailPaneUserDismissed: !willBeOn,

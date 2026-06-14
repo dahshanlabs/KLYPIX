@@ -739,7 +739,7 @@ const strings: Strings = {
     'palette.hint.navigate': { en: 'navigate', ar: 'تنقل' },
     'palette.hint.open': { en: 'open', ar: 'فتح' },
     'palette.hint.close': { en: 'close', ar: 'إغلاق' },
-    'palette.open_hint': { en: 'Open command palette (Ctrl+K) — calculator, clipboard, files, web, agent', ar: 'فتح لوحة الأوامر (Ctrl+K) — حاسبة، حافظة، ملفات، ويب، وكيل' },
+    'palette.open_hint': { en: 'Open command palette — calculator, clipboard, files, web, agent', ar: 'فتح لوحة الأوامر — حاسبة، حافظة، ملفات، ويب، وكيل' },
     'palette.clipboard_hint': { en: 'Clipboard history — text, images, files you\'ve copied recently', ar: 'سجل الحافظة — النصوص والصور والملفات التي نسختها مؤخرًا' },
     'palette.clip_filter.all': { en: 'All', ar: 'الكل' },
     'palette.clip_filter.pinned': { en: 'Pinned', ar: 'المثبّتة' },

@@ -300,7 +300,7 @@ export function CommandPalette({ compact = false }: { compact?: boolean } = {}) 
                     // maxHeight gives a smooth fold-in/fold-out without
                     // unmounting any DOM during the transition.
                     maxHeight: compact
-                        ? (shouldShowResults ? '100%' : 58)
+                        ? (shouldShowResults ? '100%' : 69) // +11 for the drag handle above the header
                         : undefined,
                     // position:relative is REQUIRED for the .palette-bg-
                     // glow ::before to anchor to THIS box. Without it,
@@ -328,6 +328,31 @@ export function CommandPalette({ compact = false }: { compact?: boolean } = {}) 
                     pointerEvents: 'auto',
                 }}
             >
+                {/* Drag handle — compact (standalone Alt+K window) only. A
+                    full-width grabber bar so there's always a clear, generous
+                    place to MOVE the window: once results show, the search
+                    input fills the header (it must stay clickable for text
+                    editing), leaving almost nothing to grab. Uses the OS drag
+                    region (.drag) — press and drag immediately, no long-press —
+                    which moves the window WITHOUT triggering the canvas/chat
+                    edge-snap (that lives in the manual-IPC drag path, not
+                    app-region). A small macOS-style grabber pill hints it. */}
+                {compact && (
+                    <div
+                        className="drag"
+                        title="Drag to move"
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            height: 11,
+                            flexShrink: 0,
+                            cursor: 'grab',
+                        }}
+                    >
+                        <div style={{ width: 24, height: 3, borderRadius: 1.5, background: 'rgba(255,255,255,0.16)' }} />
+                    </div>
+                )}
                 {/* Header: search input. In compact mode the header
                     itself becomes the OS drag region — long-press +
                     drag anywhere on the empty header background moves
