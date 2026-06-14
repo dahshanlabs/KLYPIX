@@ -35,14 +35,29 @@ const DEFAULT_DEBOUNCE = 2500;
 export function useCollabHealth({ connected, eligible, debounceDisconnectMs }: UseCollabHealthArgs): UseCollabHealthResult {
     const [event, setEvent] = useState<HealthEvent | null>(null);
     const prevConnectedRef = useRef<boolean | null>(null);
-    const lastDisconnectRef = useRef<number>(0);
     const disconnectTimerRef = useRef<number | null>(null);
+    // Whether we've already surfaced a 'disconnected' event for the CURRENT
+    // disconnect episode. A flaky network makes the Realtime channel flap
+    // (SUBSCRIBED → CHANNEL_ERROR → backoff retry → SUBSCRIBED → …); without
+    // this guard EVERY flap re-fired a fresh 'disconnected' event, so the
+    // canvas re-spawned the toast the moment after the user dismissed it —
+    // the × looked broken. We emit ONE disconnected event per episode and
+    // only re-arm after a genuine reconnect. This ref also drives the
+    // reconnect decision instead of `event` — `event` is acknowledged to
+    // null by the consumer ~50ms after showing, so the old `event`-based
+    // check almost never fired a 'reconnected' notice.
+    const surfacedDisconnectRef = useRef(false);
     const debounce = debounceDisconnectMs ?? DEFAULT_DEBOUNCE;
 
     useEffect(() => {
         if (!eligible) {
             setEvent(null);
             prevConnectedRef.current = null;
+            surfacedDisconnectRef.current = false;
+            if (disconnectTimerRef.current != null) {
+                window.clearTimeout(disconnectTimerRef.current);
+                disconnectTimerRef.current = null;
+            }
             return;
         }
         const prev = prevConnectedRef.current;
@@ -52,31 +67,35 @@ export function useCollabHealth({ connected, eligible, debounceDisconnectMs }: U
             return;
         }
         if (prev && !connected) {
-            // Just disconnected — set the debounce timer. If it stays
-            // disconnected past the debounce, fire the event; otherwise
-            // the timer is cancelled by a reconnect arriving first.
-            lastDisconnectRef.current = Date.now();
-            if (disconnectTimerRef.current != null) {
-                window.clearTimeout(disconnectTimerRef.current);
+            // Just dropped. Arm the debounce only if we haven't already
+            // surfaced THIS disconnect episode (and don't stack timers) —
+            // repeated flaps must not re-spawn the toast. If it stays
+            // disconnected past the debounce, fire once; a reconnect
+            // arriving first cancels it.
+            if (!surfacedDisconnectRef.current && disconnectTimerRef.current == null) {
+                disconnectTimerRef.current = window.setTimeout(() => {
+                    disconnectTimerRef.current = null;
+                    surfacedDisconnectRef.current = true;
+                    setEvent({ kind: 'disconnected', at: Date.now() });
+                }, debounce);
             }
-            disconnectTimerRef.current = window.setTimeout(() => {
-                disconnectTimerRef.current = null;
-                setEvent({ kind: 'disconnected', at: Date.now() });
-            }, debounce);
         } else if (!prev && connected) {
-            // Just reconnected — cancel any pending disconnect notification
-            // and only fire a 'reconnected' if we had previously surfaced a
-            // disconnect (otherwise it'd be noise for first-time connects).
+            // Just reconnected — cancel any pending (not-yet-fired) disconnect
+            // notification, and only announce a 'reconnected' if we actually
+            // told the user we'd dropped (otherwise it'd be noise for
+            // first-time connects). Reset the episode so a future drop can
+            // toast again.
             if (disconnectTimerRef.current != null) {
                 window.clearTimeout(disconnectTimerRef.current);
                 disconnectTimerRef.current = null;
             }
-            if (event && event.kind === 'disconnected') {
+            if (surfacedDisconnectRef.current) {
+                surfacedDisconnectRef.current = false;
                 setEvent({ kind: 'reconnected', at: Date.now() });
             }
         }
         prevConnectedRef.current = connected;
-    }, [connected, eligible, debounce, event]);
+    }, [connected, eligible, debounce]);
 
     const acknowledge = () => setEvent(null);
     return { event, acknowledge };
