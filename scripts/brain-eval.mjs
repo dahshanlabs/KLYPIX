@@ -148,5 +148,31 @@ async function main() {
     process.stderr.write(`\n${'='.repeat(60)}\n`);
     process.stdout.write(report);
     process.stderr.write(`${'='.repeat(60)}\nReport written to ${OUT}\n`);
+
+    // --- History + advisory regression gate (added 2026-06-15) ---------------
+    // brain-eval used to OVERWRITE its report with no trend. Append every run to
+    // a JSONL so the with/without delta is visible OVER TIME — and so a /garden
+    // or brain_connect pass that makes recall WORSE gets caught, not just
+    // measured once. The gate is ADVISORY by default (the metric is LLM-judged
+    // on ~N self-generated questions, hence noisy — a hard exit-code gate would
+    // false-red and get disabled); --gate-strict opts into exit(1) for CI.
+    const withPct = Math.round((sum('withScore') / (n * 2)) * 100);
+    const withoutPct = Math.round((sum('withoutScore') / (n * 2)) * 100);
+    const delta = withPct - withoutPct;
+    const HIST = path.resolve('scripts/.brain-eval-history.jsonl');
+    let prev = null;
+    try { const ls = fs.readFileSync(HIST, 'utf8').trim().split('\n').filter(Boolean); if (ls.length) prev = JSON.parse(ls[ls.length - 1]); } catch { /* first run */ }
+    try { fs.appendFileSync(HIST, JSON.stringify({ date: new Date().toISOString(), model: MOCK ? 'mock' : MODEL, n, briefTokens, withPct, withoutPct, delta, recovered }) + '\n'); } catch { /* best-effort */ }
+    if (process.argv.includes('--gate') || process.argv.includes('--gate-strict')) {
+        const tol = Number(arg('gate-tol', '10')); // percentage points
+        if (!prev) {
+            process.stderr.write(`[gate] baseline recorded (delta ${delta}pp) — no prior run to compare.\n`);
+        } else if (prev.delta - delta > tol) {
+            process.stderr.write(`[gate] ⚠ REGRESSED: with/without delta ${prev.delta}pp → ${delta}pp (−${prev.delta - delta}pp > ${tol}pp tolerance).\n`);
+            if (process.argv.includes('--gate-strict')) process.exit(1);
+        } else {
+            process.stderr.write(`[gate] ✓ delta ${delta}pp (prev ${prev.delta}pp; tolerance ${tol}pp).\n`);
+        }
+    }
 }
 main().catch(e => { console.error('eval failed:', e?.message || e); process.exit(1); });

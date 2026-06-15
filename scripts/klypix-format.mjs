@@ -600,6 +600,10 @@ export function structToBrief(struct, { recentDays = 14, maxRecent = 40, maxMile
         for (const c of focus) push(`- ${flat(c.text)}`);
     }
     if (open.length) { push('', '## Open questions'); for (const c of open) push(`- ${flat(c.text)}`); }
+    // ⚠️ Conflicts — pairs flagged conflicts_with (e.g. by parallel sessions);
+    // surfaced HIGH so the next session reconciles them, not buries them.
+    const conflicts = (struct.connections || []).filter(c => c.relationship === 'conflicts_with');
+    if (conflicts.length) { push('', '## ⚠️ Conflicts to reconcile (parallel decisions that may disagree)'); for (const c of conflicts.slice(0, 10)) push(`- ${flat(c.from)}  ⚔️  ${flat(c.to)}`); }
     const areaCounts = containers
         .filter(c => !/^archive$/i.test(c.title || ''))
         .map(c => `${flat(c.title)} (${texts.filter(t => t.parentId === c.id).length})`);
@@ -632,6 +636,88 @@ export function structToBrief(struct, { recentDays = 14, maxRecent = 40, maxMile
     if (archivedCount > 0) hidden.push(`${archivedCount} archived/superseded`);
     if (hidden.length) push('', `*${hidden.join(' + ')} not shown — search the full brain via the klypix-canvas MCP (search/read tools) or \`node ~/.claude/project-brain/global-brain-hook.mjs --full\`.*`);
     return out.join('\n') + '\n';
+}
+
+// ── Relevance ranking ─────────────────────────────────────────────────────
+// ONE shared lexical ranker so the per-prompt retrieval hook (and, later, the
+// MCP search) rank cards the SAME way — no third divergent scorer. Weights
+// mirror the MCP convention: title 3, tag 2, body 1, plus a gentle recency
+// tiebreak. Pure + node-runnable (no embeddings / network) so the Stop/prompt
+// hooks can call it with zero extra deps. `#file-…`/`#dir-…` tags (added at
+// capture) are what make a git-diff token match a card precisely.
+const STOPWORDS = new Set(['the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'has', 'was', 'were', 'are', 'you', 'your', 'not', 'but', 'its', 'into', 'out', 'can', 'will', 'use', 'using', 'about', 'what', 'when', 'why', 'how', 'add', 'fix', 'make', 'need', 'want', 'let', 'see', 'get', 'got', 'now', 'all', 'any', 'via', 'per', 'etc', 'should', 'could', 'would', 'does', 'did', 'still', 'just', 'like', 'also', 'then', 'than', 'them', 'they']);
+export function queryTokens(s) {
+    return [...new Set(String(s || '').toLowerCase().match(/[a-z0-9][a-z0-9_-]{2,}/g) || [])].filter(t => !STOPWORDS.has(t));
+}
+const wordsOf = (s) => new Set(String(s || '').toLowerCase().match(/[a-z0-9][a-z0-9_-]{1,}/g) || []);
+export function scoreCardsAgainstQuery(struct, query, { topK = 6, minScore = 2, recentDays = 30 } = {}) {
+    const tokens = Array.isArray(query) ? query.filter(Boolean) : queryTokens(query);
+    if (!tokens.length || !struct || !Array.isArray(struct.cards)) return [];
+    const cutoff = Date.now() - recentDays * 86_400_000;
+    const isArchived = (c) => /^archive$/i.test(c.area || '');
+    const scored = [];
+    for (const c of struct.cards) {
+        if (c.type === 'container' || isArchived(c) || !(c.text || '').trim()) continue;
+        // WORD-level matching (not substring) so "app" can't hit "append-klypix"
+        // and "main" can't hit "domain". Tag match is on the tag's STEM (the
+        // slug after #file-/#dir-/#) so a git-diff token (slugify(basename))
+        // lands EXACTLY on its #file- anchor — the precise signal, weighted = a
+        // title hit so ONE anchored file match (3 + 0.5 recency) clears minScore.
+        const titleW = wordsOf(c.title);
+        const bodyW = wordsOf(c.text);
+        const tagStems = new Set((c.tags || []).map(t => String(t).toLowerCase().replace(/^#/, '').replace(/^(file|dir)-/, '')).filter(Boolean));
+        let score = 0;
+        for (const tok of tokens) {
+            if (titleW.has(tok)) score += 3;
+            else if (tagStems.has(tok)) score += 3;
+            else if (bodyW.has(tok)) score += 1;
+        }
+        if (score <= 0) continue;
+        if ((c.createdAt || 0) >= cutoff) score += 0.5; // gentle recency tiebreak, never dominant
+        scored.push({ card: c, score });
+    }
+    scored.sort((a, b) => b.score - a.score || (b.card.createdAt || 0) - (a.card.createdAt || 0));
+    return scored.filter(s => s.score >= minScore).slice(0, topK);
+}
+
+// ── Conflict candidate detection ───────────────────────────────────────────
+// REAL conflicts only — a conflict is two decisions that genuinely CONTRADICT
+// (you can't honor both about the same thing). Topical similarity, duplication,
+// and sequential supersession are explicitly NOT conflicts and must never be
+// flagged (no false-conflict dump). This is a cheap LEXICAL pre-filter that
+// returns CANDIDATES only — same-subject, not-already-connected pairs where at
+// least one card uses explicit REVERSAL language. Candidates mean nothing on
+// their own: the caller (brain-conflicts.mjs) confirms each with an LLM
+// contradiction-check before anything is ever drawn or surfaced. No verifier →
+// nothing surfaces. Pure + node-runnable.
+// Strong reversal/contradiction terms ONLY — deliberately NOT bare "not"/"don't"
+// (too common → false positives). A candidate still has to clear the LLM gate.
+const OPPOSITION_RE = /\b(instead of|reverted?|no longer|dropp(?:ed|ing)?|deprecat\w*|abandon\w*|replaced?\b|supersed\w*|changed from|switch(?:ed)? (?:from|to)|rolled? back|overrod|overrides?|contradic\w*|disagree\w*|conflicts? with|reversed?\b)/i;
+export function detectConflicts(struct, { minOverlap = 0.45, topK = 12 } = {}) {
+    if (!struct || !Array.isArray(struct.cards)) return [];
+    const isArchived = (c) => /^archive$/i.test(c.area || '');
+    const live = struct.cards.filter(c => c.type !== 'container' && (c.text || '').trim() && !isArchived(c));
+    const wset = new Map(live.map(c => [c.id, new Set(queryTokens(c.text))]));
+    const connected = new Set();
+    for (const e of struct.connections || []) { connected.add(e.fromId + '|' + e.toId); connected.add(e.toId + '|' + e.fromId); }
+    const out = [];
+    for (let i = 0; i < live.length; i++) {
+        for (let j = i + 1; j < live.length; j++) {
+            const a = live[i], b = live[j];
+            if (connected.has(a.id + '|' + b.id)) continue;
+            const A = wset.get(a.id), B = wset.get(b.id);
+            if (A.size < 4 || B.size < 4) continue;
+            let inter = 0; for (const t of A) if (B.has(t)) inter++;
+            const overlap = inter / Math.min(A.size, B.size); // overlap coefficient — same subject?
+            // Must be same-subject AND carry an explicit reversal signal. Pure
+            // similarity / duplication is NOT a candidate (that was the dump).
+            if (overlap < minOverlap) continue;
+            if (!(OPPOSITION_RE.test(a.text) || OPPOSITION_RE.test(b.text))) continue;
+            out.push({ aId: a.id, bId: b.id, a: a.text, b: b.text, area: a.area, overlap: Math.round(overlap * 100) / 100 });
+        }
+    }
+    out.sort((x, y) => y.overlap - x.overlap);
+    return out.slice(0, topK);
 }
 
 // ── Brain insights ───────────────────────────────────────────────────────────
@@ -707,7 +793,7 @@ export async function addBrainConnections(buffer, edges) {
             id: `con_${rand()}`, fromId: e.fromId, toId: e.toId,
             relationship: REL.has(e.relationship) ? e.relationship : 'relates_to',
             label: typeof e.label === 'string' ? e.label : undefined,
-            arrowHead: true, width: 2, color: '#10b981', style: 'solid',
+            arrowHead: true, width: 2, color: typeof e.color === 'string' ? e.color : '#10b981', style: 'solid',
         });
         added++;
     }

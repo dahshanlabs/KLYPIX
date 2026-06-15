@@ -33,6 +33,9 @@ npm-debug.log*
 
 # project-brain local capture state
 .claude/brain-capture-state.json
+.claude/brain-capture-log.jsonl
+.claude/brain-capture.lock
+brain.klypix.bak-*
 
 # klypix-mcp .mcpb build artifact
 packages/klypix-mcp/dist/
