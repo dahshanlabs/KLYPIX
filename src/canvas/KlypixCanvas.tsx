@@ -1127,6 +1127,74 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         }, 5000);
         return () => window.clearInterval(hb);
     }, [state.editingId, cloudShare?.blobId, collab]);
+
+    // Discard an abandoned empty text item when its edit session ends.
+    // Matches the Type-tool eviction (useCanvasInteraction.ts) and Figma's
+    // "abandon an uncommitted caret → it's discarded" model. Without this,
+    // creating a text box (T-click, or double-clicking a box/container to
+    // convert it) and clicking away — or pressing Escape — WITHOUT typing
+    // leaves a zero-content text item. TextItem guards rendering on
+    // `item.content`, so an empty one draws nothing and collapses to ~2px:
+    // an invisible dot that's still selectable, pops the text panel, and
+    // syncs to collab peers as a ghost.
+    //
+    // Timing: TextItem's blur path flushes the typing draft BEFORE
+    // dispatching SET_EDITING→null (both batched into one render), so by the
+    // time editingId clears here `stateRef` already holds the final content —
+    // an empty string means nothing was ever committed. We read via stateRef
+    // (always current) and depend only on editingId, so the check fires once
+    // per edit-session end, not on every keystroke commit. The capsule is
+    // hidden during edit mode (see SET_EDITING reducer), so there's no
+    // "pick a color before typing" flow that could blur into a delete.
+    //
+    // Plain dispatch (no __remote) so DELETE_ITEMS broadcasts and the ghost
+    // clears on peers too. No pushSnapshot — this is cleanup, not a user
+    // action; the create already pushed a snapshot, so undo lands on the
+    // pre-create state regardless. A card carrying a follow-up thread is
+    // kept even with an empty body (the thread is its content).
+    const prevEditingIdRef = useRef<string | null>(null);
+    useEffect(() => {
+        const prev = prevEditingIdRef.current;
+        prevEditingIdRef.current = state.editingId;
+        if (!prev || prev === state.editingId) return;
+        const it = stateRef.current.items[prev];
+        if (!it || it.type !== 'text') return;
+        if ((it.content ?? '') !== '') return;
+        if (Array.isArray((it as any).thread) && (it as any).thread.length > 0) return;
+        dispatch({ type: 'DELETE_ITEMS', ids: [prev] });
+    }, [state.editingId, dispatch]);
+
+    // One-time sweep of pre-existing empty-text ghosts on canvas open. The
+    // edit-end discard above only catches NEW abandons; ghosts already
+    // serialized into a saved/shared .klypix file (exactly the reported
+    // case — dots arriving via "Shared by …") need a cleanup pass. Runs
+    // when the active tab is shown AND the autosave-restore decision has
+    // settled (same gate as the chat→canvas drain) so we never delete
+    // before a RESTORE replaces state. Naturally idempotent: after the
+    // first pass no empty text remains, so re-entry no-ops.
+    //
+    // Collab-safe: skips OUR active caret (state.editingId) and any item a
+    // peer is currently editing (peerLocks), so a teammate mid-creation
+    // isn't nuked. A loaded file is a committed snapshot — a peer's live
+    // in-flight caret arrives as an op afterward, not from the file — so
+    // empty text present at restore time is a genuine abandoned ghost.
+    // Broadcasts (no __remote) so the dot clears on every peer at once.
+    useEffect(() => {
+        if (!tabActive || !file.restoreSettled) return;
+        const snap = stateRef.current;
+        const ghostIds = snap.order.filter((id) => {
+            if (id === snap.editingId) return false;
+            if (snap.peerLocks && snap.peerLocks[id]) return false;
+            const it = snap.items[id];
+            if (!it || it.type !== 'text') return false;
+            if ((it.content ?? '') !== '') return false;
+            if (Array.isArray((it as any).thread) && (it as any).thread.length > 0) return false;
+            return true;
+        });
+        if (ghostIds.length === 0) return;
+        dispatch({ type: 'DELETE_ITEMS', ids: ghostIds });
+    }, [tabActive, file.restoreSettled, dispatch]);
+
     // RECEIVER: build the peerLocks map from peers' editingItemId broadcasts
     // and push it into the store. SET_PEER_LOCKS does a shallow-equality
     // early-out so an unchanged map doesn't churn renders. The reducer's
