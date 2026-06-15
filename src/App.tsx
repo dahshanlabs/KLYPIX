@@ -2537,7 +2537,7 @@ Rules:
                     shown. Mounting unconditionally preserves multi-canvas tab
                     state across chat↔canvas switches and prevents the autosave
                     restore dialog from re-firing on every trip. */}
-                <KlypixCanvas appVisible={activeTab === 'canvas'} tabSlot={canvasTabSlot} headerOffset={titleBarH} />
+                <KlypixCanvas appVisible={activeTab === 'canvas'} tabSlot={canvasTabSlot} headerOffset={titleBarH} voiceEnabled={settings.isVoiceDictationEnabled} />
 
                 {/* Phase 23: global command palette. Portals to body when open
                     so it floats above EVERYTHING. The hotkey hook installed

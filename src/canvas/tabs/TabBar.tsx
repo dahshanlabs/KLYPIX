@@ -163,11 +163,11 @@ export function TabBar({ tabs, activeId, onSwitch, onClose, onNew, variant = 'st
                             users can see the strip is scrollable without hovering.
                             Bracket opacity (/[0.06]) on purpose: a bare /6 silently
                             drops to no rule in this Tailwind setup. */}
-                        <div className="absolute left-0 right-0 bottom-0 h-[3px] rounded-full bg-white/[0.06]" />
+                        <div className="absolute left-0 right-0 bottom-0 h-[3px] rounded-full bg-white/[0.14]" />
                         {/* Brighter draggable thumb on top. */}
                         <div
                             onPointerDown={onThumbDown}
-                            className="pointer-events-auto absolute bottom-0 h-[3px] rounded-full bg-white/30 hover:bg-white/50 active:bg-white/60 cursor-grab active:cursor-grabbing transition-colors"
+                            className="pointer-events-auto absolute bottom-0 h-[3px] rounded-full bg-white/55 hover:bg-white/75 active:bg-white/90 cursor-grab active:cursor-grabbing transition-colors"
                             style={{ left: bar.thumbX, width: bar.thumbW }}
                             title="Scroll tabs"
                         />

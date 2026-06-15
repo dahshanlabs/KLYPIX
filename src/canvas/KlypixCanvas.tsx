@@ -250,9 +250,12 @@ interface KlypixCanvasProps {
         z-100 title bar; we pad the surface down by this so the top file-ops bar
         and toasts clear the header (the old tab strip used to be that spacer). */
     headerOffset?: number;
+    /** Global voice-dictation setting. When false, the canvas mic FAB + Ctrl+M
+        do nothing — so the Settings toggle governs the canvas like it does chat. */
+    voiceEnabled?: boolean;
 }
 
-export function KlypixCanvas({ appVisible = true, tabSlot = null, headerOffset = 0 }: KlypixCanvasProps) {
+export function KlypixCanvas({ appVisible = true, tabSlot = null, headerOffset = 0, voiceEnabled = true }: KlypixCanvasProps) {
     const canvasBg = useGridSettings().background;
     // Pending canvas-invitation count — sourced ONCE here (a single 20s poll
     // shared across all tabs) and threaded down to every CanvasSurface so its
@@ -415,6 +418,7 @@ export function KlypixCanvas({ appVisible = true, tabSlot = null, headerOffset =
                                 onCloseCanvas={() => onCloseTab(t.id)}
                                 pendingInviteCount={pendingInviteCount}
                                 headerOffset={headerOffset}
+                                voiceEnabled={voiceEnabled}
                             />
                         </CanvasStoreProvider>
                     </div>
@@ -451,9 +455,11 @@ interface CanvasSurfaceProps {
     /** App title-bar height (px), forwarded to the launcher so its dim+blur
      *  backdrop starts below the header and leaves it sharp + clickable. */
     headerOffset?: number;
+    /** Global voice-dictation setting — gates the canvas mic FAB + Ctrl+M. */
+    voiceEnabled?: boolean;
 }
 
-function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath, openLauncherOnMount, onLauncherDismissed, onCloseCanvas, pendingInviteCount, headerOffset = 0 }: CanvasSurfaceProps = {}) {
+function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath, openLauncherOnMount, onLauncherDismissed, onCloseCanvas, pendingInviteCount, headerOffset = 0, voiceEnabled = true }: CanvasSurfaceProps = {}) {
     const { state, dispatch, commit, pushSnapshot, undo } = useCanvasStore();
 
     // Phase 23: when this tab is active, register a canvas-items reader with
@@ -1846,6 +1852,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             rec.stop();
             return;
         }
+        if (!voiceEnabled) return; // Settings → voice dictation off → mic inert (matches chat)
         if (!tabActive) return;   // never warm/record on a hidden canvas
         void rec.prewarm();        // no-op if a hover already warmed the mic
         void startVoiceStream(targetItemId ? { kind: 'item', itemId: targetItemId } : { kind: 'center' });
@@ -1859,6 +1866,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             rec.stop();
             return;
         }
+        if (!voiceEnabled) return;
         if (!tabActive) return;
         void rec.prewarm();
         void startVoiceStream({ kind: 'card' });
@@ -3977,8 +3985,8 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                     // the click lands — the first words aren't clipped. Gated
                     // on tabActive so a hidden (always-mounted) canvas can't
                     // light the OS mic indicator.
-                    onPointerEnter={() => { if (tabActive) void voiceRef.current?.prewarm(); }}
-                    onPointerDown={() => { if (tabActive) void voiceRef.current?.prewarm(); }}
+                    onPointerEnter={() => { if (tabActive && voiceEnabled) void voiceRef.current?.prewarm(); }}
+                    onPointerDown={() => { if (tabActive && voiceEnabled) void voiceRef.current?.prewarm(); }}
                     onClick={() => {
                         const rec = voiceRef.current!;
                         if (rec.isRecording() || rec.isStarting()) {
