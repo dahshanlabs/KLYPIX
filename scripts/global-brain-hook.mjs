@@ -144,6 +144,53 @@ function fileTagsFor(p) {
     return tags;
 }
 
+// --- Commit-body auto-capture (added 2026-06-15) ------------------------
+// Turn rationale-bearing feat/fix/perf commits into cards on Stop, so the WHY
+// in commit BODIES (which terse 🧠 markers often miss) lands in the brain
+// automatically. HIGH-SIGNAL, not a commit-log dump: ONLY commits whose body
+// carries a real rationale are taken; subject-only commits are skipped. A
+// per-project last-seen sha (its OWN tiny file, so the dedup-state plumbing is
+// untouched) makes it incremental + flood-proof — first run BASELINES to HEAD
+// (captures nothing), later runs take only new commits (capped), and it
+// re-baselines if history was rewritten (rebase/reset) so a non-ancestor range
+// can never dump the whole history.
+const COMMIT_STATE = path.resolve(CWD, '.claude', 'brain-last-commit');
+const readLastCommit = () => { try { return fs.readFileSync(COMMIT_STATE, 'utf8').trim() || null; } catch { return null; } };
+const writeLastCommit = (s) => { try { fs.mkdirSync(path.dirname(COMMIT_STATE), { recursive: true }); fs.writeFileSync(COMMIT_STATE, String(s || '')); } catch { /* best-effort */ } };
+const git = (args) => execSync(`git ${args}`, { cwd: CWD, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 4000 }).trim();
+const CC_RE = /^(feat|fix|perf)(?:\(([^)]+)\))?!?:\s*(.+)$/i;
+function parseCommitLog(raw) {
+    return String(raw).split('\x1e').map(s => s.trim()).filter(Boolean).map(rec => {
+        const p = rec.split('\x1f');
+        return { hash: (p[0] || '').trim(), subject: (p[1] || '').trim(), body: (p[2] || '').trim() };
+    }).filter(c => c.hash && c.subject);
+}
+function commitToCard(c) {
+    const m = CC_RE.exec(c.subject);
+    if (!m) return null;                                                        // only feat / fix / perf
+    const body = c.body.replace(/\s+/g, ' ').trim();
+    if (body.length < 12) return null;                                          // RATIONALE-bearing only — keeps it high-signal, not a dump
+    const type = m[1].toLowerCase(), scope = (m[2] || '').trim(), desc = m[3].trim();
+    const area = scope || (type === 'feat' ? 'Milestones' : 'Fixes');
+    const prefix = type === 'feat' ? '🏁 ' : '';
+    return {
+        text: `${area}: ${prefix}${desc}\n\n${body.slice(0, 400)}\n#${slugify(area)} #commit-${c.hash.slice(0, 7)}`,
+        area, borderColor: type === 'feat' ? 'rgba(59,130,246,0.8)' : 'rgba(16,185,129,0.6)', createdVia: 'commit',
+    };
+}
+async function gatherCommitCards(prevCommit) {
+    let head = '';
+    try { head = git('rev-parse HEAD'); } catch { return { cards: [], newLastCommit: prevCommit }; }
+    if (!head) return { cards: [], newLastCommit: prevCommit };
+    if (!prevCommit) return { cards: [], newLastCommit: head };                 // BASELINE: record HEAD, capture nothing
+    if (head === prevCommit) return { cards: [], newLastCommit: head };         // no new commits
+    try { execSync(`git merge-base --is-ancestor ${prevCommit} HEAD`, { cwd: CWD, stdio: 'ignore', timeout: 2000 }); }
+    catch { return { cards: [], newLastCommit: head }; }                        // history rewritten → re-baseline, don't dump
+    let raw = '';
+    try { raw = git(`log ${prevCommit}..HEAD --no-merges --format=%x1e%H%x1f%s%x1f%b`); } catch { return { cards: [], newLastCommit: head }; }
+    return { cards: parseCommitLog(raw).slice(0, 15).map(commitToCard).filter(Boolean), newLastCommit: head };
+}
+
 async function capture(lib) {
     let tp = '';
     try { tp = JSON.parse(fs.readFileSync(0, 'utf8') || '{}').transcript_path || ''; } catch { /* no stdin */ }
@@ -215,6 +262,11 @@ async function capture(lib) {
             ledger.push({ action: type === '?' ? 'add-question' : type === '!' ? 'add-milestone' : 'add-decision', area, preview, files: fileTags });
         }
     }
+    // Commit-body auto-capture: rationale-bearing feat/fix/perf commits since
+    // the last run (independent of markers), pushed into the SAME capture batch.
+    const prevCommit = readLastCommit();
+    const { cards: commitCards, newLastCommit } = await gatherCommitCards(prevCommit);
+    for (const cc of commitCards) { cards.push(cc); ledger.push({ action: 'commit', area: cc.area, preview: (cc.text.split('\n')[0] || '').slice(0, 90) }); }
     // DRY-RUN: show exactly what WOULD be captured (and what was skipped, and
     // why) without touching the brain or the dedup state. The inspection seam
     // the audit asked for — `node global-brain-hook.mjs --capture --dry-run < hook.json`.
@@ -225,6 +277,9 @@ async function capture(lib) {
         return;
     }
     if (!cards.length && !resolutions.length && !updates.length) {
+        // Record the commit baseline / advance even with nothing to capture, so
+        // the next run doesn't re-scan the same commits.
+        if (newLastCommit && newLastCommit !== prevCommit) writeLastCommit(newLastCommit);
         // Nothing new — but if markers were SEEN-and-skipped or example-rejected,
         // record that so "the brief looks stale" has a paper trail.
         if (ledger.length) appendJsonl(LEDGER, { ts: nowIso(), mode: 'capture', stats: { added: 0 }, decisions: ledger }, 1000);
@@ -240,7 +295,7 @@ async function capture(lib) {
     try {
         const merged = readState(); for (const k of seen) merged.add(k);
         const res = await lib.captureIntoBrain(fs.readFileSync(BRAIN), {
-            cards: cards.map(c => ({ text: c.text, color: '#e8e8ed', borderColor: c.borderColor, area: c.area, createdVia: 'claude-code' })),
+            cards: cards.map(c => ({ text: c.text, color: '#e8e8ed', borderColor: c.borderColor, area: c.area, createdVia: c.createdVia || 'claude-code' })),
             resolutions,
             updates,
         });
@@ -249,6 +304,7 @@ async function capture(lib) {
         let out = res.buffer; try { out = (await lib.tidyBrain(res.buffer)).buffer; } catch { /* keep append result if tidy fails */ }
         await lib.atomicWrite(BRAIN, out);
         writeState(merged);
+        writeLastCommit(newLastCommit); // advance the commit baseline only after a successful write
         try { await refreshAgentsBrief(lib, out); } catch { /* AGENTS.md refresh is best-effort */ }
     } finally {
         if (gotLock) releaseLock(LOCK);
