@@ -76,7 +76,10 @@
 }
 
 .title-bar {
-  @apply flex items-center justify-between px-3 py-1.5 bg-gradient-to-r from-emerald-950/90 via-[#191C1D]/90 to-[#191C1D] border-b border-emerald-500/20;
+  /* Layout (grid-cols 1fr/auto/1fr) lives inline on the element so the
+     Chat/Canvas toggle stays dead-center in BOTH modes — see App.tsx. Keep
+     only visual styling here; do NOT re-add `flex` / `justify-between`. */
+  @apply items-center px-3 py-1.5 bg-gradient-to-r from-emerald-950/90 via-[#191C1D]/90 to-[#191C1D] border-b border-emerald-500/20;
   /* NOTE: deliberately does NOT use -webkit-app-region: drag. With CSS drag
      regions, Chromium suppresses mouse/click/dblclick events on the element,
      so the JS double-click-to-maximize handler never fires. We implement
@@ -94,6 +97,17 @@
 
 .window-controls {
   @apply flex items-center gap-0.5 no-drag;
+}
+
+/* Canvas tab strip: scrolls horizontally when tabs overflow their column. The
+   NATIVE scrollbar is hidden because TabBar.tsx draws a thin custom one overlaid
+   on the bottom edge (visible + draggable, but zero layout height so it never
+   clips the short pills or grows the title bar). */
+.klypix-tabscroll {
+  scrollbar-width: none;
+}
+.klypix-tabscroll::-webkit-scrollbar {
+  display: none;
 }
 
 .drag {

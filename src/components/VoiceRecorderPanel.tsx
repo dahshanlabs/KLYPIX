@@ -41,7 +41,19 @@ export interface VoiceRecorderPanelProps {
      */
     anchorRef?: React.RefObject<HTMLElement | null>;
     position?: 'below' | 'above';
+    /** Visual theme. Chat omits it (the overlay is always dark); the canvas
+     *  passes the binary decision derived from its background luminance. The
+     *  panel stays presentational — it only needs the dark/light verdict, not
+     *  the raw color. */
+    appearance?: 'dark' | 'light';
 }
+
+// Panel surface per theme. Dark uses a faint emerald hairline (was white/10)
+// to tie the panel to the emerald mic FAB; reads fine on the dark chat
+// overlay. Light is a warm paper-tinted glass that sits on the cream canvas
+// instead of slamming a black slab over it. Non-standard alphas bracketed.
+const PANEL_DARK = 'no-drag bg-[#0e0e14]/95 backdrop-blur-xl border border-emerald-400/[0.18] rounded-2xl shadow-[0_10px_30px_rgba(0,0,0,0.5)] px-3 pt-2 pb-2 w-[220px] flex flex-col items-center gap-1.5 animate-in fade-in zoom-in-95 duration-150';
+const PANEL_LIGHT = 'no-drag bg-[#fbf8f2]/95 backdrop-blur-xl border border-emerald-600/30 rounded-2xl shadow-[0_10px_30px_rgba(20,40,30,0.18)] px-3 pt-2 pb-2 w-[220px] flex flex-col items-center gap-1.5 animate-in fade-in zoom-in-95 duration-150';
 
 // Bar count chosen to fill the compact panel's inner width: panel is now
 // 220px wide with px-3 (24px) padding → ~196px inner. Each bar is 2px
@@ -50,13 +62,14 @@ const BAR_COUNT = 56;
 const SAMPLE_INTERVAL_MS = 40; // 25 Hz — fast enough to feel reactive, slow enough to scroll readably
 const PANEL_HEIGHT = 110;       // approximate rendered height; used by useAnchorCoords for `position="above"`
 
-export function VoiceRecorderPanel({ level, status, interimText, onStop, anchorRef, position = 'below' }: VoiceRecorderPanelProps) {
+export function VoiceRecorderPanel({ level, status, interimText, onStop, anchorRef, position = 'below', appearance = 'dark' }: VoiceRecorderPanelProps) {
     const history = useScrollingWaveform(level, status === 'recording');
     const elapsed = useElapsedSeconds(status === 'recording');
     const coords = useAnchorCoords(anchorRef, position);
     // Subscribe to locale so the panel re-renders when language toggles.
     const [locale] = useLocale();
     const isRtl = locale === 'ar';
+    const light = appearance === 'light';
 
     const panel = (
         <div
@@ -76,7 +89,7 @@ export function VoiceRecorderPanel({ level, status, interimText, onStop, anchorR
             dir={isRtl ? 'rtl' : 'ltr'}
         >
             <div
-                className="no-drag bg-[#0e0e14]/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-[0_10px_30px_rgba(0,0,0,0.5)] px-3 pt-2 pb-2 w-[220px] flex flex-col items-center gap-1.5 animate-in fade-in zoom-in-95 duration-150"
+                className={light ? PANEL_LIGHT : PANEL_DARK}
                 role="dialog"
                 aria-label={t('chat.voice_stop')}
             >
@@ -94,7 +107,7 @@ export function VoiceRecorderPanel({ level, status, interimText, onStop, anchorR
                         return (
                             <span
                                 key={i}
-                                className="w-[2px] rounded-full bg-emerald-400"
+                                className={`w-[2px] rounded-full ${light ? 'bg-emerald-600' : 'bg-emerald-400'}`}
                                 style={{
                                     height: `${h}px`,
                                     opacity: 0.35 + Math.min(1, v) * 0.55,
@@ -110,15 +123,15 @@ export function VoiceRecorderPanel({ level, status, interimText, onStop, anchorR
                 <div className="w-full min-h-[16px] text-center text-[11px] leading-tight px-1">
                     {status === 'recording' ? (
                         interimText ? (
-                            <span className="text-white/85 line-clamp-2">{interimText}</span>
+                            <span className={`${light ? 'text-emerald-900/85' : 'text-white/85'} line-clamp-2`}>{interimText}</span>
                         ) : (
-                            <span className="text-white/55 italic inline-flex items-center justify-center gap-1.5">
+                            <span className={`${light ? 'text-emerald-900/65' : 'text-white/55'} italic inline-flex items-center justify-center gap-1.5`}>
                                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
                                 {t('chat.voice_listening')} {formatTime(elapsed)}
                             </span>
                         )
                     ) : (
-                        <span className="text-emerald-300/85 italic">{t('chat.voice_transcribing')}</span>
+                        <span className={`${light ? 'text-emerald-700' : 'text-emerald-300/85'} italic`}>{t('chat.voice_transcribing')}</span>
                     )}
                 </div>
 

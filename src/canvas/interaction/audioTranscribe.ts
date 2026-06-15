@@ -6,6 +6,12 @@
 //
 // Trade-off vs. Web Speech: no interim results. Transcript arrives once,
 // after stop(). The card shows a 'transcribing' status while Gemini runs.
+//
+// Latency: getUserMedia cold-starts in ~100–600ms on Windows, which clips
+// the user's first words ("voice slowly detected"). prewarm() pre-acquires
+// the mic stream + AudioContext (call it on FAB hover / pointerdown) so the
+// following start() begins capture instantly. A bounded idle TTL releases a
+// warm-but-unused stream so the OS "mic in use" indicator never lingers.
 
 export type VoiceStatus = 'recording' | 'transcribing' | 'done' | 'error';
 
@@ -28,6 +34,20 @@ export interface AudioTranscribeController {
      *  recorder's own onstop handler. */
     stop(): void;
     isRecording(): boolean;
+    /** True during the start() getUserMedia await window (before recording
+     *  flips true). Gate toggles on isRecording() || isStarting() so a fast
+     *  double-click cancels the in-flight start instead of re-entering it. */
+    isStarting(): boolean;
+    /** Pre-acquire mic + AudioContext so the next start() begins capture
+     *  with no cold getUserMedia stall. Idempotent, fire-and-forget. Arms a
+     *  bounded idle timer that releases the mic if start() is never called. */
+    prewarm(): Promise<void>;
+    /** Release a warm-but-idle stream immediately (no-op while recording).
+     *  Tie to tab-hide so the OS mic indicator never lingers behind an
+     *  always-mounted, hidden canvas. */
+    releaseWarm(): void;
+    /** Full teardown for component unmount (releaseAudio + clear timers). */
+    dispose(): void;
 }
 
 export function createAudioTranscribeController(): AudioTranscribeController {
@@ -39,7 +59,22 @@ export function createAudioTranscribeController(): AudioTranscribeController {
     let recording = false;
     let chunks: Blob[] = [];
 
+    // Pre-warm bookkeeping.
+    let warmIdleTimer: ReturnType<typeof setTimeout> | null = null;
+    let acquiring: Promise<MediaStream> | null = null; // dedups hover+pointerdown
+    let starting = false;     // true during the start() await window
+    let cancelStart = false;  // set by stop() to abort an in-flight start()
+    let deviceChangeBound = false;
+    const WARM_TTL_MS = 12_000; // OS mic indicator must not linger longer
+
+    const clearWarmTimer = () => {
+        if (warmIdleTimer) { clearTimeout(warmIdleTimer); warmIdleTimer = null; }
+    };
+
+    // HARD teardown — used after a real recording and on dispose. Closes the
+    // AudioContext too.
     const releaseAudio = () => {
+        clearWarmTimer();
         if (animFrame != null) cancelAnimationFrame(animFrame);
         animFrame = null;
         stream?.getTracks().forEach(t => t.stop());
@@ -49,21 +84,97 @@ export function createAudioTranscribeController(): AudioTranscribeController {
         analyser = null;
     };
 
+    const streamIsLive = (): boolean =>
+        !!stream && stream.getAudioTracks().some(t => t.readyState === 'live' && t.enabled);
+
+    // SOFT teardown — release only the mic stream + analyser graph (keep ctx
+    // for reuse). Used to drop a warm-but-idle stream so the OS mic indicator
+    // clears without paying to rebuild the AudioContext next time.
+    const releaseStreamOnly = () => {
+        if (animFrame != null) cancelAnimationFrame(animFrame);
+        animFrame = null;
+        stream?.getTracks().forEach(t => t.stop());
+        stream = null;
+        analyser = null;
+        clearWarmTimer();
+    };
+
+    const armWarmTimer = () => {
+        clearWarmTimer();
+        warmIdleTimer = setTimeout(() => {
+            if (!recording && !starting) releaseStreamOnly();
+        }, WARM_TTL_MS);
+    };
+
+    const ensureContext = async (): Promise<AudioContext> => {
+        if (!ctx || ctx.state === 'closed') ctx = new AudioContext();
+        // Chromium may park the context as 'suspended' until a gesture;
+        // resume so the analyser produces data immediately on start().
+        if (ctx.state === 'suspended') { try { await ctx.resume(); } catch { /* resumes on the click gesture */ } }
+        return ctx;
+    };
+
+    // Single acquisition funnel. Reuses a live warm stream; otherwise issues
+    // one getUserMedia, caching the in-flight promise so a hover+pointerdown
+    // double-call never opens two streams. Binds device-loss handlers once.
+    const acquireStream = async (): Promise<MediaStream> => {
+        if (streamIsLive()) return stream!;
+        if (acquiring) return acquiring;
+        if (stream) releaseStreamOnly(); // stale (unplugged/ended) — drop first
+        acquiring = (async () => {
+            const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const track = s.getAudioTracks()[0];
+            // If the device dies, act DURING recording too — gracefully stop
+            // so onstop transcribes whatever was captured (or surfaces an
+            // empty-blob error) instead of recording silence forever.
+            track?.addEventListener('ended', () => {
+                if (recording) {
+                    try { recorder?.stop(); } catch { recording = false; releaseAudio(); }
+                } else if (!starting) {
+                    releaseStreamOnly();
+                }
+            });
+            if (!deviceChangeBound && navigator.mediaDevices) {
+                deviceChangeBound = true;
+                navigator.mediaDevices.addEventListener('devicechange', () => {
+                    if (!recording && !starting && !streamIsLive()) releaseStreamOnly();
+                });
+            }
+            return s;
+        })();
+        try { stream = await acquiring; return stream; }
+        finally { acquiring = null; }
+    };
+
     return {
         async start({ onLevel, onStatus, onFinal, onError }) {
-            if (recording) return false;
+            if (recording || starting) return false;
+            starting = true;
+            cancelStart = false;
+            clearWarmTimer(); // we're actively using the stream now
+
             try {
-                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                stream = await acquireStream(); // ~0ms when pre-warmed
             } catch (err) {
+                starting = false;
                 onError?.(err as Error);
                 return false;
+            }
+            if (cancelStart) { starting = false; releaseAudio(); return false; }
+
+            const audioCtx = await ensureContext();
+            if (cancelStart) { starting = false; releaseAudio(); return false; }
+            // The warm stream may have been killed during the awaits above
+            // (mid-await stop / device unplug). Re-acquire once.
+            if (!streamIsLive()) {
+                try { stream = await acquireStream(); }
+                catch (err) { starting = false; onError?.(err as Error); return false; }
             }
 
             // FFT-based level meter — same config as the chat mic so the
             // waveform rhythm feels familiar.
-            ctx = new AudioContext();
-            const source = ctx.createMediaStreamSource(stream);
-            analyser = ctx.createAnalyser();
+            const source = audioCtx.createMediaStreamSource(stream);
+            analyser = audioCtx.createAnalyser();
             analyser.fftSize = 256;
             // 0.7 was over-smoothing — bars lagged ~5 frames behind speech.
             // 0.3 keeps motion fluid without losing the per-syllable bounce.
@@ -97,6 +208,15 @@ export function createAudioTranscribeController(): AudioTranscribeController {
             animFrame = requestAnimationFrame(tick);
 
             chunks = [];
+            // Final liveness gate (TOCTOU): a track can flip live→ended between
+            // the check above and MediaRecorder construction. Bail cleanly
+            // rather than record silence.
+            if (!streamIsLive()) {
+                starting = false;
+                releaseAudio();
+                onError?.(new Error('Microphone unavailable'));
+                return false;
+            }
             recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
             recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
             recorder.onstop = async () => {
@@ -152,12 +272,17 @@ export function createAudioTranscribeController(): AudioTranscribeController {
                 chunks = [];
             };
 
+            starting = false;
             recorder.start();
             recording = true;
             onStatus('recording');
             return true;
         },
         stop() {
+            // Abort an in-flight start() before it wires up a (possibly stale)
+            // stream — the post-await guards in start() see cancelStart and
+            // tear down cleanly.
+            if (starting) { cancelStart = true; return; }
             if (recorder && recording) {
                 try {
                     recorder.stop();
@@ -174,6 +299,27 @@ export function createAudioTranscribeController(): AudioTranscribeController {
             }
         },
         isRecording() { return recording; },
+        isStarting() { return starting; },
+        async prewarm() {
+            if (recording || starting) return;
+            if (streamIsLive()) { armWarmTimer(); return; } // refresh TTL on repeated hovers
+            try {
+                await acquireStream();
+                if (recording || starting) return; // start() took over mid-acquire
+                await ensureContext();
+                if (recording || starting) return;
+                armWarmTimer();
+            } catch { /* denied/unavailable — start() surfaces the error on click */ }
+        },
+        releaseWarm() {
+            if (recording || starting) return;
+            releaseStreamOnly();
+        },
+        dispose() {
+            cancelStart = true;
+            clearWarmTimer();
+            releaseAudio();
+        },
     };
 }
 

@@ -62,6 +62,7 @@ import { AgentRobot } from './components/AgentRobot';
 import { KlypixMascot } from './components/KlypixMascot';
 import { ModeTabs, type AppTab } from './components/ModeTabs';
 import { VoiceRecorderPanel } from './components/VoiceRecorderPanel';
+import { createAudioTranscribeController } from './canvas/interaction/audioTranscribe';
 // Phase 23 — global command palette. Mounted once at the app root; opens on
 // Ctrl+K (or Cmd+K) from anywhere. Providers register themselves when their
 // chunks load — Day 1 ships the infrastructure with zero providers, so the
@@ -1444,8 +1445,31 @@ Rules:
     const lastInsightContextRef = useRef<string>(''); // Cache key for "What I See"
     const [isVoiceRecording, setIsVoiceRecording] = useState(false);
     const [voiceLevel, setVoiceLevel] = useState(0); // 0-1 normalized volume
-    const voiceRecognitionRef = useRef<any>(null);
-    const voiceAnalyzerRef = useRef<{ stream: MediaStream; ctx: AudioContext; animFrame: number } | null>(null);
+    // Chat's mic controller (the canvas has its own) — pre-warms getUserMedia so
+    // the first words aren't clipped, same pipeline as canvas (offline-first →
+    // Gemini). Per-surface, not shared across chat↔canvas.
+    const chatVoiceRef = useRef<ReturnType<typeof createAudioTranscribeController> | null>(null);
+    if (!chatVoiceRef.current) chatVoiceRef.current = createAudioTranscribeController();
+    // Guards the brief window between the click and the controller flipping
+    // its own recording flag, so a fast second click cleanly cancels instead
+    // of leaving a hidden recording running.
+    const chatStartingRef = useRef(false);
+    // Drop a warm-but-idle mic stream when the overlay hides (Alt+Space) so
+    // the OS "mic in use" indicator never lingers, and fully tear down on
+    // unmount. Both no-op during an active recording.
+    useEffect(() => {
+        const onVis = () => { if (document.hidden) chatVoiceRef.current?.releaseWarm(); };
+        document.addEventListener('visibilitychange', onVis);
+        return () => {
+            document.removeEventListener('visibilitychange', onVis);
+            chatVoiceRef.current?.dispose();
+        };
+    }, []);
+    // chat↔canvas is a same-window tab toggle (always-mount), so the overlay
+    // never hides and document.hidden won't fire on the switch. Release the warm
+    // chat stream when leaving the chat tab so a hover-warmed mic doesn't linger
+    // (~12s WARM_TTL) and briefly coexist with the canvas mic. No-op while recording.
+    useEffect(() => { if (activeTab !== 'chat') chatVoiceRef.current?.releaseWarm(); }, [activeTab]);
 
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const titleBarRef = useRef<HTMLDivElement>(null);
@@ -2363,6 +2387,65 @@ Rules:
         chat.handleSubmit(e, finalPrompt, isVoice, finalDisplayQuery, queryRef.current || query, inputRef, setQuery, setTextareaHeight);
     };
 
+    // Chat dictation toggle — shared by the mic button and the Ctrl+M
+    // shortcut so both behave identically (optimistic feedback, in-flight
+    // cancel, error cleanup).
+    const toggleChatVoice = () => {
+        if (!settings.isVoiceDictationEnabled) return;
+        const rec = chatVoiceRef.current!;
+        // A press while recording OR mid-start stops/cancels.
+        if (rec.isRecording() || chatStartingRef.current) { rec.stop(); return; }
+        chatStartingRef.current = true;
+        setIsVoiceRecording(true); // optimistic — flip the button red instantly
+        void rec.start({
+            onLevel: (lvl) => setVoiceLevel(lvl),
+            onStatus: (s) => {
+                if (s !== 'recording') setIsVoiceRecording(false);
+                if (s === 'transcribing' && inputRef.current) inputRef.current.value = t('chat.voice_transcribing');
+            },
+            onFinal: (text) => {
+                setVoiceLevel(0);
+                if (text && inputRef.current) {
+                    inputRef.current.value = text;
+                    setQuery(text);
+                    submit(undefined, text, true); // auto-submit the transcript
+                } else if (inputRef.current) {
+                    inputRef.current.value = '';
+                    setQuery('');
+                }
+            },
+            onError: (err) => {
+                setIsVoiceRecording(false);
+                setVoiceLevel(0);
+                // Clear the "Transcribing…" placeholder so a failed run
+                // (network error / no audio) doesn't leave it stuck — and
+                // submittable — in the input.
+                if (inputRef.current) inputRef.current.value = '';
+                setQuery('');
+                console.error('Mic:', err);
+            },
+        }).then(ok => { chatStartingRef.current = false; if (!ok) setIsVoiceRecording(false); });
+    };
+    // Stable ref to the latest toggle so the one-time keydown listener never
+    // goes stale on the submit / query closures it captures.
+    const toggleChatVoiceRef = useRef(toggleChatVoice);
+    useEffect(() => { toggleChatVoiceRef.current = toggleChatVoice; });
+    // Ctrl/Cmd+M toggles chat dictation — mirrors the canvas mic shortcut.
+    // The canvas keyboard hook bails while it's the inactive tab, so gating
+    // this on activeTab === 'chat' keeps the two bindings from colliding.
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (activeTab !== 'chat') return;
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'm') {
+                if (!settings.isVoiceDictationEnabled) return; // don't swallow the key when dictation is off
+                e.preventDefault();
+                toggleChatVoiceRef.current();
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [activeTab, settings.isVoiceDictationEnabled]);
+
     const clear = () => {
         clearInput();
         if (inputRef.current) { inputRef.current.style.height = 'auto'; inputRef.current.style.height = '38px'; inputRef.current.style.overflowY = 'hidden'; setTextareaHeight(38); }
@@ -2550,7 +2633,7 @@ Rules:
                 {/* Title Bar */}
                 <div
                     ref={titleBarRef}
-                    className="title-bar"
+                    className="title-bar grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2"
                     onPointerDown={(e) => {
                         // Only the title-bar BACKGROUND drags the window. Any
                         // interactive child (mode tabs, window controls, CDP
@@ -2573,36 +2656,42 @@ Rules:
                         handleTitleBarMaximize();
                     }}
                 >
-                    <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-2 opacity-60"><img src={logoUrl} className="w-4 h-4" alt="logo" /><span className="text-[11px] font-bold tracking-wider text-white font-poppins uppercase">Klypix</span></div>
+                    {/* LEFT column (grid 1fr): logo / CDP + the canvas file-tabs.
+                        min-w-0 + overflow-hidden so a long tab strip CLIPS inside
+                        this column instead of shoving the centered toggle off
+                        center. The two 1fr side columns are forced equal width, so
+                        the auto center column is genuinely centered in both modes. */}
+                    <div className="flex items-center gap-2 min-w-0 overflow-hidden">
+                        <div className="flex items-center gap-2 opacity-60 shrink-0"><img src={logoUrl} className="w-4 h-4" alt="logo" /><span className="text-[11px] font-bold tracking-wider text-white font-poppins uppercase">Klypix</span></div>
                         {/* CDP caution icon — collapsed banner, click to expand */}
                         {showCdpBanner && !cdpBannerDismissed && cdpBannerCollapsed && (
                             <button
                                 onClick={() => setCdpBannerCollapsed(false)}
-                                className="no-drag px-1.5 py-0.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/20 transition-all cursor-pointer group flex items-center gap-1.5"
+                                className="no-drag shrink-0 px-1.5 py-0.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/20 transition-all cursor-pointer group flex items-center gap-1.5"
                                 title={t('cdp.collapsed_tooltip')}
                             >
                                 <AlertTriangle size={12} className="text-amber-400" style={{ animation: 'cdpPulse 2s ease-in-out infinite' }} />
                                 <span className="text-[9px] text-amber-400/80 font-medium">CDP</span>
                             </button>
                         )}
+                        {/* Canvas file-tabs portaled here by KlypixCanvas — tabs
+                            live in the header instead of a strip below it (canvas
+                            mode only). flex-1 fills the rest of this column.
+                            NOT .no-drag: the empty area to the right of the file
+                            tabs is part of this slot, so the title-bar's
+                            pointerdown handler picks it up and drags the window.
+                            The tab pills themselves are portaled in with their
+                            own .no-drag, so clicking a tab still switches it. */}
+                        {activeTab === 'canvas' && (
+                            <div ref={setCanvasTabSlot} className="flex-1 min-w-0 flex items-center overflow-hidden self-stretch" />
+                        )}
                     </div>
-                    {/* Canvas file-tabs portaled here by KlypixCanvas — tabs live
-                        in the header instead of a strip below it. Canvas mode only,
-                        so chat keeps its centered ModeTabs (3 children →
-                        justify-between). flex-1 fills the gap and pushes ModeTabs
-                        to the right, browser-style. */}
-                    {activeTab === 'canvas' && (
-                        // NOT .no-drag: the empty area to the right of the file
-                        // tabs is part of this slot (an App-tree DOM node), so the
-                        // title-bar's pointerdown handler picks it up and drags the
-                        // window. The tab pills themselves are portaled in with
-                        // their own .no-drag, so clicking a tab still switches it.
-                        <div ref={setCanvasTabSlot} className="flex-1 min-w-0 flex items-center overflow-hidden mx-2 self-stretch" />
-                    )}
-                    {/* Chat / Canvas mode tabs — centered in title bar */}
+                    {/* CENTER column (grid auto): Chat / Canvas mode toggle —
+                        dead-center in BOTH modes, immovable regardless of how many
+                        canvas tabs are open. */}
                     <ModeTabs active={activeTab} onChange={setActiveTab} canvasBadge={pendingInviteCount} />
-                    <div className="flex items-center gap-2">
+                    {/* RIGHT column (grid 1fr): window controls, hugging the right edge. */}
+                    <div className="flex items-center gap-2 justify-end">
                         <div className="window-controls">
                             <button onClick={windowCtx.handleMinimize} className="p-1 hover:bg-white/10 rounded transition-all text-white/40 hover:text-white" title={t('chat.minimize_tray')}><Minus size={14} /></button>
                             <button onClick={handleTitleBarMaximize} className="p-1 hover:bg-white/10 rounded transition-all text-white/40 hover:text-white" title={titleBarMaximizeIsOn ? 'Restore' : (activeTab === 'canvas' ? 'Fullscreen canvas' : 'Maximize')}>{titleBarMaximizeIsOn ? <Copy size={12} /> : <Square size={12} />}</button>
@@ -2690,113 +2779,24 @@ Rules:
                         <button onClick={attachments.handleAttachClick} className={cn('p-1.5 rounded-lg transition-all', attachments.attachedFiles.length > 0 ? 'bg-emerald-500/20 text-emerald-400' : 'text-white/40 hover:bg-white/10 hover:text-white/70')} title={`${t('chat.attach_files')} (${attachments.attachedFiles.length}/${MAX_ATTACHED})`}><Paperclip size={16} /></button>
                         {settings.isVoiceDictationEnabled && (
                             <button
-                                onClick={async () => {
-                                    if (voiceRecognitionRef.current) {
-                                        // Stop recording — send audio to Gemini for transcription
-                                        const recorder = voiceRecognitionRef.current as MediaRecorder;
-                                        recorder.stop();
-                                        return;
-                                    }
-
-                                    try {
-                                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-                                        // Audio level analyzer for visual feedback
-                                        const ctx = new AudioContext();
-                                        const source = ctx.createMediaStreamSource(stream);
-                                        const analyser = ctx.createAnalyser();
-                                        analyser.fftSize = 256;
-                                        analyser.smoothingTimeConstant = 0.7;
-                                        source.connect(analyser);
-                                        const dataArray = new Uint8Array(analyser.frequencyBinCount);
-                                        const updateLevel = () => {
-                                            analyser.getByteFrequencyData(dataArray);
-                                            const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-                                            setVoiceLevel(Math.min(avg / 128, 1));
-                                            if (voiceAnalyzerRef.current) {
-                                                voiceAnalyzerRef.current.animFrame = requestAnimationFrame(updateLevel);
-                                            }
-                                        };
-                                        const animFrame = requestAnimationFrame(updateLevel);
-                                        voiceAnalyzerRef.current = { stream, ctx, animFrame };
-
-                                        // MediaRecorder to capture audio
-                                        const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-                                        const chunks: Blob[] = [];
-                                        recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-                                        recorder.onstop = async () => {
-                                            setIsVoiceRecording(false);
-                                            setVoiceLevel(0);
-                                            voiceRecognitionRef.current = null;
-                                            // Cleanup audio
-                                            if (voiceAnalyzerRef.current) {
-                                                cancelAnimationFrame(voiceAnalyzerRef.current.animFrame);
-                                                voiceAnalyzerRef.current.stream.getTracks().forEach(t => t.stop());
-                                                voiceAnalyzerRef.current.ctx.close();
-                                                voiceAnalyzerRef.current = null;
-                                            }
-
-                                            if (chunks.length === 0) return;
-                                            const blob = new Blob(chunks, { type: 'audio/webm' });
-
-                                            // Convert to base64 and send to Gemini for transcription
-                                            if (inputRef.current) inputRef.current.value = 'Transcribing...';
-                                            const reader = new FileReader();
-                                            reader.onloadend = async () => {
-                                                const base64Audio = (reader.result as string).split(',')[1];
-                                                try {
-                                                    const { callGeminiFlash } = await import('./api/gemini');
-                                                    const transcript = await callGeminiFlash(
-                                                        'Transcribe the following audio. Return ONLY the transcribed text, nothing else. If the audio is in Arabic, transcribe in Arabic. If in English, transcribe in English. If mixed, transcribe each part in its language.',
-                                                        `[Audio data provided as base64 inline. The user spoke into their microphone. Please transcribe what they said.]`,
-                                                        { maxOutputTokens: 500, temperature: 0.1 }
-                                                    );
-                                                    // Gemini text-only can't process audio directly — fall back to submitting as voice
-                                                    // For now, use the audio blob with Gemini's multimodal
-                                                    const { GoogleGenerativeAI } = await import('@google/generative-ai');
-                                                    const { getApiKeySync } = await import('./api/gemini');
-                                                    const genAI = new GoogleGenerativeAI(getApiKeySync());
-                                                    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' }, { apiVersion: 'v1beta' });
-                                                    const result = await model.generateContent([
-                                                        'Transcribe this audio exactly. Return ONLY the spoken words, nothing else. Support Arabic and English.',
-                                                        { inlineData: { data: base64Audio, mimeType: 'audio/webm' } },
-                                                    ]);
-                                                    const text = result.response.text().trim();
-                                                    if (text && inputRef.current) {
-                                                        inputRef.current.value = text;
-                                                        setQuery(text);
-                                                        // Auto-submit the transcription
-                                                        submit(undefined, text, true);
-                                                    } else if (inputRef.current) {
-                                                        inputRef.current.value = '';
-                                                    }
-                                                } catch (err) {
-                                                    console.error('Transcription failed:', err);
-                                                    if (inputRef.current) inputRef.current.value = '';
-                                                }
-                                            };
-                                            reader.readAsDataURL(blob);
-                                        };
-
-                                        recorder.start();
-                                        voiceRecognitionRef.current = recorder;
-                                        setIsVoiceRecording(true);
-                                    } catch (err) {
-                                        console.error('Microphone access denied:', err);
-                                        alert('Microphone access denied. Please allow microphone access in system settings.');
-                                    }
-                                }}
+                                // Pre-warm the mic on hover / press so the next
+                                // click starts capture instantly instead of
+                                // waiting on a cold getUserMedia (~100-600ms on
+                                // Windows), which was clipping the first words.
+                                onPointerEnter={() => { void chatVoiceRef.current?.prewarm(); }}
+                                onPointerDown={() => { void chatVoiceRef.current?.prewarm(); }}
+                                onClick={() => toggleChatVoice()}
                                 className={cn(
                                     'relative rounded-xl transition-all ml-1 cursor-pointer overflow-visible group flex items-center justify-center',
                                     isVoiceRecording
                                         // While recording, the floating panel is the
-                                        // affordance — dim the button so it reads as
-                                        // "active source" without competing visually.
-                                        ? 'bg-red-500/15 text-red-300/80 ring-1 ring-red-500/25'
-                                        : 'bg-white/5 text-white/40 hover:bg-white/10',
+                                        // affordance — keep the button a calm red so it
+                                        // reads as "active source" without competing.
+                                        ? 'bg-red-500/15 text-red-300/80 ring-1 ring-inset ring-red-500/30'
+                                        : 'bg-emerald-500/[0.10] text-emerald-300/70 ring-1 ring-inset ring-emerald-400/20 hover:bg-emerald-500/[0.18] hover:text-emerald-300',
                                 )}
                                 style={{ width: 36, height: 36 }}
-                                title={isVoiceRecording ? t('chat.stop_recording') : t('chat.voice_input')}
+                                title={isVoiceRecording ? t('chat.stop_recording') : `${t('chat.voice_input')} (Ctrl+M)`}
                             >
                                 <Mic size={18} />
                             </button>
@@ -2856,15 +2856,11 @@ Rules:
                             status="recording"
                             anchorRef={inputRef as React.RefObject<HTMLElement | null>}
                             position="below"
-                            // Belt-and-suspenders stop: guard against weird
-                            // recorder states, use try/catch, and check .state
-                            // before calling stop() (MediaRecorder throws if
-                            // already inactive).
+                            // stop() is idempotent in the controller (safely
+                            // no-ops if not recording, aborts an in-flight
+                            // start); still wrapped defensively in try/catch.
                             onStop={() => {
-                                try {
-                                    const r = voiceRecognitionRef.current as MediaRecorder | null;
-                                    if (r && r.state !== 'inactive') r.stop();
-                                } catch (e) { console.warn('[chat voice] stop', e); }
+                                try { chatVoiceRef.current?.stop(); } catch (e) { console.warn('[chat voice] stop', e); }
                             }}
                         />
                     )}
