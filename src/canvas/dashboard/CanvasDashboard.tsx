@@ -32,6 +32,10 @@ interface Props {
      *  + apply via the canvas store (and clear the entry from the queue).
      *  Omit if the host can't honor it (no current canvas state available). */
     onRestoreClosed?: (entry: ClosedCanvas) => void;
+    /** App title-bar height (px). The dim+blur backdrop starts BELOW it so the
+     *  header — file tabs, +, CHAT/CANVAS toggle, window controls — stays sharp
+     *  and clickable while the launcher is open. */
+    headerOffset?: number;
 }
 
 /**
@@ -53,7 +57,7 @@ interface Props {
  *     and lets the user click into the empty canvas underneath. That's
  *     less surprising than a state mutation for "I just want to start typing."
  */
-export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onNewCanvas, onDismiss, onRestoreClosed }) => {
+export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onNewCanvas, onDismiss, onRestoreClosed, headerOffset = 0 }) => {
     useLocale();
     const recents = useRecentCanvases();
     const recentlyClosed = useRecentlyClosed();
@@ -202,18 +206,27 @@ export const CanvasDashboard: React.FC<Props> = ({ onOpenRecent, onOpenFile, onN
             className="fixed inset-0 flex items-center justify-center"
             style={{
                 zIndex: 9998,
-                // Manual / launcher open: a SUBTLE backdrop — canvas chrome
-                // (toolbar, file-ops cluster, grid) stays visible behind the
-                // card, just lightly dimmed + blurred so it's clearly inert.
-                // Backdrop captures pointer events so clicking the chrome
-                // dismisses the launcher (and then the second click lands
-                // on the chrome button normally). Empty-canvas auto-show
-                // stays fully click-through (no backdrop) so it doesn't
-                // feel modal at all.
+                // Start the backdrop BELOW the app title bar so the header
+                // (file tabs, +, CHAT/CANVAS toggle, window controls) stays
+                // sharp and usable while the launcher is open — the user can
+                // add / close a tab or jump to chat without dismissing first.
+                // This portal sits at z-9998 on document.body, OUTRANKING the
+                // whole app (which lives in a `glass isolate` stacking context),
+                // so this top-inset is the SOLE thing keeping the header clear —
+                // fall back to a sane title-bar height if the measured offset is
+                // momentarily 0 (first-paint race) so the header band never blurs.
+                top: headerOffset || 44,
+                // Dim + blur the canvas chrome (toolbar, file-ops cluster, tool
+                // rail, grid, minimap) ALWAYS while the launcher shows — so the
+                // "+"/empty auto-show reads as modal too, not just the
+                // dismissable open. Pointer handling stays tied to onDismiss: a
+                // dismissable launcher captures clicks (click-outside / X / Esc
+                // dismiss it); the empty auto-show stays click-through so the
+                // first real interaction (draw, type) dismisses it naturally.
                 pointerEvents: onDismiss ? 'auto' : 'none',
-                background: onDismiss ? 'rgba(0, 0, 0, 0.18)' : 'transparent',
-                backdropFilter: onDismiss ? 'blur(2px)' : undefined,
-                WebkitBackdropFilter: onDismiss ? 'blur(2px)' : undefined,
+                background: 'rgba(0, 0, 0, 0.18)',
+                backdropFilter: 'blur(2px)',
+                WebkitBackdropFilter: 'blur(2px)',
             }}
             onPointerDown={onDismiss
                 ? (e) => { if (e.target === e.currentTarget) { e.stopPropagation(); onDismiss(); } }

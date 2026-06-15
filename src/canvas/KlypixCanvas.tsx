@@ -227,6 +227,16 @@ function makeTabId(): string {
     return `tab_${Date.now().toString(36)}_${tabIdCounter}`;
 }
 
+// Voice FAB styling — emerald-glass, on-brand and theme-aware. Only the IDLE
+// state forks per canvas theme (white/emerald tints vanish on the cream paper
+// background); recording (red) and transcribing (emerald) clear contrast on
+// both #0a0a0f and #f4efe6 so they stay single strings. Non-standard alphas
+// use bracket syntax (`/[0.14]`) — bare `/14` silently drops the rule.
+const FAB_IDLE_DARK = 'bg-emerald-500/[0.14] border-emerald-400/40 text-emerald-300 ring-1 ring-inset ring-emerald-400/25 hover:bg-emerald-500/[0.22] hover:text-emerald-200 shadow-[0_6px_20px_rgba(16,185,129,0.20)]';
+const FAB_IDLE_LIGHT = 'bg-emerald-500/[0.16] border-emerald-600/45 text-emerald-700 ring-1 ring-inset ring-emerald-600/30 hover:bg-emerald-500/[0.26] hover:text-emerald-800 shadow-[0_6px_18px_rgba(16,185,129,0.28)]';
+const FAB_RECORDING = 'bg-red-500/20 border-red-400/50 text-red-300 ring-1 ring-inset ring-red-400/30 shadow-[0_6px_20px_rgba(239,68,68,0.30)]';
+const FAB_TRANSCRIBING = 'bg-emerald-500/[0.22] border-emerald-400/50 text-emerald-300 ring-1 ring-inset ring-emerald-400/35 cursor-wait shadow-[0_6px_20px_rgba(16,185,129,0.28)]';
+
 interface KlypixCanvasProps {
     /** App-level visibility. False when the user is on the Chat tab — we stay
         mounted to preserve tab state, but hide visually and gate side effects. */
@@ -404,6 +414,7 @@ export function KlypixCanvas({ appVisible = true, tabSlot = null, headerOffset =
                                 onLauncherDismissed={launcherForTabId === t.id ? () => setLauncherForTabId(null) : undefined}
                                 onCloseCanvas={() => onCloseTab(t.id)}
                                 pendingInviteCount={pendingInviteCount}
+                                headerOffset={headerOffset}
                             />
                         </CanvasStoreProvider>
                     </div>
@@ -437,9 +448,12 @@ interface CanvasSurfaceProps {
      *  user knows the launcher (reached via Home) holds something to accept.
      *  Mirrors the Canvas-tab badge. 0 / undefined → no badge. */
     pendingInviteCount?: number;
+    /** App title-bar height (px), forwarded to the launcher so its dim+blur
+     *  backdrop starts below the header and leaves it sharp + clickable. */
+    headerOffset?: number;
 }
 
-function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath, openLauncherOnMount, onLauncherDismissed, onCloseCanvas, pendingInviteCount }: CanvasSurfaceProps = {}) {
+function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath, openLauncherOnMount, onLauncherDismissed, onCloseCanvas, pendingInviteCount, headerOffset = 0 }: CanvasSurfaceProps = {}) {
     const { state, dispatch, commit, pushSnapshot, undo } = useCanvasStore();
 
     // Phase 23: when this tab is active, register a canvas-items reader with
@@ -1815,31 +1829,38 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             },
         });
         if (!ok) {
+            // start() returned false: either a genuine failure (onError above
+            // already surfaced it) or a benign cancel/re-entry (a fast second
+            // click stopped the in-flight start). Reset state silently — do NOT
+            // pop a "mic denied" modal, which was firing falsely on double-click.
             setVoiceStatus('idle');
             sinkRef.current = { kind: 'center' };
             if (sink.kind === 'card') setTranscription(null);
-            window.alert(tLocale('canvas.mic_denied'));
         }
         return ok;
     };
 
     const toggleVoice = (targetItemId?: string) => {
         const rec = voiceRef.current!;
-        if (rec.isRecording()) {
+        if (rec.isRecording() || rec.isStarting()) {
             rec.stop();
             return;
         }
+        if (!tabActive) return;   // never warm/record on a hidden canvas
+        void rec.prewarm();        // no-op if a hover already warmed the mic
         void startVoiceStream(targetItemId ? { kind: 'item', itemId: targetItemId } : { kind: 'center' });
     };
 
     const toggleVoiceToCard = () => {
         const rec = voiceRef.current!;
-        if (rec.isRecording()) {
+        if (rec.isRecording() || rec.isStarting()) {
             // Stop capture; onstop → transcription pass → onFinal lands
             // the text in the card. No UI change needed here.
             rec.stop();
             return;
         }
+        if (!tabActive) return;
+        void rec.prewarm();
         void startVoiceStream({ kind: 'card' });
     };
 
@@ -1859,6 +1880,18 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         return () => setDictateIntoHandler(() => {});
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [tabActive]);
+
+    // Always-mount canvas: switching to chat flips tabActive=false but does
+    // NOT unmount this surface (display:none), so dispose-on-unmount can't
+    // clear a warm mic. Release the warm stream the instant the tab hides so
+    // the OS "mic in use" indicator never lingers behind the chat overlay.
+    // No-op while recording, so an in-progress dictation finishes via onstop.
+    useEffect(() => {
+        if (!tabActive) voiceRef.current?.releaseWarm();
+    }, [tabActive]);
+
+    // Secondary backstop: full teardown on real unmount.
+    useEffect(() => () => { voiceRef.current?.dispose(); }, []);
 
     // Universal focus-pull: any pointerdown anywhere in the canvas (not
     // just the canvas surface) triggers an OS-level focus request. Belt-
@@ -2629,6 +2662,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                             }
                             : undefined
                     }
+                    headerOffset={headerOffset}
                 />
             )}
             {isEmpty && state.filePath && (() => {
@@ -3938,9 +3972,16 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             >
                 <button
                     ref={canvasVoiceFabRef}
+                    // Pre-warm the mic on hover / press so getUserMedia's
+                    // ~100-600ms Windows cold-start is already paid by the time
+                    // the click lands — the first words aren't clipped. Gated
+                    // on tabActive so a hidden (always-mounted) canvas can't
+                    // light the OS mic indicator.
+                    onPointerEnter={() => { if (tabActive) void voiceRef.current?.prewarm(); }}
+                    onPointerDown={() => { if (tabActive) void voiceRef.current?.prewarm(); }}
                     onClick={() => {
                         const rec = voiceRef.current!;
-                        if (rec.isRecording()) {
+                        if (rec.isRecording() || rec.isStarting()) {
                             rec.stop();
                             return;
                         }
@@ -3956,12 +3997,12 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                             : 'Voice (Ctrl+M)'
                     }
                     disabled={voiceStatus === 'transcribing'}
-                    className={`relative w-10 h-10 flex items-center justify-center rounded-full border transition-colors cursor-pointer shadow-[0_6px_20px_rgba(0,0,0,0.4)] ${
+                    className={`relative w-10 h-10 flex items-center justify-center rounded-full border transition-colors cursor-pointer ${
                         voiceStatus === 'recording'
-                            ? 'bg-red-500/20 border-red-400/40 text-red-300/80'
+                            ? FAB_RECORDING
                             : voiceStatus === 'transcribing'
-                            ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300/80 cursor-wait'
-                            : 'bg-[#12121a]/90 border-white/15 text-white/75 hover:text-white hover:bg-[#1a1a22]/95'
+                            ? FAB_TRANSCRIBING
+                            : isDarkBackground(gridSettings.background) ? FAB_IDLE_DARK : FAB_IDLE_LIGHT
                     }`}
                 >
                     <Mic size={16} />
@@ -3973,6 +4014,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                     status={voiceStatus === 'recording' ? 'recording' : 'transcribing'}
                     anchorRef={canvasVoiceFabRef}
                     position="above"
+                    appearance={isDarkBackground(gridSettings.background) ? 'dark' : 'light'}
                     // Belt-and-suspenders stop:
                     //   1. Call rec.stop() unconditionally — the controller's
                     //      stop() safely no-ops if not recording, so dropping
