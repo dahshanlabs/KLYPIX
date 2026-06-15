@@ -1487,12 +1487,27 @@ Rules:
     useEffect(() => {
         const el = titleBarRef.current;
         if (!el || typeof ResizeObserver === 'undefined') return;
-        const measure = () => setTitleBarH(el.getBoundingClientRect().height);
+        // Math.ceil so a sub-pixel height at fractional display scales never
+        // UNDER-pads the canvas (which lets the file-ops bar ride up under the
+        // header). The observer re-fires on any height change.
+        const measure = () => setTitleBarH(Math.ceil(el.getBoundingClientRect().height));
         measure();
         const ro = new ResizeObserver(measure);
         ro.observe(el);
         return () => ro.disconnect();
     }, []);
+    // The title bar GROWS when the canvas tab strip portals in on a chat→canvas
+    // switch (and on first mount in canvas mode). That growth can land a frame
+    // after the observer's first read, leaving headerOffset stale-small for the
+    // first paint — which is exactly when the file-ops bar renders under the
+    // header. Re-measure after layout on every tab switch as a backstop.
+    useEffect(() => {
+        const el = titleBarRef.current;
+        if (!el) return;
+        const id = requestAnimationFrame(() =>
+            setTitleBarH(Math.ceil(el.getBoundingClientRect().height)));
+        return () => cancelAnimationFrame(id);
+    }, [activeTab]);
     const quickActionsRef = useRef<HTMLDivElement>(null);
     const footerRef = useRef<HTMLDivElement>(null);
 
