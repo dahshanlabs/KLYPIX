@@ -68,11 +68,13 @@ export async function generatePPTX(spec: PPTXSpec): Promise<Buffer> {
     pptx.author = spec.metadata?.author || 'Klypix';
     pptx.title = spec.metadata?.title || 'Presentation';
 
-    const totalSlides = spec.slides.length;
+    // Defensive: tolerate spec drift (missing/!array slides) instead of throwing.
+    const slides = Array.isArray(spec?.slides) ? spec.slides : [];
+    const totalSlides = slides.length;
     const date = spec.metadata?.date || new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 
-    for (let idx = 0; idx < spec.slides.length; idx++) {
-        const slide = spec.slides[idx];
+    for (let idx = 0; idx < slides.length; idx++) {
+        const slide = slides[idx];
         const s = pptx.addSlide();
 
         switch (slide.layout) {

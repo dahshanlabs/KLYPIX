@@ -15,7 +15,7 @@ import { getLocale } from "../i18n/strings";
 const FALLBACK_API_KEY = "";
 
 // Robust JSON parser — handles markdown fences, trailing text, and malformed responses
-function safeParseJSON(text: string): any {
+export function safeParseJSON(text: string): any {
     // Strip markdown code fences
     let cleaned = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
     // Try direct parse first
@@ -76,13 +76,15 @@ function detectImageMime(base64: string): string {
     return 'image/jpeg';
 }
 
-function getModel(options?: { maxOutputTokens?: number; temperature?: number }) {
+function getModel(options?: { maxOutputTokens?: number; temperature?: number; systemInstruction?: string }) {
     const genAI = getGenAI();
+    const hasGenConfig = options?.maxOutputTokens != null || options?.temperature != null;
     return genAI.getGenerativeModel({
         model: "gemini-2.5-flash",
-        generationConfig: options ? {
-            maxOutputTokens: options.maxOutputTokens,
-            temperature: options.temperature,
+        systemInstruction: options?.systemInstruction,
+        generationConfig: hasGenConfig ? {
+            maxOutputTokens: options!.maxOutputTokens,
+            temperature: options!.temperature,
         } : undefined,
     }, { apiVersion: "v1beta" });
 }
@@ -120,11 +122,19 @@ export async function transcribeMedia(
 
 // ── System Prompt (brands AI as KLYPIX) ───────────────────────────────────────
 
-const KLYPIX_SYSTEM_PROMPT = `INSTRUCTION: You are KLYPIX, a premium AI desktop assistant invoked via Alt+Space.
-You are NOT Google Gemini. You are KLYPIX. Never mention Gemini or Google AI.
-You were created and developed by Dahshan Labs. If asked who made you, created you, or developed you, always answer "Dahshan Labs".
-Responses MUST be Markdown. Use structural elements like bullet points, headers, and bold text.
-Keep responses premium, concise, and easy-to-read.`;
+const KLYPIX_SYSTEM_PROMPT = `You are KLYPIX — a premium AI desktop assistant for Windows, invoked with Alt+Space. You were created by Dahshan Labs; if asked who made or developed you, answer "Dahshan Labs". Never identify as Gemini, Google, or any other AI provider.
+
+WHAT THE KLYPIX APP CAN DO — these are real features of the app you are part of, not things you lack. Never tell the user you "can't" do them:
+- Generate real, downloadable files from your content: Word (.docx), Excel (.xlsx), PowerPoint (.pptx), and PDF — all with full Arabic / right-to-left support. When the user asks for a document, the app turns your content into the actual file. So write the document content directly and confidently — NEVER reply that you "can't create files" or offer to paste Markdown into Word instead.
+- See the user's screen (screenshots) and read their open files and documents.
+- Read and extract content from web pages.
+- Run an autonomous agent for multi-step tasks (clicking, typing, file operations, browsing) when the user turns it on.
+- Provide an infinite canvas workspace for notes, files, and diagrams.
+
+RESPONSE STYLE:
+- Always respond in Markdown — headers, bullet points, and bold for emphasis. Keep it premium, concise, and scannable.
+- Respond in the SAME language the user writes in. For Arabic, use Modern Standard Arabic.
+- Be accurate. If you don't know something, say so — never fabricate facts, names, dates, or figures.`;
 
 function buildSystemPrompt(
     isFollowUp: boolean,
@@ -133,6 +143,9 @@ function buildSystemPrompt(
     sessionContextSummary?: string,
 ): string {
     let prompt = KLYPIX_SYSTEM_PROMPT;
+
+    // Date awareness — a best-in-class assistant knows "today".
+    prompt += `\n\nCURRENT DATE: ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`;
 
     // Locale-aware response language. When the user has explicitly chosen
     // Arabic as the app language, respond in Arabic regardless of what
@@ -187,7 +200,6 @@ export async function askGeminiStreaming(
     isPrivacyMode: boolean = false,
     sessionContextSummary?: string,
 ) {
-    const model = getModel();
     const isFollowUp = history.length > 0;
 
     let systemPrompt = buildSystemPrompt(isFollowUp, activeWindowContext, isPrivacyMode, sessionContextSummary);
@@ -210,16 +222,19 @@ export async function askGeminiStreaming(
         console.warn('[Gemini] Memory injection failed (continuing without):', err);
     }
 
-    // Build message parts
-    const parts: any[] = [];
-    parts.push(`${systemPrompt}\n\nUSER QUERY: ${userQuery}`);
+    // Best-in-class harness: pass the system prompt via Gemini's systemInstruction
+    // field (stronger adherence + clean separation) instead of flattening it into
+    // the user turn. The parts carry only the conversation history + the query.
+    const model = getModel({ systemInstruction: systemPrompt });
 
-    // Attach conversation history context
+    const parts: any[] = [];
     if (history.length > 0) {
         const historyText = history.slice(-10).map(h =>
             `${h.role === 'user' ? 'USER' : 'KLYPIX'}: ${h.content.substring(0, 500)}`
         ).join("\n");
-        parts[0] = `${systemPrompt}\n\nCONVERSATION HISTORY:\n${historyText}\n\nUSER QUERY: ${userQuery}`;
+        parts.push(`CONVERSATION HISTORY:\n${historyText}\n\nUSER QUERY: ${userQuery}`);
+    } else {
+        parts.push(`USER QUERY: ${userQuery}`);
     }
 
     // Attach images
@@ -465,13 +480,38 @@ Respond ONLY with the JSON object.`;
 // ── generateDocumentContent ───────────────────────────────────────────────────
 // Streams document content for file generation (xlsx/docx/pptx/pdf/etc.)
 
+// Arabic script ranges (Arabic, Supplement, Presentation Forms A/B).
+const ARABIC_SCRIPT_RE = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
+
+// Steer the GENERATED document body's language. Bug fixed: an Arabic prompt used
+// to yield an English document because nothing in the doc-gen path told the model
+// what language to write in. Priority: the script the user actually wrote in
+// wins; an Arabic-locale user whose request has no Latin word defaults to Arabic.
+function buildDocLanguageDirective(userQuery: string, contextContent?: string): string {
+    const queryIsArabic = ARABIC_SCRIPT_RE.test(userQuery || '');
+    const sourceIsArabic = ARABIC_SCRIPT_RE.test(contextContent || '');
+    const queryHasLatinWord = /[A-Za-z]{3,}/.test(userQuery || '');
+    const wantsArabic = queryIsArabic || sourceIsArabic || (getLocale() === 'ar' && !queryHasLatinWord);
+    if (wantsArabic) {
+        return `\n\nLANGUAGE: Write the ENTIRE document in ARABIC (العربية), in natural native Arabic. Do NOT transliterate and do NOT switch to English. Keep brand names and technical/code terms in their original Latin script inline (the renderer handles text direction). Write in normal logical reading order — never pre-reverse characters or insert direction-control marks.`;
+    }
+    return `\n\nLANGUAGE: Write the document in the SAME language as the user's request.`;
+}
+
 export async function generateDocumentContent(
     userQuery: string,
     systemPrompt: string,
     contextContent?: string,
     imageBase64?: string | null,
+    genConfig?: { maxOutputTokens?: number; temperature?: number },
 ) {
-    const model = getModel({ maxOutputTokens: 8000, temperature: 0.3 });
+    // Per-format tuning is passed by the caller: bigger token budget for
+    // multi-section docs/decks (the old fixed 8000 truncated them), lower
+    // temperature for structured JSON, higher for long-form prose.
+    const model = getModel({
+        maxOutputTokens: genConfig?.maxOutputTokens ?? 8000,
+        temperature: genConfig?.temperature ?? 0.3,
+    });
 
     const parts: any[] = [];
 
@@ -480,6 +520,7 @@ export async function generateDocumentContent(
         fullPrompt += `\n\nPROVIDED DOCUMENT CONTENT:\n${contextContent}`;
     }
     fullPrompt += `\n\nUSER REQUEST: ${userQuery}`;
+    fullPrompt += buildDocLanguageDirective(userQuery, contextContent);
 
     parts.push(fullPrompt);
 

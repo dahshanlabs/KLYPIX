@@ -25,18 +25,25 @@ const BRAND = {
 
 export async function generateXLSX(spec: XLSXSpec): Promise<Buffer> {
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = spec.metadata?.author || 'Klypix';
+    workbook.creator = spec?.metadata?.author || 'Klypix';
     workbook.created = new Date();
 
-    for (const sheet of spec.sheets) {
-        const ws = workbook.addWorksheet(sheet.name || 'Sheet1', {
+    // Defensive: tolerate spec drift (missing sheets/columns/rows) so a slightly
+    // off model output degrades to a usable file instead of throwing.
+    const sheets = Array.isArray(spec?.sheets) && spec.sheets.length ? spec.sheets : [{ name: 'Sheet1', columns: [], rows: [] }];
+
+    for (const sheet of sheets) {
+        // Normalize in place so downstream (rows / auto-filter / auto-width) can't throw on drift.
+        sheet.columns = Array.isArray(sheet?.columns) ? sheet.columns : [];
+        sheet.rows = Array.isArray(sheet?.rows) ? sheet.rows : [];
+        const ws = workbook.addWorksheet(sheet?.name || 'Sheet1', {
             views: [{ state: 'frozen', ySplit: 1 }], // Freeze header row
         });
 
         // ── Define columns ──────────────────────────────────────────────
         ws.columns = sheet.columns.map(c => ({
-            header: c.header,
-            width: c.width || Math.max(c.header.length + 4, 14),
+            header: c?.header ?? '',
+            width: c?.width || Math.max(String(c?.header ?? '').length + 4, 14),
         }));
 
         // ── Style header row ────────────────────────────────────────────

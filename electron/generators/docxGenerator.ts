@@ -182,7 +182,9 @@ export async function generateDOCX(spec: DOCXSpec): Promise<Buffer> {
     const title = spec.metadata?.title || '';
     const date = spec.metadata?.date || new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 
-    for (const section of spec.sections) {
+    // Defensive: tolerate spec drift (missing/!array sections) instead of throwing.
+    const sections = Array.isArray(spec?.sections) ? spec.sections : [];
+    for (const section of sections) {
         switch (section.type) {
             case 'heading1': {
                 const ar = containsArabic(section.text);

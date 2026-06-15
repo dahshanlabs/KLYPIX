@@ -67,6 +67,42 @@ const FORMAT_SIGNALS: Record<string, { formats: GenerationFormat[]; weight: numb
     'memo':          { formats: ['docx'], weight: 0.7 },
     'script':        { formats: ['code'], weight: 0.5 },
     'function':      { formats: ['code'], weight: 0.4 },
+
+    // ── Arabic signals (the app UI may be English while the user types Arabic) ──
+    // Strong format nouns
+    'مستند وورد':    { formats: ['docx'], weight: 1.0 },
+    'ملف وورد':      { formats: ['docx'], weight: 1.0 },
+    'وورد':          { formats: ['docx'], weight: 0.9 },
+    'مستند':         { formats: ['docx'], weight: 0.8 },   // "document" → docx default; explicit pdf/excel words override
+    'عرض تقديمي':    { formats: ['pptx'], weight: 1.0 },
+    'بوربوينت':      { formats: ['pptx'], weight: 1.0 },
+    'شرائح':         { formats: ['pptx'], weight: 0.9 },
+    'شريحة':         { formats: ['pptx'], weight: 0.8 },
+    'جدول بيانات':   { formats: ['xlsx'], weight: 1.0 },
+    'اكسل':          { formats: ['xlsx'], weight: 1.0 },
+    'إكسل':          { formats: ['xlsx'], weight: 1.0 },
+    'ملف بي دي اف':  { formats: ['pdf'], weight: 1.0 },
+    'انفوجرافيك':    { formats: ['image'], weight: 0.9 },
+    'سيرة ذاتية':    { formats: ['docx', 'pdf'], weight: 0.8 },
+    'ميزانية':       { formats: ['xlsx'], weight: 0.8 },
+    'فاتورة':        { formats: ['xlsx', 'pdf'], weight: 0.8 },
+    // Content/medium nouns (ambiguous — parallel to the English weights)
+    'تقرير':         { formats: ['docx', 'pdf'], weight: 0.6 },
+    'رسالة':         { formats: ['docx', 'pdf'], weight: 0.6 },
+    'خطاب':          { formats: ['docx', 'pdf'], weight: 0.6 },
+    'مذكرة':         { formats: ['docx'], weight: 0.6 },
+    'مقترح':         { formats: ['docx', 'pdf'], weight: 0.6 },
+    'جدول':          { formats: ['xlsx'], weight: 0.5 },
+    'رسمة':          { formats: ['image'], weight: 0.8 },
+    'مخطط':          { formats: ['image'], weight: 0.6 },
+    // Action verbs (medium — fire only when combined with a format/content noun)
+    'أنشئ':          { formats: ['docx', 'xlsx', 'pptx', 'pdf'], weight: 0.6 },
+    'انشئ':          { formats: ['docx', 'xlsx', 'pptx', 'pdf'], weight: 0.6 },
+    'اعمل':          { formats: ['docx', 'xlsx', 'pptx', 'pdf'], weight: 0.5 },
+    'سوي':           { formats: ['docx', 'xlsx', 'pptx', 'pdf'], weight: 0.5 },
+    'اكتب':          { formats: ['docx', 'md', 'txt'], weight: 0.4 },
+    'صمم':           { formats: ['image', 'pptx'], weight: 0.6 },
+    'ارسم':          { formats: ['image'], weight: 0.85 },
 };
 
 export function detectGenerationIntent(query: string): GenerationIntent {
@@ -77,8 +113,13 @@ export function detectGenerationIntent(query: string): GenerationIntent {
     if (/^(what|where|who|when|why|how|is|are|was|were|will|would|can|could|should|shall|does|do|did|have|has|had|which|tell|explain|describe|show|find|check|list|identify|any)\b/.test(lower)) {
         return { isGeneration: false, format: 'txt', ambiguous: false, possibleFormats: [], confidence: 0 };
     }
-    // Layer 2: Question mark at end → likely a question, not a generation command
-    if (lower.endsWith('?')) {
+    // Layer 2: Question mark at end (ASCII or Arabic ؟) → likely a question
+    if (lower.endsWith('?') || lower.endsWith('؟')) {
+        return { isGeneration: false, format: 'txt', ambiguous: false, possibleFormats: [], confidence: 0 };
+    }
+    // Layer 2b: Arabic question words at the start. Excludes "من" (also "please/from")
+    // so a polite "من فضلك اعمل لي..." request still generates.
+    if (/^(ما|ماذا|كيف|لماذا|متى|أين|هل)\s/.test(lower)) {
         return { isGeneration: false, format: 'txt', ambiguous: false, possibleFormats: [], confidence: 0 };
     }
     // Layer 3: Content inquiry verbs → asking about content, not generating it
@@ -306,22 +347,35 @@ If the user provides an SCFHS registration certificate for "Shaima Khader, Pharm
 - Risks specific to THIS certificate: registration expiry date, qualification scope, practicing status
 - NOT generic risk categories like "Operational Risks" or "Financial Risks"
 
-IF THE PROVIDED CONTENT IS TOO SHORT OR UNCLEAR TO GENERATE A MEANINGFUL DOCUMENT:
-Respond with ONLY: "# Insufficient Content\\n\\nThe provided document does not contain enough information to generate a meaningful [document type]. Please provide more detailed source material."
+IF (and only if) THE PROVIDED SOURCE IS GENUINELY TOO SHORT OR UNCLEAR TO WORK FROM:
+Respond with ONLY a first line of exactly "# Insufficient Content" (keep this marker in English — it is a machine signal), then a blank line, then ONE sentence — written IN THE USER'S LANGUAGE — explaining what extra source material is needed.
+Do NOT use this escape hatch when the user is asking you to write from your own knowledge; that is handled in a different mode.
 
 DO NOT FALL BACK TO GENERIC TEMPLATES. EVER.
+
+SELF-CHECK BEFORE YOU FINISH (faithfulness):
+- Re-read every claim, number, name, and date you wrote.
+- If anything is NOT directly supported by the provided source, delete it or correct it to match the source exactly.
+- Do not add facts the source does not contain. Keep only what the source supports.
 
 === END ABSOLUTE REQUIREMENT ===
 
 `;
 
 // Build the final doc generation prompt with context enforcement
-const NO_HALLUCINATION_GUARD = `
-CRITICAL: Only include data that is EXPLICITLY VISIBLE in the provided content.
-- Do NOT invent, assume, or fill in data based on filenames, titles, or guesses.
-- If you can see a filename like "CV.pdf" but NOT the actual CV content, you must NOT generate fake CV details.
-- NEVER fabricate names, dates, roles, organizations, or any factual data.
-- If there is not enough visible data to generate the requested document, say so instead of hallucinating.
+// Write-from-scratch mode: NO source document/screenshot was provided, so the
+// user's request IS the brief. The old guard told the model "only include data
+// explicitly visible in the provided content" even here — with nothing provided,
+// the model concluded it had nothing to work from and refused ("# Insufficient
+// Content"). This positive instruction unblocks legitimate generation while
+// still discouraging fabricated *specifics*.
+const GENERATE_FROM_SCRATCH_PREFIX = `
+=== WRITE-FROM-SCRATCH MODE ===
+No source document was provided. The user wants you to CREATE this content from your own knowledge and their request. Their request is a sufficient brief — write a complete, substantive, well-structured document.
+- DO write real, useful content: headings, paragraphs, tables, and lists as the format calls for.
+- Be accurate. Do NOT fabricate specific verifiable facts you cannot know (real names, exact dates, figures, citations) — write generally, or use clearly-labelled placeholders like [Company Name] or [Date] for the user to fill in.
+- NEVER reply that there is "insufficient content" in this mode — the user's request is enough to write from.
+=== END WRITE-FROM-SCRATCH MODE ===
 
 `;
 
@@ -336,8 +390,13 @@ export function buildDocGenPrompt(formatPrompt: string, hasContext: boolean, isS
     if (isScreenshot) {
         return SCREENSHOT_HALLUCINATION_GUARD + formatPrompt;
     }
-    return NO_HALLUCINATION_GUARD + formatPrompt;
+    return GENERATE_FROM_SCRATCH_PREFIX + formatPrompt;
 }
+
+// Machine sentinel the model emits (in any language doc) when a grounded source
+// is too thin to use. The client detects this and shows a friendly message
+// instead of saving a broken file. Keep in sync with CONTEXT_ENFORCEMENT_PREFIX.
+export const INSUFFICIENT_CONTENT_MARKER = '# Insufficient Content';
 
 // ── Format Display Names ─────────────────────────────────────────────────────
 

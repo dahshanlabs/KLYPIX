@@ -1,7 +1,23 @@
 import { useState, useCallback, useRef } from 'react';
-import { detectGenerationIntent, isStructuredFormat, GENERATION_PROMPTS, FORMAT_LABELS, FORMAT_EXTENSIONS, buildDocGenPrompt } from '../core/docGeneration';
+import { detectGenerationIntent, isStructuredFormat, GENERATION_PROMPTS, FORMAT_LABELS, FORMAT_EXTENSIONS, buildDocGenPrompt, INSUFFICIENT_CONTENT_MARKER } from '../core/docGeneration';
 import type { GenerationFormat } from '../core/docGeneration';
-import { generateDocumentContent, generateImage } from '../api/gemini';
+import { generateDocumentContent, generateImage, safeParseJSON } from '../api/gemini';
+import { getLocale } from '../i18n/strings';
+
+// Per-format generation tuning. Bigger token budget for multi-section docs/decks
+// (the old fixed 8000 truncated long output); low temperature for structured
+// JSON so it parses reliably; higher for long-form prose.
+const DOC_GEN_CONFIG: Record<string, { maxOutputTokens: number; temperature: number }> = {
+    docx: { maxOutputTokens: 16000, temperature: 0.2 },
+    pptx: { maxOutputTokens: 16000, temperature: 0.3 },
+    xlsx: { maxOutputTokens: 16000, temperature: 0.1 },
+    pdf:  { maxOutputTokens: 16000, temperature: 0.4 },
+    md:   { maxOutputTokens: 12000, temperature: 0.4 },
+    code: { maxOutputTokens: 12000, temperature: 0.2 },
+    csv:  { maxOutputTokens: 8000,  temperature: 0.1 },
+    json: { maxOutputTokens: 8000,  temperature: 0.1 },
+    txt:  { maxOutputTokens: 8000,  temperature: 0.4 },
+};
 
 export interface GeneratedDoc {
     format: GenerationFormat;
@@ -79,7 +95,8 @@ export function useDocGenerator() {
                 return;
             }
 
-            const streamResult = await generateDocumentContent(query, systemPrompt, contextContent, imageBase64);
+            const genConfig = DOC_GEN_CONFIG[format] || { maxOutputTokens: 8000, temperature: 0.3 };
+            const streamResult = await generateDocumentContent(query, systemPrompt, contextContent, imageBase64, genConfig);
 
             let fullContent = '';
             for await (const chunk of streamResult.stream) {
@@ -109,6 +126,19 @@ export function useDocGenerator() {
                 fullContent = fullContent.replace(/^```\w*\n?/, '').replace(/\n?```$/, '').trim();
             }
 
+            // Grounded mode can emit the "# Insufficient Content" sentinel when the
+            // source is too thin. Catch it here so the user sees a friendly message
+            // (in their language, written by the model after the marker) instead of
+            // a broken file being produced.
+            if (fullContent.startsWith(INSUFFICIENT_CONTENT_MARKER)) {
+                const explanation = fullContent.slice(INSUFFICIENT_CONTENT_MARKER.length).trim();
+                setGenProgress(explanation || (getLocale() === 'ar'
+                    ? 'المصدر المُقدَّم غير كافٍ لإنشاء هذا المستند. أضف تفاصيل أكثر.'
+                    : 'The provided source is not enough to generate this document. Add more detail.'));
+                setIsGenerating(false);
+                return;
+            }
+
             let spec: any = null;
             // Generate meaningful filename from content
             let filename = `generated.${FORMAT_EXTENSIONS[format]}`;
@@ -122,29 +152,46 @@ export function useDocGenerator() {
             let preview = '';
 
             if (isStructuredFormat(format)) {
-                // Parse JSON spec — extract JSON object if buried in other text
-                try {
-                    const jsonMatch = fullContent.match(/\{[\s\S]*\}/);
-                    if (jsonMatch) fullContent = jsonMatch[0];
-                    spec = JSON.parse(fullContent);
-                    filename = spec.filename || filename;
+                // Robust parse (handles fences, trailing commas, buried object).
+                spec = safeParseJSON(fullContent);
 
-                    // Generate a human-readable preview
-                    if (format === 'xlsx' && spec.sheets) {
-                        const sheet = spec.sheets[0];
-                        const headers = sheet.columns?.map((c: any) => c.header).join(' | ') || '';
-                        const rowCount = sheet.rows?.length || 0;
-                        preview = `Spreadsheet: ${sheet.name || 'Sheet1'}\n${headers}\n(${rowCount} rows, ${spec.sheets.length} sheet${spec.sheets.length > 1 ? 's' : ''})`;
-                    } else if (format === 'docx' && spec.sections) {
-                        const headings = spec.sections.filter((s: any) => s.type?.startsWith('heading')).map((s: any) => s.text);
-                        preview = `Document: ${spec.metadata?.title || filename}\nSections: ${headings.join(', ') || 'None'}`;
-                    } else if (format === 'pptx' && spec.slides) {
-                        preview = `Presentation: ${spec.slides.length} slides\n${spec.slides.map((s: any) => `- ${s.title || s.layout}`).join('\n')}`;
-                    }
-                } catch {
-                    // JSON parse failed — treat as plain text
-                    preview = `Failed to parse structured output. Raw content available for download.`;
-                    spec = null;
+                // One repair retry: re-ask the model for valid JSON only.
+                if (!spec) {
+                    setGenProgress(getLocale() === 'ar' ? 'جارٍ إصلاح بنية المستند...' : 'Fixing document structure...');
+                    try {
+                        const repairPrompt = `${basePrompt}\n\nYour previous output was NOT valid JSON and could not be used. Return ONLY a single valid JSON object — no prose, no explanation, no code fences.`;
+                        const retry = await generateDocumentContent(`Convert the following into the required valid JSON object:\n\n${fullContent}`, repairPrompt, undefined, null, { maxOutputTokens: genConfig.maxOutputTokens, temperature: 0.1 });
+                        let repaired = '';
+                        for await (const chunk of retry.stream) {
+                            if (cancelledRef.current) break;
+                            repaired += chunk.text();
+                        }
+                        spec = safeParseJSON(repaired);
+                        if (spec) fullContent = JSON.stringify(spec);
+                    } catch { /* fall through to the error below */ }
+                }
+
+                // Still unusable → surface a clear error; NEVER save a raw JSON blob as a .docx/.xlsx/.pptx.
+                if (!spec) {
+                    setGenProgress(getLocale() === 'ar'
+                        ? 'تعذّر إنشاء بنية مستند صحيحة. حاول مرة أخرى.'
+                        : 'Could not produce a valid document structure. Please try again.');
+                    setIsGenerating(false);
+                    return;
+                }
+
+                filename = spec.filename || filename;
+                // Human-readable preview (defensive: arrays may be missing on odd specs).
+                if (format === 'xlsx' && Array.isArray(spec.sheets) && spec.sheets[0]) {
+                    const sheet = spec.sheets[0];
+                    const headers = sheet.columns?.map((c: any) => c.header).join(' | ') || '';
+                    const rowCount = sheet.rows?.length || 0;
+                    preview = `Spreadsheet: ${sheet.name || 'Sheet1'}\n${headers}\n(${rowCount} rows, ${spec.sheets.length} sheet${spec.sheets.length > 1 ? 's' : ''})`;
+                } else if (format === 'docx' && Array.isArray(spec.sections)) {
+                    const headings = spec.sections.filter((s: any) => s.type?.startsWith('heading')).map((s: any) => s.text);
+                    preview = `Document: ${spec.metadata?.title || filename}\nSections: ${headings.join(', ') || 'None'}`;
+                } else if (format === 'pptx' && Array.isArray(spec.slides)) {
+                    preview = `Presentation: ${spec.slides.length} slides\n${spec.slides.map((s: any) => `- ${s.title || s.layout}`).join('\n')}`;
                 }
             } else {
                 preview = fullContent.length > 500 ? fullContent.slice(0, 500) + '\n...' : fullContent;
