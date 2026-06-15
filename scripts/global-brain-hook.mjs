@@ -412,6 +412,26 @@ async function promptRetrieve(lib) {
     process.stdout.write(lines.join('\n') + '\n'); // UserPromptSubmit injects stdout as context
 }
 
+// Read-side cross-link to a *sibling* memory store. Claude Code keeps per-user
+// project notes at ~/.claude/projects/<encoded-cwd>/memory/ (prefs, feedback,
+// session logs) — a different store than this spatial brain. When that dir
+// exists we surface ONE pointer in the brief so the agent treats the two as
+// complementary (brain = project decisions & open questions; memory = how to
+// work with THIS user) instead of duplicating one into the other. Best-effort:
+// a wrong path guess simply finds nothing and emits nothing — never throws.
+function memoryFooter() {
+    try {
+        const encoded = String(CWD).replace(/^[A-Za-z]:/, m => m.toLowerCase()).replace(/[\\/:]/g, '-');
+        const dir = path.join(os.homedir(), '.claude', 'projects', encoded, 'memory');
+        if (!fs.existsSync(dir)) return '';
+        const notes = fs.readdirSync(dir).filter(f => /\.md$/i.test(f) && f.toLowerCase() !== 'memory.md');
+        if (!notes.length) return '';
+        const hasIndex = fs.existsSync(path.join(dir, 'MEMORY.md'));
+        return `\n\n---\n📎 **Sibling memory store** — ${notes.length} note(s) at \`${dir}\`${hasIndex ? ' (index: MEMORY.md)' : ''}.\n`
+            + `Holds how to work with *this user* (prefs, feedback, session logs); the brain above holds *project* decisions & open questions. Reconcile across both — don't duplicate one into the other.\n`;
+    } catch { return ''; }
+}
+
 async function read(lib) {
     const { struct } = await lib.parseKlypix(fs.readFileSync(BRAIN));
     // Default = TIERED brief (open questions + recent + area map) so the
@@ -419,7 +439,7 @@ async function read(lib) {
     const outStr = (!process.argv.includes('--full') && typeof lib.structToBrief === 'function')
         ? lib.structToBrief(struct)
         : lib.structToMarkdown(struct);
-    process.stdout.write(outStr);
+    process.stdout.write(outStr + memoryFooter());
     // Heartbeat: prove the brief actually injected (and how big) so a dead or
     // stale live-copy of the hook stops being a silent no-op.
     appendJsonl(HEALTH, { ts: nowIso(), project: path.basename(CWD), mode: 'read', ok: true, briefBytes: Buffer.byteLength(outStr), cards: struct?.counts?.cards ?? null }, 500);
