@@ -930,6 +930,20 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
     }, [state.title, state.isDirty, hasContent, state.filePath]);
     const [isDragOver, setIsDragOver] = useState(false);
     const [commandOpen, setCommandOpen] = useState(false);
+    // Opening the agent command bar dismisses the floating text-format capsule.
+    // The two are competing affordances (the capsule hovers over the item, the
+    // command bar sits at the bottom) and once the user has switched to "ask the
+    // agent" the leftover formatting chrome is just noise. Keyed on commandOpen
+    // rather than any single trigger so it covers EVERY open path — the
+    // context-menu "Ask agent" item, the `/` hotkey, and the AI-tray reopen.
+    // Including textCapsuleAnchorId in the deps also blocks a right-click from
+    // re-summoning the capsule while the bar stays open. The reducer no-ops an
+    // unchanged id, so the guarded null dispatch is free when nothing's anchored.
+    useEffect(() => {
+        if (commandOpen && state.textCapsuleAnchorId) {
+            dispatch({ type: 'SET_TEXT_CAPSULE_ANCHOR', id: null });
+        }
+    }, [commandOpen, state.textCapsuleAnchorId, dispatch]);
     // Voice FAB placement: the FAB sits bottom-CENTER on a wide window, but on a
     // narrow one (e.g. Windows half-snap) the centered FAB collides with the
     // bottom-right status bar. When that would happen we right-anchor the FAB
