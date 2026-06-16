@@ -1,27 +1,47 @@
+<div align="center">
+
 # KLYPIX
 
-**Your AI copilot for Windows — press `Alt+Space` anywhere.**
+### One keystroke. Three superpowers.
 
-KLYPIX is a desktop AI assistant that lives one keystroke away. It sees what's
-on your screen and helps you act on it — three ways:
+**The AI overlay + agent + canvas-brain for Windows — in Arabic & English.**
 
-- 🗨️ **Chat** — a screenshot-aware overlay that understands whatever you're
-  looking at and answers instantly.
-- 🤖 **Agent** — an autonomous, multi-model agent that uses tools (files,
-  browser, shell) to actually get tasks done.
-- 🧠 **Canvas** — an infinite `.klypix` workspace for spatial notes, mind-maps,
-  and a shared human↔AI "brain," with cloud sync.
+🌐 [klypix.com](https://klypix.com) · ⬇️ [Download](../../releases) · auto-updating
 
-Plus one-click document generation (Word, Excel, PowerPoint, PDF) and full
-Arabic + English support.
-
-🌐 **Website:** <https://klypix.com>
-⬇️ **Download / Install:** see the [**Releases**](../../releases) tab —
-KLYPIX auto-updates itself, so you're always on the latest version.
+</div>
 
 ---
 
-> This repository is the **public download & auto-update channel** for KLYPIX.
-> The application **source code is private and proprietary**.
->
-> © Dahshan Labs — All rights reserved. UNLICENSED.
+Press **`Alt+Space`** anywhere and KLYPIX appears — already seeing what's on your
+screen, ready to think, act, and remember alongside you. Not another chat box in a
+browser tab. A copilot that lives *on top of everything you do*.
+
+## 🗨️ Chat — it sees your screen
+Ask about whatever you're looking at — a spreadsheet, a PDF, a webpage, an error —
+and get an answer grounded in what's actually in front of you. No screenshots to
+upload, no copy-paste. It just *knows*.
+
+## 🤖 Agent — it gets things done
+More than answers. KLYPIX's autonomous agent uses real tools — files, browser,
+shell, documents — across multiple AI models to actually complete the task, step by
+step, with you in control.
+
+## 🧠 Canvas — your second brain
+An infinite `.klypix` workspace where ideas, notes, files, and AI answers live as
+connected cards on a spatial canvas — a shared human↔AI "brain" that thinks with
+you, syncs to the cloud, and grows over time.
+
+---
+
+✨ **Also:** one-click documents (Word · Excel · PowerPoint · PDF) · full **Arabic & English** (RTL) · pick your AI model (Claude, Gemini, and more).
+
+## ⬇️ Get KLYPIX
+
+Download the latest installer from the **[Releases](../../releases)** tab.
+KLYPIX **auto-updates itself**, so once installed you're always on the newest version.
+
+---
+
+<sub>This repository is the **public download & auto-update channel** for KLYPIX.
+The application **source code is private and proprietary**.<br>
+© Dahshan Labs — All rights reserved. UNLICENSED.</sub>
