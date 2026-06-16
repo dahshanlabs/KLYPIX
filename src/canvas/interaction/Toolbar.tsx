@@ -1259,7 +1259,7 @@ function ToolButton({ active, disabled, onClick, label, children }: ToolButtonPr
                 'w-8 h-8 flex items-center justify-center rounded-lg transition-all cursor-pointer',
                 active
                     ? 'bg-emerald-500/25 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.25)]'
-                    : 'text-white/50 hover:bg-white/10 hover:text-white',
+                    : 'text-white/[0.67] hover:bg-white/10 hover:text-white',
                 disabled && 'opacity-30 cursor-not-allowed hover:bg-transparent'
             )}
         >

@@ -86,7 +86,7 @@ export function CommandBar({ open, onClose, onStartRun, onGarden, onAsk }: Props
 
     return (
         <div data-canvas-ui="1" className="absolute bottom-16 left-1/2 -translate-x-1/2 z-40 w-[min(640px,90vw)] no-drag animate-in slide-in-from-bottom-2 fade-in duration-150">
-            <div className="bg-[#12121a]/95 backdrop-blur-xl border border-emerald-500/30 rounded-2xl shadow-[0_-8px_32px_rgba(0,0,0,0.5)] overflow-hidden">
+            <div className="bg-[#292C2C] border border-emerald-500/30 rounded-2xl shadow-[0_-8px_32px_rgba(0,0,0,0.5)] overflow-hidden">
                 <div className="flex items-center gap-2 px-4 py-3">
                     <span className="text-emerald-400 text-lg font-bold leading-none">/</span>
                     <input

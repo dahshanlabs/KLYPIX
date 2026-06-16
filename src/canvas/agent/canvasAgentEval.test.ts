@@ -55,11 +55,15 @@ describe('agent-eval — the real belt handed to the model (resolveToolBelt)', (
         }
     });
 
-    it('a language command CAN still read + write + ask (so the loop fallback works)', () => {
+    it('a language command can read + write + terminate in its loop fallback — but NEVER ask the user', () => {
         const belt = beltNames('/translate');
-        expect(belt).toContain('canvas_read_item');   // read the source
-        expect(belt).toContain('canvas_create_card');  // pin the answer
-        expect(belt).toContain('canvas_ask_user');     // clarify if needed
+        expect(belt).toContain('canvas_read_item');    // read the source (e.g. extract a PDF)
+        expect(belt).toContain('canvas_create_card');  // pin the answer / one refusal note
+        expect(belt).toContain('canvas_done');         // terminate cleanly
+        // A transform has a sensible DEFAULT — asking "which language?" for
+        // gibberish was the bug. Language commands must never call canvas_ask_user
+        // (agent-lane commands like /chart still can).
+        expect(belt).not.toContain('canvas_ask_user');
     });
 
     it('/chart and /compile DO get their one production tool (and only the code tool they need)', () => {

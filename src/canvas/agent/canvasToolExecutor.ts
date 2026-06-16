@@ -1,6 +1,7 @@
 import type { CanvasAction, CanvasState } from '../state/canvasStore';
 import type { ApprovalItem, CanvasItem, ContainerItem, Connection, FileItem, ImageItem, TextItem, VideoItem, AudioItem } from '../items/types';
 import { getCachedTranscript, setCachedTranscript } from './mediaTranscriptCache';
+import { looksLikeRefusal, refusalTone } from './replyClassify';
 import { newId } from '../items/types';
 
 /** Resolve the world-coord position for a newly-created agent card.
@@ -85,7 +86,7 @@ function resolveAgentCardPosition(
 import { base64ToBytes, bytesToBase64, getAsset, registerAsset, mimeFromExtension } from '../file/assetRegistry';
 import { waitForApproval } from './approvalRegistry';
 import { askUser, type AskQuestion } from './agentAskStore';
-import { defaultTextColorFor, getCurrentGridSettings } from '../gridSettings';
+import { defaultTextColorFor, getCurrentGridSettings, isDarkBackground } from '../gridSettings';
 import { compileToDOCX, compileToPPTX, compileToPdfMarkdown, compileToZip } from './canvasCompiler';
 import * as XLSX from 'xlsx';
 
@@ -149,6 +150,17 @@ export function cleanAgentText(s: string): string {
         .replace(/^[ \t]*[-*]\s+/gm, '• '); // - / * bullets → •
 }
 
+/** Note-card fill that ADAPTS to the canvas theme. The tint (warm = amber /
+ *  cool = slate) reads as a muted note on BOTH a dark and a light canvas: a deep
+ *  tint on dark paper, a pale tint on light paper. Paired with the theme-aware
+ *  text color (defaultTextColorFor), the note stays readable either way instead
+ *  of slapping a dark card onto a light board. */
+function noteFillColor(amber: boolean): string {
+    const dark = isDarkBackground(getCurrentGridSettings().background);
+    if (dark) return amber ? 'rgba(42,32,12,0.85)' : 'rgba(24,28,36,0.85)';
+    return amber ? 'rgba(254,243,199,0.92)' : 'rgba(241,245,249,0.94)';
+}
+
 export function createAgentReportCard(
     ctx: ToolExecContext,
     opts: { content: string; kind?: 'artifact' | 'note' | 'error'; tone?: 'amber' | 'slate'; isError?: boolean },
@@ -188,7 +200,7 @@ export function createAgentReportCard(
                 ? (amber ? 'rgba(245,158,11,0.7)' : 'rgba(148,163,184,0.6)')
                 : 'rgba(16,185,129,0.5)',
         lineStyle: isNote ? 'dashed' : 'solid',
-        ...(isNote ? { fillColor: amber ? 'rgba(42,32,12,0.85)' : 'rgba(24,28,36,0.85)' } : {}),
+        ...(isNote ? { fillColor: noteFillColor(amber) } : {}),
         heading: false,
     };
     ctx.dispatch({ type: 'ADD_ITEM', item });
@@ -611,6 +623,16 @@ export async function executeToolCall(call: ToolCall, ctx: ToolExecContext): Pro
         case 'canvas_create_card': {
             const cardW = 420, cardH = 140;
             const pos = resolveAgentCardPosition(s, Number(call.args.x) || 0, Number(call.args.y) || 0, cardW, cardH);
+            const title = cleanAgentText(String(call.args.title || ''));
+            const body = cleanAgentText(String(call.args.body || ''));
+            // A refusal / "can't do" the model pins itself (e.g. titled "TRANSLATION"
+            // but saying "cannot be translated") must NOT masquerade as a success:
+            // restyle it as a muted dashed Note and relabel the header, so the green
+            // border + arrow never assert a result that didn't happen. The run loop
+            // reads `note` back to draw a dashed amber arrow instead of solid green.
+            const refusal = looksLikeRefusal(body) || looksLikeRefusal(title);
+            const amber = refusal && refusalTone(body) !== 'slate';
+            const heading = refusal ? 'NOTE' : title.toUpperCase();
             const item: TextItem = {
                 id: newId('agent'),
                 type: 'text',
@@ -623,15 +645,19 @@ export async function executeToolCall(call: ToolCall, ctx: ToolExecContext): Pro
                 parentId: null,
                 createdAt: Date.now(),
                 createdBy: 'agent',
-                content: `${cleanAgentText(String(call.args.title || '')).toUpperCase()}\n\n${cleanAgentText(String(call.args.body || ''))}`,
+                content: `${heading}\n\n${body}`,
                 fontSize: 13,
                 color: defaultTextColorFor(getCurrentGridSettings().background),
                 border: true,
-                borderColor: 'rgba(16,185,129,0.5)',
+                borderColor: refusal
+                    ? (amber ? 'rgba(245,158,11,0.7)' : 'rgba(148,163,184,0.6)')
+                    : 'rgba(16,185,129,0.5)',
+                lineStyle: refusal ? 'dashed' : 'solid',
+                ...(refusal ? { fillColor: noteFillColor(amber) } : {}),
                 heading: false,
             };
             ctx.dispatch({ type: 'ADD_ITEM', item });
-            return { name: call.name, result: JSON.stringify({ id: item.id, ok: true }) };
+            return { name: call.name, result: JSON.stringify({ id: item.id, ok: true, note: refusal }) };
         }
 
         case 'canvas_write_batch': {

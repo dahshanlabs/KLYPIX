@@ -26,7 +26,17 @@ describe('isGenericSignoff — content-free sign-offs are dropped', () => {
 
 describe('looksLikeRefusal — the high-value message that must persist', () => {
     it('catches refusals / no-ops', () => {
-        for (const s of [GIBBERISH_REFUSAL, "I can't translate this — it isn't meaningful text.", 'Nothing to summarize here.', 'Unable to compare: only one item selected.', 'No translatable content found.']) {
+        for (const s of [
+            GIBBERISH_REFUSAL,
+            "I can't translate this — it isn't meaningful text.",
+            'Nothing to summarize here.',
+            'Unable to compare: only one item selected.',
+            'No translatable content found.',
+            // real model outputs observed in the wild (must be caught even when the
+            // model titles the card "TRANSLATION"):
+            "The text 'sddsdasdad' does not appear to be a word in any known language, and therefore cannot be translated. Please provide a valid word or phrase.",
+            "The text 'sssssssssssadsds' does not appear to be a recognizable word or phrase in English. Please check for typos or provide a valid input for translation.",
+        ]) {
             expect(looksLikeRefusal(s), s).toBe(true);
         }
     });

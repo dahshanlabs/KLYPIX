@@ -187,7 +187,7 @@ async function runLanguageLane(
     onProgress?.({ turn: 1, activity: spec.name.replace(/^\//, '') });
 
     const sys = `You are KLYPIX, a capable multilingual assistant. ${spec.instruction || ''}
-Operate ONLY on the SOURCE CONTENT below. Reply with ONLY the resulting text — no preamble, no explanation, no code, no markdown headers, and do not echo the original unless the task asks for it. If the user gave options (e.g. a target language or a format), honor them.${instructions ? `\n\nCANVAS INSTRUCTIONS (from this canvas's author):\n${instructions}` : ''}`;
+Operate ONLY on the SOURCE CONTENT below. Reply with ONLY the resulting text — no preamble, no explanation, no code, no markdown headers, and do not echo the original unless the task asks for it. If the user gave options (e.g. a target language or a format) honor them; otherwise use the sensible default — NEVER ask a question. If the SOURCE CONTENT is not meaningful, usable input for this task (e.g. random characters / gibberish / empty), do NOT return nothing and do NOT ask which language — reply with ONE short sentence stating it isn't usable and what's needed.${instructions ? `\n\nCANVAS INSTRUCTIONS (from this canvas's author):\n${instructions}` : ''}`;
     const userText = `SOURCE CONTENT:\n${blocks.join('\n\n')}\n\nUSER COMMAND:\n${command}`;
 
     let answer = '';
@@ -205,7 +205,12 @@ Operate ONLY on the SOURCE CONTENT below. Reply with ONLY the resulting text —
         return null; // any failure → let the agent loop try
     }
     if (signal?.aborted) return { finalMessage: '', toolCalls: 0, error: 'aborted' };
-    if (!answer) return null;
+    if (!answer) {
+        // The model returned nothing for text we DID gather (gibberish / not
+        // usable). Do NOT defer to the agent loop — that path asks for a target
+        // language and clutters the board. Pin a clean refusal Note ourselves.
+        answer = `This doesn't look like meaningful content to ${spec.name.replace(/^\//, '')} — check for typos or provide valid input.`;
+    }
 
     const ctx: ToolExecContext = { getState, dispatch, onToast };
     // A real result → green artifact card. A refusal ("can't translate this") →
@@ -307,6 +312,7 @@ ${command}`;
     // used at run-end to pin the real reply (not a content-free sign-off) and to
     // tell a genuinely empty run from one that did silent work.
     const agentSaid: string[] = [];
+    const noteCardIds = new Set<string>();   // create-card outputs the model styled as a refusal/Note → dashed arrow
     let didMutate = false;
 
     while (turns < MAX_TURNS) {
@@ -404,7 +410,10 @@ ${command}`;
             if (CREATE_TOOLS.has(call.name)) {
                 try {
                     const parsed = JSON.parse(result.result);
-                    if (typeof parsed.id === 'string') createdIds.push(parsed.id);
+                    if (typeof parsed.id === 'string') {
+                        createdIds.push(parsed.id);
+                        if (parsed.note) noteCardIds.add(parsed.id);   // model pinned a refusal → dashed amber arrow, not green
+                    }
                     if (Array.isArray(parsed.created)) {
                         for (const cid of parsed.created) if (typeof cid === 'string') createdIds.push(cid);
                     }
@@ -471,8 +480,11 @@ ${command}`;
     // whole-canvas runs don't fan out a mess of arrows. Runs even when the run
     // errored late (e.g. turn limit) — work that landed stays wired.
     if (sources.length >= 1 && sources.length <= 3 && created.length >= 1 && created.length <= 3) {
+        const noteCards = created.filter(id => noteCardIds.has(id));
+        const artifactCards = created.filter(id => !noteCardIds.has(id));
         await withToolLock(async () => {
-            addMissingConnections(getState, dispatch, sources, created, '#10b981');
+            if (artifactCards.length) addMissingConnections(getState, dispatch, sources, artifactCards, '#10b981', 'solid');
+            if (noteCards.length) addMissingConnections(getState, dispatch, sources, noteCards, '#f59e0b', 'dashed');
             return null;
         });
     }

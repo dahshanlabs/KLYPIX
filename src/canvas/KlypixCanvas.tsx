@@ -40,6 +40,7 @@ import { suggestTags } from './file/autoTag';
 import { screenToWorld, worldToScreen, fitToViewport, itemsBounds } from './CanvasEngine';
 import { buildTitleIndex, resolveWikilink, findCardsWithTag, computeBacklinks } from './items/wikilinks';
 import { CommandBar } from './interaction/CommandBar';
+import { CommandHint } from './interaction/CommandHint';
 import { AgentRunsTray } from './interaction/AgentRunsTray';
 import { useAgentRuns } from './agent/useAgentRuns';
 import { runBrainGardener } from './agent/brainGardener';
@@ -3780,6 +3781,10 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 );
             })()}
 
+            {/* Slash-command affordance — small working KLYPIX eyes + "press /"
+                in the free top-right corner. Transparent, no box, pointer-through. */}
+            <CommandHint />
+
             {/* File ops + nav — top left. Mic lives separately as a bottom-
                 center FAB (see below) so dictation has its own space and
                 doesn't get lost in the file-ops cluster.
@@ -3787,7 +3792,7 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 and at high display scale (150% → short CSS viewport) its
                 vertically-centered top reaches this row — offsetting past it
                 means the two can never overlap at any window height. */}
-            <div data-canvas-ui="1" className="absolute top-3 left-[68px] z-30 no-drag flex items-center gap-1 px-1 py-1 rounded-full bg-black/60 border border-white/10">
+            <div data-canvas-ui="1" className="absolute top-3 left-[68px] z-30 no-drag flex items-center gap-1 p-1.5 rounded-2xl bg-black/60 border border-white/10 backdrop-blur-xl shadow-[0_6px_28px_rgba(0,0,0,0.5)]">
                 <FileOpButton label={tLocale('canvas_top.home')} onClick={() => setManualDashboardOpen(true)} badge={pendingInviteCount}><HomeIcon size={13} /></FileOpButton>
                 <span className="w-px h-4 bg-white/10 mx-0.5" />
                 <FileOpButton label={tLocale('canvas_top.new_short')} onClick={file.newFile}><FilePlus2 size={13} /></FileOpButton>
@@ -4466,7 +4471,7 @@ function FileOpButton({ label, onClick, children, indicator, toggle, badge }: Fi
             onClick={onClick}
             title={label}
             data-toggle={toggle}
-            className="relative w-7 h-7 flex items-center justify-center rounded-full text-white/50 hover:text-white hover:bg-white/10 transition-all cursor-pointer"
+            className="relative w-7 h-7 flex items-center justify-center rounded-full text-white/[0.67] hover:text-white hover:bg-white/10 transition-all cursor-pointer"
         >
             {children}
             {!!badge && badge > 0 ? (

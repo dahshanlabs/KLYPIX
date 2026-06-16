@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useSyncExternalStore } from 'react';
 import { Check, CornerDownLeft, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getCurrentAsk, subscribeAsk, submitAsk, cancelAsk, type AskAnswer } from '../agent/agentAskStore';
+import { AgentRobot } from '../../components/AgentRobot';
 import { t, getLocale } from '../../i18n/strings';
 
 // The Claude-Code-style question chooser for the canvas agent. Renders whenever
@@ -17,7 +18,7 @@ import { t, getLocale } from '../../i18n/strings';
 // emerald only as the active/selected accent.
 
 const OTHER = ' other';
-const PANEL_BG = '#1e1e22';
+const PANEL_BG = '#292C2C';
 
 export function AgentQuestionDialog() {
     const ask = useSyncExternalStore(subscribeAsk, getCurrentAsk, getCurrentAsk);
@@ -28,6 +29,12 @@ export function AgentQuestionDialog() {
 
     // Reset whenever a new ask arrives (keyed on its id).
     useEffect(() => { setSel({}); setOther({}); setStep(0); }, [ask?.id]);
+
+    // Focus the panel ONCE per ask (for Esc/Enter). Must NOT be an inline ref on
+    // the panel — that re-runs every render and steals focus from the "Other"
+    // input on each keystroke (the "type letter by letter" bug).
+    const panelRef = useRef<HTMLDivElement>(null);
+    useEffect(() => { panelRef.current?.focus(); }, [ask?.id]);
 
     if (!ask) return null;
     const rtl = getLocale() === 'ar';
@@ -98,7 +105,7 @@ export function AgentQuestionDialog() {
                 role="dialog"
                 aria-modal="true"
                 tabIndex={-1}
-                ref={(el) => el?.focus()}
+                ref={panelRef}
                 className="w-full max-w-[420px] rounded-xl outline-none"
                 style={{
                     background: PANEL_BG,
@@ -109,9 +116,16 @@ export function AgentQuestionDialog() {
                 }}
                 onPointerDown={(e) => e.stopPropagation()}
             >
-                {/* Header */}
-                <div className="flex items-center gap-1.5 px-4 pt-2.5 pb-2">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                <style>{`@keyframes klypixAskFloat{0%,100%{transform:translateY(0);opacity:.45}50%{transform:translateY(-4px);opacity:1}}`}</style>
+                {/* Header — KLYPIX robot with floating "?" marks */}
+                <div className="flex items-center gap-2 px-4 pt-2.5 pb-2">
+                    <div className="relative shrink-0 w-[34px] h-[30px]">
+                        <div className="absolute -top-0.5 left-0 scale-[0.72] origin-top-left">
+                            <AgentRobot isWorking={false} />
+                        </div>
+                        <span className="absolute top-0 right-0 text-emerald-300 text-[12px] font-bold leading-none" style={{ animation: 'klypixAskFloat 1.6s ease-in-out infinite' }}>?</span>
+                        <span className="absolute -top-1.5 right-2.5 text-emerald-300/60 text-[9px] font-bold leading-none" style={{ animation: 'klypixAskFloat 1.6s ease-in-out infinite 0.4s' }}>?</span>
+                    </div>
                     <span className="text-[10.5px] font-semibold tracking-wide text-white/85">{t('canvas.ask.title')}</span>
                     <span className="flex-1" />
                     <span className="text-[9px] text-white/30">{t('canvas.ask.esc_hint')}</span>

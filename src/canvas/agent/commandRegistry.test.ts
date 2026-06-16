@@ -63,6 +63,14 @@ describe('command registry — routing contract', () => {
         }
     });
 
+    it('NO language-lane command may ask the user (canvas_ask_user) — a transform uses its default, never a question', () => {
+        const language = CANVAS_COMMAND_NAMES.map(n => commandSpecFor(n)!).filter(s => s.lane === 'language');
+        expect(language.length).toBeGreaterThan(0);
+        for (const spec of language) {
+            expect(spec.allowedTools, `${spec.name} must not expose canvas_ask_user`).not.toContain('canvas_ask_user');
+        }
+    });
+
     it('every gated command keeps canvas_done so the loop can terminate cleanly', () => {
         for (const name of CANVAS_COMMAND_NAMES) {
             const spec = commandSpecFor(name)!;

@@ -60,22 +60,32 @@ const OUTPUT_TOOLS = [
     'canvas_update_item', 'canvas_ask_user', 'canvas_done',
 ];
 
+// Language-lane fallback belt: READ + OUTPUT but WITHOUT canvas_ask_user. A
+// transform (/translate, /summarize, …) has a sensible DEFAULT and must never
+// stop to ask a question — asking "which language?" for gibberish is the bug.
+// It produces the result, or one short refusal note.
+const LANGUAGE_BELT = [...READ_TOOLS, ...OUTPUT_TOOLS.filter(t => t !== 'canvas_ask_user')];
+const LANGUAGE_GUIDANCE = 'Deterministic transform: NEVER call canvas_ask_user. If no target/format was given, use the sensible default; if the source cannot be handled, say so in ONE canvas_create_card (a short note) — never create multiple cards, and never ask which language.';
+
 const COMMANDS: CommandSpec[] = [
     {
         name: '/summarize', lane: 'language', cardTitle: 'Summary',
         instruction: 'Summarize the source content concisely, capturing the key points and leaving out filler. The summary must be clearly shorter than the source.',
-        allowedTools: [...READ_TOOLS, ...OUTPUT_TOOLS],
+        allowedTools: LANGUAGE_BELT,
+        guidance: LANGUAGE_GUIDANCE,
         argHint: 'as bullets | as a paragraph (optional)',
     },
     {
         name: '/compare', lane: 'language', cardTitle: 'Comparison',
         instruction: 'Compare the source items against each other: surface the meaningful similarities, the differences, and the trade-offs. Be specific, concrete, and balanced — do not just describe each in isolation.',
-        allowedTools: [...READ_TOOLS, ...OUTPUT_TOOLS],
+        allowedTools: LANGUAGE_BELT,
+        guidance: LANGUAGE_GUIDANCE,
     },
     {
         name: '/translate', lane: 'language', cardTitle: 'Translation',
         instruction: 'Translate the source content. If the user named a target language, translate into it. Otherwise default to English — unless the source is already English, in which case translate to Arabic. Preserve meaning, tone, names, numbers, and line structure; render greetings and idioms naturally rather than word-for-word.',
-        allowedTools: [...READ_TOOLS, ...OUTPUT_TOOLS],
+        allowedTools: LANGUAGE_BELT,
+        guidance: LANGUAGE_GUIDANCE,
         argHint: 'to <language> · default English ⇄ Arabic',
     },
     {
@@ -94,7 +104,8 @@ const COMMANDS: CommandSpec[] = [
     {
         name: '/analyze', lane: 'language', cardTitle: 'Analysis',
         instruction: 'Analyze the source content qualitatively: what it is, what stands out, the implications, and anything notable or worth acting on. Reasoning only — do not run code or fabricate numbers.',
-        allowedTools: [...READ_TOOLS, ...OUTPUT_TOOLS],
+        allowedTools: LANGUAGE_BELT,
+        guidance: LANGUAGE_GUIDANCE,
     },
     {
         name: '/compile', lane: 'agent',

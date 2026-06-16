@@ -32,7 +32,7 @@ export function AgentRunsTray({ runs, onStop, onDismiss, onOpen }: Props) {
                 return (
                     <div
                         key={run.id}
-                        className={`flex items-center gap-2 pl-1.5 pr-1.5 py-1.5 rounded-2xl bg-[#12121a]/95 backdrop-blur-xl border shadow-[0_8px_32px_rgba(0,0,0,0.5)] animate-in fade-in slide-in-from-right-1 duration-200 max-w-[300px] ${isError ? 'border-red-500/40' : 'border-purple-500/30'}`}
+                        className={`flex items-center gap-2 pl-1.5 pr-1.5 py-1.5 rounded-2xl bg-[#292C2C] border shadow-[0_8px_32px_rgba(0,0,0,0.5)] animate-in fade-in slide-in-from-right-1 duration-200 max-w-[300px] ${isError ? 'border-red-500/40' : 'border-emerald-500/30'}`}
                     >
                         {/* Body → re-open the command bar (NOT stop). */}
                         <button
@@ -42,7 +42,7 @@ export function AgentRunsTray({ runs, onStop, onDismiss, onOpen }: Props) {
                         >
                             <AgentRobot isWorking={!isError} />
                             <div className="flex flex-col leading-tight min-w-0 pr-1">
-                                <span className={`text-[11px] font-bold truncate ${isError ? 'text-red-300' : 'text-purple-300'}`}>{run.label}</span>
+                                <span className={`text-[11px] font-medium truncate ${isError ? 'text-red-300' : 'text-white/85'}`}>{run.label}</span>
                                 <span className={`text-[10px] truncate ${isError ? 'text-red-400/80' : 'text-white/50'}`}>{stepText}</span>
                             </div>
                         </button>
