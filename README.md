@@ -1,11 +1,23 @@
 # KLYPIX
 
-**KLYPIX** — the AI overlay + infinite-canvas assistant for Windows. Press **Alt+Space** anywhere to summon it.
+**Your AI copilot for Windows — press `Alt+Space` anywhere.**
 
-🌐 Website: <https://klypix.com>
-⬇️ **Download / Install:** see the [**Releases**](../../releases) tab.
+KLYPIX is a desktop AI assistant that lives one keystroke away. It sees what's
+on your screen and helps you act on it — three ways:
 
-KLYPIX auto-updates itself, so once installed you'll always be on the latest version.
+- 🗨️ **Chat** — a screenshot-aware overlay that understands whatever you're
+  looking at and answers instantly.
+- 🤖 **Agent** — an autonomous, multi-model agent that uses tools (files,
+  browser, shell) to actually get tasks done.
+- 🧠 **Canvas** — an infinite `.klypix` workspace for spatial notes, mind-maps,
+  and a shared human↔AI "brain," with cloud sync.
+
+Plus one-click document generation (Word, Excel, PowerPoint, PDF) and full
+Arabic + English support.
+
+🌐 **Website:** <https://klypix.com>
+⬇️ **Download / Install:** see the [**Releases**](../../releases) tab —
+KLYPIX auto-updates itself, so you're always on the latest version.
 
 ---
 
