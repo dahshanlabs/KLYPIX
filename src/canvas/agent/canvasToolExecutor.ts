@@ -41,34 +41,50 @@ function resolveAgentCardPosition(
         .map((id) => state.items[id])
         .filter(Boolean) as CanvasItem[];
 
+    // 1) Pick a candidate anchor.
+    let cand: { x: number; y: number };
     if (selectedItems.length > 0) {
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        let minX = Infinity, minY = Infinity, maxX = -Infinity;
         for (const it of selectedItems) {
             if (it.x < minX) minX = it.x;
             if (it.y < minY) minY = it.y;
             if (it.x + it.w > maxX) maxX = it.x + it.w;
-            if (it.y + it.h > maxY) maxY = it.y + it.h;
         }
         // To the right of the selection bbox, with a gap.
-        const GAP = 24;
-        return { x: maxX + GAP, y: minY };
+        cand = { x: maxX + 24, y: minY };
+    } else {
+        // No selection: trust the LLM's (x, y) if it's on screen, else center.
+        const margin = Math.max(cardW, cardH);
+        const proposedInView =
+            proposedX + cardW > viewLeft - margin
+            && proposedX < viewRight + margin
+            && proposedY + cardH > viewTop - margin
+            && proposedY < viewBottom + margin;
+        cand = (proposedInView && (proposedX !== 0 || proposedY !== 0))
+            ? { x: proposedX, y: proposedY }
+            : { x: viewCenterX - cardW / 2, y: viewCenterY - cardH / 2 };
     }
 
-    // No selection: see if the LLM's proposed (x, y) is visible on screen.
-    // If yes, trust it. If no, drop the card at viewport center.
-    const margin = Math.max(cardW, cardH);
-    const proposedInView =
-        proposedX + cardW > viewLeft - margin
-        && proposedX < viewRight + margin
-        && proposedY + cardH > viewTop - margin
-        && proposedY < viewBottom + margin;
-    if (proposedInView && (proposedX !== 0 || proposedY !== 0)) {
-        return { x: proposedX, y: proposedY };
+    // 2) Collision avoidance: nudge DOWN past any item the candidate overlaps so
+    // successive agent cards (e.g. an ask record card + the answer card) STACK
+    // instead of landing on top of each other — the reported overlap bug. Both
+    // cards otherwise resolve to the same "right of selection" anchor.
+    const GAP = 16;
+    const all = state.order.map((id) => state.items[id]).filter(Boolean) as CanvasItem[];
+    const overlapping = (x: number, y: number) => all.filter(it =>
+        x < it.x + it.w && x + cardW > it.x && y < it.y + it.h && y + cardH > it.y);
+    let { x, y } = cand;
+    let guard = 0;
+    let hit = overlapping(x, y);
+    while (hit.length > 0 && guard++ < 100) {
+        y = Math.max(...hit.map(it => it.y + it.h)) + GAP;
+        hit = overlapping(x, y);
     }
-    return { x: viewCenterX - cardW / 2, y: viewCenterY - cardH / 2 };
+    return { x, y };
 }
 import { base64ToBytes, bytesToBase64, getAsset, registerAsset, mimeFromExtension } from '../file/assetRegistry';
 import { waitForApproval } from './approvalRegistry';
+import { askUser, type AskQuestion } from './agentAskStore';
 import { defaultTextColorFor, getCurrentGridSettings } from '../gridSettings';
 import { compileToDOCX, compileToPPTX, compileToPdfMarkdown, compileToZip } from './canvasCompiler';
 import * as XLSX from 'xlsx';
@@ -119,13 +135,37 @@ export interface ToolResult {
  *  model tool call): the fallback for an answer the model left as plain text,
  *  and the red failure report when a run errors out. Mirrors the
  *  canvas_create_card / canvas_run_code-failure styling. Returns the new id. */
+// Agent models still sprinkle markdown (**bold**, # headings, - bullets) into
+// card content, but canvas TextItems render emphasis via styleRuns — NOT inline
+// markdown — so the markers show literally (the reported raw "**"). Strip them
+// to clean, readable canvas text. (Rendering real bold via styleRuns is a
+// possible later upgrade; for now we remove the noise.)
+export function cleanAgentText(s: string): string {
+    return String(s ?? '')
+        .replace(/^#{1,6}\s+/gm, '')        // # headings → plain
+        .replace(/\*\*(.+?)\*\*/g, '$1')    // **bold** → bold
+        .replace(/__(.+?)__/g, '$1')        // __bold__ → bold
+        .replace(/`([^`]+)`/g, '$1')        // `code` → code
+        .replace(/^[ \t]*[-*]\s+/gm, '• '); // - / * bullets → •
+}
+
 export function createAgentReportCard(
     ctx: ToolExecContext,
-    opts: { content: string; isError?: boolean },
+    opts: { content: string; kind?: 'artifact' | 'note' | 'error'; tone?: 'amber' | 'slate'; isError?: boolean },
 ): string {
     const s = ctx.getState();
+    const kind = opts.isError ? 'error' : (opts.kind ?? 'artifact');
+    const isNote = kind === 'note';
+    const isErr = kind === 'error';
+    const amber = isNote && opts.tone !== 'slate';
     const cardW = 420, cardH = 140;
     const pos = resolveAgentCardPosition(s, 0, 0, cardW, cardH);
+    // A 3-rung semantic ladder, readable on both light and dark canvas:
+    //   artifact → SOLID emerald border (it worked / keep this)
+    //   note     → DASHED amber "needs you" (actionable refusal) or slate "FYI"
+    //              (no-op), with a faint warm/cool tint — reads as a note, never
+    //              as a success, and its dashed arrow never lies.
+    //   error    → SOLID red (it failed).
     const item: TextItem = {
         id: newId('agent'),
         type: 'text',
@@ -138,11 +178,17 @@ export function createAgentReportCard(
         parentId: null,
         createdAt: Date.now(),
         createdBy: 'agent',
-        content: opts.content,
+        content: cleanAgentText(opts.content),
         fontSize: 13,
-        color: opts.isError ? '#fca5a5' : defaultTextColorFor(getCurrentGridSettings().background),
+        color: isErr ? '#fca5a5' : defaultTextColorFor(getCurrentGridSettings().background),
         border: true,
-        borderColor: opts.isError ? 'rgba(239,68,68,0.4)' : 'rgba(16,185,129,0.5)',
+        borderColor: isErr
+            ? 'rgba(239,68,68,0.4)'
+            : isNote
+                ? (amber ? 'rgba(245,158,11,0.7)' : 'rgba(148,163,184,0.6)')
+                : 'rgba(16,185,129,0.5)',
+        lineStyle: isNote ? 'dashed' : 'solid',
+        ...(isNote ? { fillColor: amber ? 'rgba(42,32,12,0.85)' : 'rgba(24,28,36,0.85)' } : {}),
         heading: false,
     };
     ctx.dispatch({ type: 'ADD_ITEM', item });
@@ -551,7 +597,7 @@ export async function executeToolCall(call: ToolCall, ctx: ToolExecContext): Pro
                 parentId: null,
                 createdAt: Date.now(),
                 createdBy: 'agent',
-                content: String(call.args.content || ''),
+                content: cleanAgentText(String(call.args.content || '')),
                 fontSize: call.args.heading ? 20 : 14,
                 color: defaultTextColorFor(getCurrentGridSettings().background),
                 border: false,
@@ -577,7 +623,7 @@ export async function executeToolCall(call: ToolCall, ctx: ToolExecContext): Pro
                 parentId: null,
                 createdAt: Date.now(),
                 createdBy: 'agent',
-                content: `${String(call.args.title || '').toUpperCase()}\n\n${String(call.args.body || '')}`,
+                content: `${cleanAgentText(String(call.args.title || '')).toUpperCase()}\n\n${cleanAgentText(String(call.args.body || ''))}`,
                 fontSize: 13,
                 color: defaultTextColorFor(getCurrentGridSettings().background),
                 border: true,
@@ -1113,6 +1159,43 @@ export async function executeToolCall(call: ToolCall, ctx: ToolExecContext): Pro
                     status: timedOut ? 'timeout' : cancelled ? 'cancelled' : 'resolved',
                 }),
             };
+        }
+
+        case 'canvas_ask_user': {
+            const rawQs = Array.isArray(call.args.questions) ? call.args.questions : [];
+            const questions: AskQuestion[] = rawQs
+                .map((q: any): AskQuestion => ({
+                    header: String(q?.header || '').trim().slice(0, 24) || undefined,
+                    question: String(q?.question || '').trim(),
+                    multiSelect: !!q?.multiSelect,
+                    options: (Array.isArray(q?.options) ? q.options : [])
+                        .map((o: any) => ({
+                            label: String(o?.label || '').trim(),
+                            description: String(o?.description || '').trim() || undefined,
+                        }))
+                        .filter((o: any) => o.label)
+                        .slice(0, 4),
+                }))
+                .filter((q: AskQuestion) => q.question && q.options.length >= 1)
+                .slice(0, 4);
+            if (questions.length === 0) return { name: call.name, result: JSON.stringify({ error: 'no_questions' }) };
+            const timeoutSec = Math.max(15, Math.min(900, Number(call.args.timeout_seconds) || 300));
+
+            // Durable record card on the canvas (the artifact the user liked) —
+            // the popup is the interaction, this is the trail.
+            const summary = questions.map(q => `❓ ${q.question}`).join('\n');
+            const cardId = createAgentReportCard(ctx, { content: `QUESTION\n\n${summary}` });
+
+            // Block the run until the user answers in the popup (or times out).
+            const answers = await askUser(cardId, questions, timeoutSec * 1000);
+
+            if (!answers) {
+                ctx.dispatch({ type: 'UPDATE_ITEM', id: cardId, patch: { content: `QUESTION — no answer\n\n${summary}` } as any });
+                return { name: call.name, result: JSON.stringify({ status: 'cancelled', answers: null }) };
+            }
+            const answeredMd = answers.map(a => `❓ ${a.question}\n✅ ${a.selected.join(', ') || '—'}`).join('\n\n');
+            ctx.dispatch({ type: 'UPDATE_ITEM', id: cardId, patch: { content: `ANSWERED\n\n${answeredMd}` } as any });
+            return { name: call.name, result: JSON.stringify({ status: 'answered', answers }) };
         }
 
         case 'canvas_organize': {

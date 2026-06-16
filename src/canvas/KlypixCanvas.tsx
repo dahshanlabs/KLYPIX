@@ -49,6 +49,8 @@ import { Breadcrumbs } from './interaction/Breadcrumbs';
 import { ContextMenu } from './interaction/ContextMenu';
 import { TextFormatCapsule } from './interaction/TextFormatCapsule';
 import { InlinePrompt } from './interaction/InlinePrompt';
+import { AgentQuestionDialog } from './interaction/AgentQuestionDialog';
+import { askUser } from './agent/agentAskStore';
 import { ChatThread } from './interaction/ChatThread';
 import { CommentsPanel } from './interaction/CommentsPanel';
 import { setOpenCommentsHandler } from './items/ItemBadges';
@@ -1044,6 +1046,36 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
             onToast: (text) => setToast({ text, id: Date.now() }),
         });
     }, [dispatch, pushSnapshot]);
+
+    // /askdemo — deterministically preview the agent question popup (no model
+    // run). The agent calls canvas_ask_user on its own whim; this lets the user
+    // SEE the stepper reliably for a demo / QA pass. Result shown as a toast.
+    const runAskDemo = useCallback(() => {
+        void askUser('askdemo', [
+            {
+                header: 'Budget', question: 'What is your approximate budget?',
+                options: [{ label: 'Under $500' }, { label: '$500 – $1000' }, { label: '$1000 – $1500' }, { label: 'Over $1500' }],
+            },
+            {
+                header: 'Primary use', question: 'What will be the primary use?',
+                options: [
+                    { label: 'General use', description: 'browsing, email, office' },
+                    { label: 'Work / Productivity', description: 'heavy office, some creative' },
+                    { label: 'Gaming' },
+                    { label: 'Creative / Pro', description: 'video editing, design, programming' },
+                ],
+            },
+            {
+                header: 'OS', question: 'Any operating-system preference?',
+                options: [{ label: 'Windows' }, { label: 'macOS' }, { label: 'Linux' }, { label: 'No preference' }],
+            },
+        ]).then((answers) => {
+            const text = answers
+                ? (answers.map(a => a.selected.join(', ')).filter(Boolean).join(' · ') || '—')
+                : tLocale('canvas.ask.cancel');
+            setToast({ text, id: Date.now() });
+        });
+    }, []);
     // Brain Health — cheap, pure (no LLM): the in-app twin of brain_insights.
     // null on a normal/small canvas, so the pill stays silent there. Recomputes
     // when items/connections change (after connect or garden → counts drop →
@@ -1193,6 +1225,41 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
         });
         if (ghostIds.length === 0) return;
         dispatch({ type: 'DELETE_ITEMS', ids: ghostIds });
+    }, [tabActive, file.restoreSettled, dispatch]);
+
+    // One-time recovery of tiny "ghost-DOT" text items on canvas open. Distinct
+    // from the empty-text sweep above: these HAVE real content but a degenerate
+    // stored size (~2px) — from a zero-measurement during font load, a stray
+    // resize, or a sync. The renderer draws anything that small as a dot and
+    // never mounts the real TextItem, so its self-healing ResizeObserver can't
+    // fire to correct the size — the item stays an invisible, selectable dot
+    // until the user selects it (which forces a full render and "instantly"
+    // snaps it to the true text). We reset such items to a measurable default
+    // and clear the width/height pins so the auto-size effects re-measure to the
+    // true content size on the next render. Idempotent: once sized normally they
+    // no longer match. Collab-safe: skip our caret + peer-locked items; the
+    // patch is local-only (__remote) like the DOM-measurement observers in
+    // TextItem, so each peer recovers its own stuck items without a broadcast loop.
+    useEffect(() => {
+        if (!tabActive || !file.restoreSettled) return;
+        const snap = stateRef.current;
+        const stuck = snap.order.filter((id) => {
+            if (id === snap.editingId) return false;
+            if (snap.peerLocks && snap.peerLocks[id]) return false;
+            const it = snap.items[id];
+            if (!it || it.type !== 'text') return false;
+            if ((it.content ?? '') === '') return false;        // empty text is the sweep above's job
+            return (it.w ?? 0) < 12 || (it.h ?? 0) < 12;        // degenerate size = a ghost dot
+        });
+        if (stuck.length === 0) return;
+        for (const id of stuck) {
+            dispatch({
+                type: 'UPDATE_ITEM',
+                id,
+                patch: { w: 220, h: 40, authoredWidth: undefined, userResizedHeight: false } as any,
+                __remote: true,
+            } as any);
+        }
     }, [tabActive, file.restoreSettled, dispatch]);
 
     // RECEIVER: build the peerLocks map from peers' editingItemId broadcasts
@@ -3564,8 +3631,12 @@ function CanvasSurface({ tabId, tabActive = true, onMetaChange, pendingOpenPath,
                 onClose={() => setCommandOpen(false)}
                 onStartRun={agentRuns.start}
                 onGarden={runGarden}
+                onAsk={runAskDemo}
             />
             <AgentRunsTray runs={agentRuns.runs} onStop={agentRuns.stop} onDismiss={agentRuns.dismiss} onOpen={() => setCommandOpen(true)} />
+            {/* Claude-Code-style chooser for canvas_ask_user. Global ask store →
+                only the active surface renders it (avoids duplicate dialogs). */}
+            {tabActive && <AgentQuestionDialog />}
             {tabActive && brainHealth && brainActionable && !tidyDismissed && (
                 <BrainHealthPill
                     health={brainHealth}

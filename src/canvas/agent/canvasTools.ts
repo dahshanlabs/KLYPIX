@@ -141,7 +141,7 @@ export const CANVAS_TOOLS: FunctionDeclaration[] = [
     },
     {
         name: 'canvas_create_toast',
-        description: 'Show a short floating message to the user (auto-dismisses). Use for quick factual answers the user doesn\'t need to keep on the canvas.',
+        description: 'Show a BRIEF non-actionable confirmation that auto-dismisses in seconds — e.g. "Copied", "Saved". NEVER use it to deliver an answer, a result, or a refusal / "can\'t do" message: a toast vanishes and the user loses it. Any answer or refusal MUST go on a card (canvas_create_card) so it is durable and the user can act on it.',
         parameters: {
             type: SchemaType.OBJECT,
             properties: {
@@ -319,6 +319,42 @@ export const CANVAS_TOOLS: FunctionDeclaration[] = [
                 timeout_seconds: { type: SchemaType.NUMBER, description: 'Max seconds to wait for a click before giving up. Defaults to 180.' },
             },
             required: ['question', 'x', 'y'],
+        },
+    },
+    {
+        name: 'canvas_ask_user',
+        description: "Ask the user a question with 2-4 concrete options and WAIT for their choice. Use this whenever you need a decision or missing information before continuing — NEVER guess, and never ask by writing a plain text/card question. A focused chooser pops up (the user can also type their own answer via an automatic \"Other\" field) and the question is pinned as a card for the record. You may ask 1-4 questions in one call. Returns the user's answers.",
+        parameters: {
+            type: SchemaType.OBJECT,
+            properties: {
+                questions: {
+                    type: SchemaType.ARRAY,
+                    description: '1-4 questions to ask together.',
+                    items: {
+                        type: SchemaType.OBJECT,
+                        properties: {
+                            header: { type: SchemaType.STRING, description: 'Very short tag/label for the question (≤ 2-3 words), e.g. "Format" or "Tone".' },
+                            question: { type: SchemaType.STRING, description: 'The full question, clearly phrased.' },
+                            multiSelect: { type: SchemaType.BOOLEAN, description: 'true to let the user pick several options; default false (pick one).' },
+                            options: {
+                                type: SchemaType.ARRAY,
+                                description: '2-4 options. Do NOT add an "Other" option — the UI appends a free-text "Other" automatically.',
+                                items: {
+                                    type: SchemaType.OBJECT,
+                                    properties: {
+                                        label: { type: SchemaType.STRING, description: 'Short option text (1-5 words).' },
+                                        description: { type: SchemaType.STRING, description: 'One line on what this option means or its trade-off.' },
+                                    },
+                                    required: ['label'],
+                                },
+                            },
+                        },
+                        required: ['question', 'options'],
+                    },
+                },
+                timeout_seconds: { type: SchemaType.NUMBER, description: 'Max seconds to wait for an answer before giving up. Defaults to 300.' },
+            },
+            required: ['questions'],
         },
     },
     {

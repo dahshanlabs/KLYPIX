@@ -1,10 +1,20 @@
 import type { CanvasItem } from '../items/types';
+import { commandSpecFor } from './commandRegistry';
 import { t } from '../../i18n/strings';
 
 // Determines which canvas items the agent should "see" for a given command.
 // See docs/CLAUDE-KLYPIX-CANVAS.md §4.
 
-export type ScopeKind = 'selected' | 'container' | 'full_canvas' | 'empty';
+// 'needs_selection' is a deliberate DEAD-END: a transform command (/translate,
+// /summarize, …) launched with nothing selected. We refuse to silently ship the
+// whole board to the model — the caller blocks the run and shows a hint.
+export type ScopeKind = 'selected' | 'container' | 'full_canvas' | 'empty' | 'needs_selection';
+
+// Cap whole-canvas scope so a huge board can't blow the model's context (and the
+// user's token bill). Applies to legitimately whole-board commands (/organize,
+// /cleanup) and to unknown / free-text asks; transform commands ask for a
+// selection instead of grabbing everything.
+const FULL_CANVAS_CAP = 200;
 
 export interface CommandScope {
     kind: ScopeKind;
@@ -101,6 +111,28 @@ export function resolveScope(
     const visible = visibleToOutside(items, allOrder);
     if (visible.length === 0) {
         return { kind: 'empty', itemIds: [], description: t('canvas.command_bar.scope.empty') };
+    }
+
+    // Nothing selected on a non-empty board → the default scope is now
+    // per-command. A 'selection' command (the transforms) refuses to grab the
+    // whole canvas and asks the user to select first. Only 'canvas' commands
+    // (/organize, /cleanup) — and unknown / free-text asks, for back-compat —
+    // fall back to the whole board, and even then it's capped.
+    const spec = commandSpecFor(command);
+    const mode: 'selection' | 'canvas' | 'unknown' = spec ? (spec.scope ?? 'selection') : 'unknown';
+
+    if (mode === 'selection') {
+        return { kind: 'needs_selection', itemIds: [], description: t('canvas.command_bar.scope.needs_selection') };
+    }
+
+    if (visible.length > FULL_CANVAS_CAP) {
+        return {
+            kind: 'full_canvas',
+            itemIds: visible.slice(0, FULL_CANVAS_CAP),
+            description: t('canvas.command_bar.scope.full_capped')
+                .replace('{n}', String(FULL_CANVAS_CAP))
+                .replace('{total}', String(visible.length)),
+        };
     }
     return {
         kind: 'full_canvas',

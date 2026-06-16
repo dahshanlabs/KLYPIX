@@ -731,6 +731,17 @@ const strings: Strings = {
     'canvas.command_bar.scope.nearby': { en: '{n} nearby items', ar: '{n} عناصر قريبة' },
     'canvas.command_bar.scope.empty': { en: 'empty canvas', ar: 'لوحة فارغة' },
     'canvas.command_bar.scope.full': { en: 'full canvas ({n} items)', ar: 'اللوحة كاملة ({n} عنصر)' },
+    'canvas.command_bar.scope.needs_selection': { en: 'select items first', ar: 'حدد عناصر أولاً' },
+    'canvas.command_bar.scope.full_capped': { en: 'full canvas (first {n} of {total})', ar: 'اللوحة كاملة (أول {n} من {total})' },
+    // Agent question popup (canvas_ask_user — Claude-Code-style chooser)
+    'canvas.ask.title': { en: 'KLYPIX is asking', ar: 'كلايبكس يسأل' },
+    'canvas.ask.esc_hint': { en: 'Esc to cancel', ar: 'Esc للإلغاء' },
+    'canvas.ask.other': { en: 'Other', ar: 'أخرى' },
+    'canvas.ask.other_placeholder': { en: 'Type your answer…', ar: 'اكتب إجابتك…' },
+    'canvas.ask.submit': { en: 'Submit', ar: 'إرسال' },
+    'canvas.ask.cancel': { en: 'Cancel', ar: 'إلغاء' },
+    'canvas.ask.back': { en: 'Back', ar: 'رجوع' },
+    'canvas.ask.next': { en: 'Next', ar: 'التالي' },
     // Phase 23 — Command Palette
     'palette.title': { en: 'Command Palette', ar: 'لوحة الأوامر' },
     'palette.placeholder': { en: 'Search canvases, items, chats, agents… or type =, clip:, ?', ar: 'ابحث في اللوحات والعناصر والمحادثات والوكلاء… أو اكتب ‎=‎ أو ‎clip:‎ أو ‎?‎' },
