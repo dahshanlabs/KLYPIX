@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, ChevronRight, Lock, LogOut, LogIn, FolderTree, ZoomIn } from 'lucide-react';
 import { t, useLocale } from '../../i18n/strings';
@@ -636,7 +636,18 @@ function ContainerItemViewImpl({ item, selected }: Props) {
     // a stretch-then-shrink cycle returns children to EXACTLY their
     // authored pixel layout. No floating-point drift, no baked wrap
     // widths, no orphan handles. True vector scaling.
-    useEffect(() => {
+    //
+    // useLayoutEffect (NOT useEffect): the child derivation MUST run in the
+    // same frame the container's new w/h is committed, BEFORE the browser
+    // paints. With a passive useEffect, each resize frame painted the
+    // container at its new size while children still sat at their previous
+    // positions — the effect only caught them up one paint later. During a
+    // drag that reads as children trailing / sitting outside the shrinking
+    // frame ("group children escape the frame after resize"). A layout
+    // effect re-derives them synchronously pre-paint, so the frame and its
+    // children move as one unit. Same math + convergence guards as before;
+    // only the timing changed.
+    useLayoutEffect(() => {
         if (item.collapsed) return;
         // Fit-to-contents reset: consume the flag, skip one scale pass.
         if (suppressNextResize.has(item.id)) {
@@ -865,7 +876,19 @@ function ContainerItemViewImpl({ item, selected }: Props) {
             dispatch({ type: 'UPDATE_ITEM', id: item.id, patch: growPatch });
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [item.w, item.h, item.authoredW, item.authoredH, item.id, item.collapsed]);
+    }, [item.x, item.y, item.w, item.h, item.authoredW, item.authoredH, item.id, item.collapsed]);
+    // item.x / item.y ARE deps: children are derived as
+    // `item.x + relX*scale` / `item.y + relY*scale`, so the cascade MUST
+    // re-run whenever the container's POSITION changes, not just its size.
+    // A corner-resize that drags the top/left edge while w/h are clamped at
+    // minimum moves item.x/item.y WITHOUT changing w/h — with position out of
+    // the dep list the effect never fired, so children kept their stale
+    // x/y and were left outside the frame ("forced the cursor up from the
+    // handle → 3 items stayed below the box"). Re-deriving on position is a
+    // no-op for ordinary drag-moves (the move handler already translated
+    // children by the same delta, so authoredInParent×scale reproduces the
+    // exact positions, guarded by the 0.01 threshold), and self-heals any
+    // child whose y drifted out of sync.
     // NOTE: state.view.zoom intentionally NOT a dep. The header-height
     // floor below uses view zoom for rendering decisions, but if it also
     // wrote different child positions on every zoom change, child geometry
