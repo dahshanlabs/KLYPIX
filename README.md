@@ -92,7 +92,7 @@ Grab the installer from [Releases](https://github.com/dahshanlabs/KLYPIX/release
 
 - Windows-only today.
 - This repository hosts releases; the application source is proprietary. The brain — format, server, hooks — is fully open at [dahshanlabs/klypix-mcp](https://github.com/dahshanlabs/klypix-mcp).
-- A canvas only reaches the cloud when you share it, and it is encrypted on your device before upload. Not a blanket end-to-end claim: the canvas title is stored unencrypted, the live edit log is stored readable, and for email-invited collaborators the server holds the key. Everything else stays on your machine.
+- A canvas only reaches the cloud when you share it, and it is encrypted on your device before upload. Not a blanket end-to-end claim: the canvas title is stored unencrypted, the live edit log is stored readable, and for email-invited collaborators the server holds the key. Your **files and canvases** stay on your machine unless you share them — but be precise: what you *ask* goes to a model, and screen-aware features send the screenshot you asked about. The local file index is the genuinely on-device part: it reads your folders and answers from them without the contents leaving.
 
 ---
 
