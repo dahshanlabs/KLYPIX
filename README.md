@@ -6,7 +6,9 @@
 
 ### Every project gets a brain. Not a *second* brain — a **shared** one.
 
-**An on-screen copilot, an autonomous agent, and an infinite canvas-brain — for you *and* your AI agents. Real-time collaborative. Windows · English & العربية.**
+**A portable project workspace with a shared brain — for you *and* your AI agents.**
+
+*One project. One shared understanding.*  ·  Windows · English & العربية
 
 **[⬇ Download for Windows](https://github.com/dahshanlabs/KLYPIX/releases/latest)** · [klypix.com](https://klypix.com) · auto-updating
 
@@ -23,7 +25,7 @@ One keystroke opens it over anything on your screen. One file — `brain.klypix`
 Everything in KLYPIX feeds one cycle:
 
 1. **Capture anything** — one keystroke summons the assistant over whatever you're doing; it already sees your screen, your active window, the page you're reading, the files you have open. Ask, extract, generate real documents (DOCX/XLSX/PPTX/PDF). A command palette searches apps, files, clipboard history, and AI commands from anywhere; an AI quick action runs translate / improve / summarize on whatever text you've selected — in any app; Deep Mode reads across the documents you have open and answers against all of them.
-2. **Organize in space** — an infinite canvas where cards, files, images, folders, and code live *with their bytes inside*. Position is meaning: containers are areas, arrows are reasons, 📌 Focus is an instruction.
+2. **Organize in space** — a canvas where cards, files, images, folders, and code live *with their bytes inside*. Position is meaning: containers are areas, arrows are reasons, 📌 Focus is an instruction.
 3. **Act with agents** — a multi-model agent (Claude / Gemini / GPT / GLM / DeepSeek) that uses your screen, files, browser, and a Linux sandbox — under a permission system you control, with an enforced daily budget.
 4. **It all lands in the brain** 🧠 — decisions, corrections, open questions, skills. The next session (yours or an agent's) starts already knowing them.
 
@@ -43,6 +45,30 @@ The whole brain — layout, decisions, arrows, and the actual **bytes** (images,
 
 Not a cage: **Obsidian `.canvas` files open directly**, and everything **exports to Markdown and JSON Canvas** in one click. The format is open — spec and open-source tooling at [dahshanlabs/klypix-mcp](https://github.com/dahshanlabs/klypix-mcp).
 
+## Two people, one brain
+
+The brain is a file in your repo, so a team already shares it the way they share code — clone,
+branch, pull. One command per clone makes that safe:
+
+```bash
+npx klypix-mcp git-driver install
+```
+
+Git stops treating `brain.klypix` as an opaque binary and hands merges to the KLYPIX engine:
+new cards from both sides survive, and a card edited on both sides keeps **both** versions —
+the second as a linked twin, rather than one silently winning. A machine that skipped the command
+just gets the normal conflict: safe degradation, not corruption.
+
+The brain can also speak in review:
+
+```bash
+npx klypix-mcp diff main             # what changed, card by card
+npx klypix-mcp pr-brief origin/main  # decisions already recorded about this PR's files
+```
+
+Both print markdown. [`examples/github/brain-pr.yml`](https://github.com/dahshanlabs/klypix-mcp/blob/master/examples/github/brain-pr.yml)
+wires them into a pull-request comment using only your checkout and the default `GITHUB_TOKEN`.
+
 ## The everyday layer
 
 The loop is fed by launcher-grade tools that live one keystroke away, system-wide:
@@ -51,11 +77,11 @@ The loop is fed by launcher-grade tools that live one keystroke away, system-wid
 - **AI quick action** — select text in any app, one keystroke: translate, improve, summarize.
 - **Clipboard history** — everything you copy, searchable, ready to land on a canvas.
 - **Deep Mode** — pick the documents you have open; the assistant answers against all of them at once.
-- **Voice** — spoken narration of what your agent is doing.
+- **Voice** — dictate instead of typing, and optionally have replies read back.
 
 ## The brain is free. The home is KLYPIX.
 
-- **Free** — the brain engine, the MCP server, the hooks, the format: open source (MIT), local-first, works with your own API keys, offline. `npx klypix-mcp install` gives every repo on your machine a brain, no app required.
+- **Free** — the brain engine, the MCP server, the hooks, the format: open source (Apache-2.0), local-first, works with your own API keys, offline. `npx klypix-mcp install` gives every repo on your machine a brain, no app required.
 - **KLYPIX** — the Windows workspace where you *live* in it: see the brain as a spatial map, work in it while agents write, capture from anywhere, act with agents, share encrypted. Bilingual English/Arabic.
 
 ## Install
@@ -66,7 +92,7 @@ Grab the installer from [Releases](https://github.com/dahshanlabs/KLYPIX/release
 
 - Windows-only today.
 - This repository hosts releases; the application source is proprietary. The brain — format, server, hooks — is fully open at [dahshanlabs/klypix-mcp](https://github.com/dahshanlabs/klypix-mcp).
-- Canvas sync/share is end-to-end encrypted; everything else stays on your machine.
+- A canvas only reaches the cloud when you share it, and it is encrypted on your device before upload. Not a blanket end-to-end claim: the canvas title is stored unencrypted, the live edit log is stored readable, and for email-invited collaborators the server holds the key. Everything else stays on your machine.
 
 ---
 
