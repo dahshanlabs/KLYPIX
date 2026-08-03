@@ -98,6 +98,6 @@ Download the current installer from [GitHub Releases](https://github.com/dahshan
 
 <div align="center">
 
-© Dahshan Labs · [klypix.com](https://klypix.com) · [open brain infrastructure](https://github.com/dahshanlabs/klypix-mcp)
+© Dahshan Labs · [klypix.com](https://klypix.com) · [hello@klypix.com](mailto:hello@klypix.com) · [open brain infrastructure](https://github.com/dahshanlabs/klypix-mcp)
 
 </div>
