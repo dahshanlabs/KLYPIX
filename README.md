@@ -14,9 +14,11 @@
 
 <br>
 
-<img src="assets/klypix-workspace.gif" alt="A KLYPIX workspace builds on Windows: the project folder, a link, a decision, an open question, an audio file and a video sit side by side on one canvas" width="880">
+<img src="assets/klypix-workspace.gif" alt="A KLYPIX workspace builds on Windows: the project folder, a link, a decision, an open question, an audio file and a video sit side by side in one space. The film ends on the KLYPIX mark and One project. One shared understanding." width="880">
 
 **▶ [Watch the 1-minute film (with sound)](https://klypix.com/media/films/homeflow-v2-16x9-en.mp4)** · [Full tour, 4 min](https://klypix.com/media/films/tour-16x9-en.mp4) · [For coding teams, 40 s](https://klypix.com/media/films/sessions-16x9-en.mp4)
+
+**For developers:** [klypix-mcp](https://github.com/dahshanlabs/klypix-mcp), the open MCP server and hooks · [KLYPIX for Claude](https://github.com/dahshanlabs/klypix-plugin), the Claude plugin · [KLYPIX network](https://github.com/dahshanlabs/klypix-network), for teammates on other computers · [klypix.com/developers](https://klypix.com/developers)
 
 </div>
 
@@ -28,15 +30,15 @@ KLYPIX keeps a project's files, spatial context, evidence, decisions, correction
 
 ### The project workspace
 
-A `.klypix` workspace can carry the actual bytes of files, images, and whole folder trees alongside notes, links, typed relationships, and the canvas layout. Move the original files and the workspace still works.
+A `.klypix` workspace can carry the actual bytes of files, images, and whole folder trees alongside notes, links, typed relationships, and the layout of the space. Move the original files and the workspace still works.
 
-- Drop files or a complete nested folder onto the canvas.
+- Drop files or a complete nested folder into a space.
 - Work with notes, images, file previews, URL cards, `[[wikilinks]]`, and eight typed arrow relationships.
 - Open Obsidian `.canvas` files directly.
 - Export to Markdown or JSON Canvas 1.0 with embedded assets extracted alongside.
 - Capture from Windows through the remappable `Alt+Space` overlay, command palette, selected-text actions, clipboard history, dictation, and screen-aware tools.
 
-Embedded folder cards have deliberate limits: 200 MB per file and 1 GB per folder card. Cloud sharing has a separate 50 MB per-canvas limit.
+Embedded folder cards have deliberate limits: 200 MB per file and 1 GB per folder card. Cloud sharing has a separate 50 MB limit per space.
 
 ### The repository project brain
 
@@ -82,14 +84,14 @@ Once registered, Git hands `.klypix` merges to the KLYPIX engine. An unregistere
 - **Capture and action layer** — overlay, command palette, text actions, clipboard history, screen capture, voice input, and document workflows.
 - **Local document AI** — local indexing and optional on-device answer models; cloud AI remains available through your configured provider.
 - **KLYPIX Drive and Share-to-Self** — a Drive portal plus encrypted phone-to-PC delivery for paired devices.
-- **Cloud sharing and collaboration** — encrypted canvas-blob upload, web viewing, live presence, cursors, chat, and collaborator controls, with the privacy boundaries below.
+- **Cloud sharing and collaboration** — spaces encrypted on the device before upload, web viewing, live presence, cursors, chat, and collaborator controls, with the privacy boundaries below.
 - **English and Arabic** — Arabic includes RTL layout; a few newer panels remain English-only.
 
 ## Privacy, honestly stated
 
-- A canvas reaches KLYPIX cloud storage when you choose to share it. Its blob is encrypted on the device before upload.
-- This is not a blanket end-to-end-encryption claim: canvas titles are stored unencrypted, the live operation log is readable by the service, and the server holds the key for email-invited collaborators.
-- Phone-to-PC Share-to-Self payloads are end-to-end encrypted between the paired devices.
+- A space reaches KLYPIX cloud storage only when you choose to share it. The file is encrypted on the device before upload.
+- This is not a blanket end-to-end-encryption claim: space titles are stored unencrypted, the live operation log is readable by the service, and the server holds the key for email-invited collaborators.
+- What you share from your phone to KLYPIX is encrypted on the phone before upload, and the key stays on your devices. The server keeps what it needs to deliver it (account, item type, destination space, times, sending device) and keyed word fingerprints for phone search, which it can match but not read. Items sent to a space shared by email invitation are readable to KLYPIX, because KLYPIX holds that space's key.
 - The local file index and local answer path run on the device. Requests sent to a configured cloud model go to that provider. Screen pixels are sent only when a screen-aware feature is used and its separate permission has been granted.
 
 ## Install
