@@ -12,6 +12,12 @@
 
 **[Download for Windows](https://github.com/dahshanlabs/KLYPIX/releases/latest)** · [klypix.com](https://klypix.com) · auto-updating
 
+<br>
+
+<img src="assets/klypix-workspace.gif" alt="A KLYPIX workspace builds on Windows: the project folder, a link, a decision, an open question, an audio file and a video sit side by side on one canvas" width="880">
+
+**▶ [Watch the 1-minute film (with sound)](https://klypix.com/media/films/homeflow-v2-16x9-en.mp4)** · [Full tour, 4 min](https://klypix.com/media/films/tour-16x9-en.mp4) · [For coding teams, 40 s](https://klypix.com/media/films/sessions-16x9-en.mp4)
+
 </div>
 
 ---
@@ -38,7 +44,11 @@ A software repository can keep its source in Git and carry project understanding
 
 KLYPIX coordinates independently running agents; it does **not** create, launch, supervise, route, or execute them.
 
-On one machine, `brain_sync` can also show active connected sessions, their declared intent, and exact file paths that overlap. These are advisory warnings: KLYPIX surfaces the overlap but never blocks an edit. Live presence and overlap warnings are machine-local and OS-user-local; the committed `brain.klypix` file is what travels between machines through Git.
+On one machine, `brain_sync` can also show active connected sessions, their declared intent, and exact file paths that overlap. These are advisory warnings: KLYPIX surfaces the overlap but never blocks an edit. The committed `brain.klypix` file is what travels between machines through Git.
+
+**New: teammates on other computers.** With [KLYPIX network](https://klypix.com/network) installed on each computer (klypix-mcp 1.106.0 or later), `brain_sync` also lists agent sessions on teammates' computers in the same project and gives the same overlap warning, and `brain_message` can send them a note. Without it, live presence and overlap warnings stay on one machine and OS user.
+
+<img src="https://klypix.com/network/klypix-network.gif" alt="KLYPIX network: agent sessions on two computers declare the same file, the project brain warns before either edits it, and a note from one session lands in the other" width="720">
 
 ## Open brain infrastructure
 
@@ -90,7 +100,7 @@ Download the current installer from [GitHub Releases](https://github.com/dahshan
 
 - The desktop app is Windows-only today.
 - This repository is release-only. The desktop application source is proprietary; the format, MCP server, and hooks are open at [dahshanlabs/klypix-mcp](https://github.com/dahshanlabs/klypix-mcp).
-- Live agent presence, one-time session messages, and overlap warnings do not cross machines today.
+- Live agent presence, one-time session messages, and overlap warnings cross machines only with [KLYPIX network](https://klypix.com/network) installed on each computer; without it they stay on one machine. Read receipts and result reconciliation stay local either way.
 - Overlap detection matches the exact paths sessions declare and is advisory.
 - KLYPIX is a coordination and shared-understanding layer, not an agent launcher, runtime, workflow engine, model router, or replacement for Git.
 
